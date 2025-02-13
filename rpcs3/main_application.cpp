@@ -220,7 +220,7 @@ EmuCallbacks main_application::CreateCallbacks()
 #ifdef _WIN32
 		case audio_renderer::xaudio: return std::make_shared<xaudio2_enumerator>();
 #endif
-		case audio_renderer::cubeb: return std::make_shared<cubeb_enumerator>();
+//		case audio_renderer::cubeb: return std::make_shared<cubeb_enumerator>();
 #ifdef HAVE_FAUDIO
 		case audio_renderer::faudio: return std::make_shared<faudio_enumerator>();
 #endif

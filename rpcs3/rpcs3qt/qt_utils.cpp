@@ -449,8 +449,8 @@ namespace gui
 #elif defined(__APPLE__)
 				gui_log.notice("gui::utils::open_dir: About to open file path '%s'", spath);
 
-				QProcess::execute("/usr/bin/osascript", { "-e", "tell application \"Finder\" to reveal POSIX file \"" + path + "\"" });
-				QProcess::execute("/usr/bin/osascript", { "-e", "tell application \"Finder\" to activate" });
+//				QProcess::execute("/usr/bin/osascript", { "-e", "tell application \"Finder\" to reveal POSIX file \"" + path + "\"" });
+//				QProcess::execute("/usr/bin/osascript", { "-e", "tell application \"Finder\" to activate" });
 #else
 				// open parent directory
 				const QUrl url = QUrl::fromLocalFile(qstr(fs::get_parent_dir(spath)));

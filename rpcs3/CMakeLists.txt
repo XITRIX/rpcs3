@@ -106,7 +106,7 @@ target_link_libraries(rpcs3
         3rdparty::discordRPC
         3rdparty::qt6
         3rdparty::hidapi
-        3rdparty::libusb
+        # 3rdparty::libusb
         3rdparty::wolfssl
         3rdparty::libcurl
         3rdparty::zlib

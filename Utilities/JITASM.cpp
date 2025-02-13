@@ -308,7 +308,7 @@ void jit_runtime::initialize()
 void jit_runtime::finalize() noexcept
 {
 #ifdef __APPLE__
-	pthread_jit_write_protect_np(false);
+//	pthread_jit_write_protect_np(false);
 #endif
 	// Reset JIT memory
 #ifdef CAN_OVERCOMMIT
@@ -326,7 +326,7 @@ void jit_runtime::finalize() noexcept
 	std::memcpy(alloc(s_data_init.size(), 1, false), s_data_init.data(), s_data_init.size());
 
 #ifdef __APPLE__
-	pthread_jit_write_protect_np(true);
+//	pthread_jit_write_protect_np(true);
 #endif
 #ifdef ARCH_ARM64
 	// Flush all cache lines after potentially writing executable code

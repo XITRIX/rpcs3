@@ -128,8 +128,8 @@ target_sources(rpcs3_emu PRIVATE
     Audio/audio_utils.cpp
     Audio/AudioDumper.cpp
     Audio/AudioBackend.cpp
-    Audio/Cubeb/CubebBackend.cpp
-    Audio/Cubeb/cubeb_enumerator.cpp
+    # Audio/Cubeb/CubebBackend.cpp
+    # Audio/Cubeb/cubeb_enumerator.cpp
 )
 
 if(USE_FAUDIO)
@@ -158,9 +158,9 @@ target_link_libraries(rpcs3_emu
     PUBLIC
         3rdparty::openal)
 
-target_link_libraries(rpcs3_emu
-    PUBLIC
-        3rdparty::cubeb)
+# target_link_libraries(rpcs3_emu
+#     PUBLIC
+#         3rdparty::cubeb)
 
 target_link_libraries(rpcs3_emu
     PUBLIC
@@ -628,9 +628,11 @@ endif()
 target_link_libraries(rpcs3_emu
     PUBLIC
         3rdparty::ffmpeg 3rdparty::sdl2
-        3rdparty::opengl 3rdparty::stblib
+        # 3rdparty::opengl 
+        3rdparty::stblib
         3rdparty::vulkan 3rdparty::glew
-        3rdparty::libusb 3rdparty::wolfssl
+        # 3rdparty::libusb 
+        3rdparty::wolfssl
     PRIVATE
         3rdparty::glslang 3rdparty::xxhash
 )

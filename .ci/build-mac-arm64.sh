@@ -21,20 +21,21 @@ brew_arm64_install_packages() {
 export HOMEBREW_NO_AUTO_UPDATE=1
 export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1
 export HOMEBREW_NO_INSTALL_CLEANUP=1
+export LLVM_COMPILER_VER=16
 
-/usr/local/bin/brew update
-sudo rm -rf /usr/local/Cellar/curl /usr/local/opt/curl
-/usr/local/bin/brew install -f --overwrite curl
-/usr/local/bin/brew uninstall -f --ignore-dependencies ffmpeg
-/usr/local/bin/brew install -f --build-from-source ffmpeg@5 || true
-/usr/local/bin/brew install -f --overwrite python || true
-/usr/local/bin/brew link --overwrite python || true
-/usr/local/bin/brew install -f --overwrite nasm ninja p7zip ccache pipenv #create-dmg
-/usr/local/bin/brew link -f curl || true
-/usr/local/bin/brew install llvm@$LLVM_COMPILER_VER glew cmake sdl2 vulkan-headers coreutils
-/usr/local/bin/brew link -f llvm@$LLVM_COMPILER_VER ffmpeg@5 || true
+#brew update
+#sudo rm -rf /usr/local/Cellar/curl /usr/local/opt/curl
+#brew install -f --overwrite curl
+#brew uninstall -f --ignore-dependencies ffmpeg
+brew install -f --build-from-source ffmpeg@5 || true
+#brew install -f --overwrite python || true
+#brew link --overwrite python || true
+brew install -f --overwrite nasm ninja p7zip ccache pipenv #create-dmg
+#brew link -f curl || true
+brew install llvm@$LLVM_COMPILER_VER glew cmake sdl2 vulkan-headers coreutils
+brew link -f llvm@$LLVM_COMPILER_VER ffmpeg@5 || true
 
-export BREW_ARM64_PATH="/opt/homebrew1"
+export BREW_ARM64_PATH="/opt/homebrew"
 sudo mkdir -p "$BREW_ARM64_PATH"
 sudo chmod 777 "$BREW_ARM64_PATH"
 curl -L https://github.com/Homebrew/brew/tarball/master | tar xz --strip 1 -C "$BREW_ARM64_PATH"
@@ -42,8 +43,8 @@ curl -L https://github.com/Homebrew/brew/tarball/master | tar xz --strip 1 -C "$
 #"$BREW_ARM64_PATH/bin/brew" update
 # libvorbis requires Homebrew-installed curl, but we can't run it on x64, and we also need the aarch64 libs, so we swap the binary
 brew_arm64_install_packages curl
-mv /opt/homebrew1/opt/curl/bin/curl /opt/homebrew1/opt/curl/bin/curl.bak
-ln -s /usr/local/opt/curl/bin/curl /opt/homebrew1/opt/curl/bin/curl
+mv /opt/homebrew/opt/curl/bin/curl /opt/homebrew/opt/curl/bin/curl.bak
+ln -s /usr/local/opt/curl/bin/curl /opt/homebrew/opt/curl/bin/curl
 
 brew_arm64_install_packages 0mq aom aribb24 ca-certificates cjson dav1d ffmpeg@5 fontconfig freetype freetype2 gettext glew gmp gnutls lame libbluray libidn2 libnettle libogg libpng librist libsodium libsoxr libtasn libtasn1 libunistring libvmaf libvorbis libvpx libx11 libxau libxcb libxdmcp llvm@$LLVM_COMPILER_VER mbedtls molten-vk nettle opencore-amr openjpeg openssl opus p11-kit pkg-config pkgconfig pzstd rav1e sdl2 snappy speex srt svt-av1 theora vulkan-headers webp x264 x265 xz z3 zeromq zmq zstd
 "$BREW_ARM64_PATH/bin/brew" link -f ffmpeg@5
@@ -51,7 +52,7 @@ ln -s /opt/homebrew1/opt/llvm@19/lib/unwind/libunwind.1.dylib /opt/homebrew1/opt
 
 # moltenvk based on commit for 1.2.11 release
 wget https://raw.githubusercontent.com/Homebrew/homebrew-core/6bfc8950c696d1f952425e8af2a6248603dc0df9/Formula/m/molten-vk.rb
-/usr/local/bin/brew install -f --overwrite ./molten-vk.rb
+brew install -f --overwrite ./molten-vk.rb
 export CXX=clang++
 export CC=clang
 
@@ -146,6 +147,57 @@ export MACOSX_DEPLOYMENT_TARGET=13.0
     -DCMAKE_TOOLCHAIN_FILE=buildfiles/cmake/TCDarwinARM64.cmake \
     -DCMAKE_CXX_FLAGS="-D__MAC_OS_X_VERSION_MIN_REQUIRED=130000" \
     -G Ninja
+
+
+export Qt6_DIR=/Users/xitrix/Documents/Dev/QT/6.7.3/ios/lib/cmake
+export Qt6BundledPcre2_DIR=/Users/xitrix/Documents/Dev/QT/6.7.3/ios/lib/cmake/Qt6BundledPcre2
+export Qt6BundledLibpng_DIR=/Users/xitrix/Documents/Dev/QT/6.7.3/ios/lib/cmake/Qt6BundledLibpng
+export Qt6BundledHarfbuzz_DIR=/Users/xitrix/Documents/Dev/QT/6.7.3/ios/lib/cmake/Qt6BundledHarfbuzz
+export Qt6BundledLibjpeg_DIR=/Users/xitrix/Documents/Dev/QT/6.7.3/ios/lib/cmake/Qt6BundledLibjpeg
+export Qt6BundledFreetype_DIR=/Users/xitrix/Documents/Dev/QT/6.7.3/ios/lib/cmake/Qt6BundledFreetype
+
+/Users/xitrix/Documents/Dev/QT/6.7.3/ios/bin/qt-
+cmake .. \
+    -DUSE_SDL=ON \
+    -DUSE_DISCORD_RPC=OFF \
+    -DUSE_VULKAN=ON \
+    -DUSE_ALSA=OFF \
+    -DUSE_PULSE=OFF \
+    -DUSE_AUDIOUNIT=ON \
+    -DWITH_LLVM=ON \
+    -DLLVM_CCACHE_BUILD=OFF \
+    -DLLVM_BUILD_RUNTIME=OFF \
+    -DLLVM_BUILD_TOOLS=OFF \
+    -DLLVM_INCLUDE_DOCS=OFF \
+    -DLLVM_INCLUDE_EXAMPLES=OFF \
+    -DLLVM_INCLUDE_TESTS=OFF \
+    -DLLVM_INCLUDE_TOOLS=OFF \
+    -DLLVM_INCLUDE_UTILS=OFF \
+    -DLLVM_USE_PERF=OFF \
+    -DLLVM_ENABLE_Z3_SOLVER=OFF \
+    -DUSE_NATIVE_INSTRUCTIONS=OFF \
+    -DUSE_SYSTEM_FFMPEG=OFF \
+    -DUSE_SYSTEM_MVK=OFF \
+    -DUSE_SYSTEM_FAUDIO=OFF \
+    -DUSE_SYSTEM_SDL=OFF \
+    -DUSE_SYSTEM_OPENCV=OFF \
+    -DUSE_SYSTEM_OPENCV=OFF \
+    -DUSE_SYSTEM_FAUDIO=OFF \
+    -DUSE_FAUDIO=ON \
+    -DBUILD_LLVM=OFF \
+    $CMAKE_EXTRA_OPTS \
+    -DLLVM_TARGET_ARCH=arm64 \
+    -DCMAKE_OSX_ARCHITECTURES=arm64 \
+    -DCMAKE_IGNORE_PATH="$BREW_X64_PATH/lib" \
+    -DCMAKE_IGNORE_PREFIX_PATH=/usr/local/opt \
+    -DCMAKE_SYSTEM_PROCESSOR=arm64 \
+    -DCMAKE_TOOLCHAIN_FILE=buildfiles/cmake/ios.toolchain.cmake \
+    -DSDL_DISABLE_IMMINTRIN_H=ON \
+    -DPLATFORM=OS64 \
+    -DCMAKE_PREFIX_PATH="/Users/xitrix/Documents/Dev/QT/6.7.3/ios/lib/cmake" \
+    -DCMAKE_CXX_FLAGS="-D__MAC_OS_X_VERSION_MIN_REQUIRED=130000" \
+    -DLLVM_DIR="/Users/xitrix/Documents/Dev/iOS/LLVMTest/Frameworks/LLVM-iphoneos/lib/cmake/llvm" \
+    -G Xcode
 
 "$BREW_PATH/bin/ninja"; build_status=$?;
 

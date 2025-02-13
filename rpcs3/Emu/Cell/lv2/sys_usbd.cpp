@@ -39,7 +39,7 @@
 #include "Emu/Io/usio_config.h"
 #include "Emu/Io/midi_config_types.h"
 
-#include <libusb.h>
+//#include <libusb.h>
 
 LOG_CHANNEL(sys_usbd);
 
@@ -51,13 +51,13 @@ cfg_guncon3 g_cfg_guncon3;
 cfg_topshotelite g_cfg_topshotelite;
 cfg_topshotfearmaster g_cfg_topshotfearmaster;
 
-template <>
-void fmt_class_string<libusb_transfer>::format(std::string& out, u64 arg)
-{
-	const auto& transfer = get_object(arg);
-	const int data_start = transfer.type == LIBUSB_TRANSFER_TYPE_CONTROL ? LIBUSB_CONTROL_SETUP_SIZE : 0;
-	fmt::append(out, "TR[r:%d][sz:%d] => %s", +transfer.status, transfer.actual_length, fmt::buf_to_hexstring(&transfer.buffer[data_start], transfer.actual_length));
-}
+//template <>
+//void fmt_class_string<libusb_transfer>::format(std::string& out, u64 arg)
+//{
+//	const auto& transfer = get_object(arg);
+//	const int data_start = transfer.type == LIBUSB_TRANSFER_TYPE_CONTROL ? LIBUSB_CONTROL_SETUP_SIZE : 0;
+//	fmt::append(out, "TR[r:%d][sz:%d] => %s", +transfer.status, transfer.actual_length, fmt::buf_to_hexstring(&transfer.buffer[data_start], transfer.actual_length));
+//}
 
 struct UsbLdd
 {
@@ -108,7 +108,7 @@ public:
 	void operator()();
 
 	// Called by the libusb callback function to notify transfer completion
-	void transfer_complete(libusb_transfer* transfer);
+//	void transfer_complete(libusb_transfer* transfer);
 
 	// LDDs handling functions
 	bool add_ldd(std::string_view product, u16 id_vendor, u16 id_product_min, u16 id_product_max);
@@ -285,15 +285,15 @@ private:
 	bool hotplug_supported = false;
 };
 
-void LIBUSB_CALL callback_transfer(struct libusb_transfer* transfer)
-{
-	auto& usbh = g_fxo->get<named_thread<usb_handler_thread>>();
-
-	if (!usbh.is_init)
-		return;
-
-	usbh.transfer_complete(transfer);
-}
+//void LIBUSB_CALL callback_transfer(struct libusb_transfer* transfer)
+//{
+//	auto& usbh = g_fxo->get<named_thread<usb_handler_thread>>();
+//
+//	if (!usbh.is_init)
+//		return;
+//
+//	usbh.transfer_complete(transfer);
+//}
 
 #if LIBUSB_API_VERSION >= 0x01000102
 static int LIBUSB_CALL hotplug_callback(libusb_context* /*ctx*/, libusb_device * /*dev*/, libusb_hotplug_event event, void * /*user_data*/)
@@ -584,11 +584,11 @@ usb_handler_thread::~usb_handler_thread()
 	usb_devices.clear();
 	usb_passthrough_devices.clear();
 
-	for (u32 index = 0; index < MAX_SYS_USBD_TRANSFERS; index++)
-	{
-		if (transfers[index].transfer)
-			libusb_free_transfer(transfers[index].transfer);
-	}
+//	for (u32 index = 0; index < MAX_SYS_USBD_TRANSFERS; index++)
+//	{
+//		if (transfers[index].transfer)
+//			libusb_free_transfer(transfers[index].transfer);
+//	}
 
 #if LIBUSB_API_VERSION >= 0x01000102
 	libusb_hotplug_deregister_callback(ctx, callback_handle);
@@ -661,73 +661,73 @@ void usb_handler_thread::send_message(u32 message, u32 tr_id)
 	add_event(message, tr_id, 0x00);
 }
 
-void usb_handler_thread::transfer_complete(struct libusb_transfer* transfer)
-{
-	std::lock_guard lock_tf(mutex_transfers);
-
-	UsbTransfer* usbd_transfer = static_cast<UsbTransfer*>(transfer->user_data);
-
-	if (transfer->status != 0)
-	{
-		sys_usbd.error("Transfer Error: %d", +transfer->status);
-	}
-
-	switch (transfer->status)
-	{
-	case LIBUSB_TRANSFER_COMPLETED: usbd_transfer->result = HC_CC_NOERR; break;
-	case LIBUSB_TRANSFER_TIMED_OUT: usbd_transfer->result = EHCI_CC_XACT; break;
-	case LIBUSB_TRANSFER_OVERFLOW: usbd_transfer->result = EHCI_CC_BABBLE; break;
-	case LIBUSB_TRANSFER_NO_DEVICE:
-		usbd_transfer->result = EHCI_CC_HALTED;
-		for (const auto& dev : usb_devices)
-		{
-			if (dev->assigned_number == usbd_transfer->assigned_number)
-			{
-				disconnect_usb_device(dev, true);
-				break;
-			}
-		}
-		break;
-	case LIBUSB_TRANSFER_ERROR:
-	case LIBUSB_TRANSFER_CANCELLED:
-	case LIBUSB_TRANSFER_STALL:
-	default:
-		usbd_transfer->result = EHCI_CC_HALTED;
-		break;
-	}
-
-	usbd_transfer->count = transfer->actual_length;
-
-	for (s32 index = 0; index < transfer->num_iso_packets; index++)
-	{
-		u8 iso_status;
-		switch (transfer->iso_packet_desc[index].status)
-		{
-		case LIBUSB_TRANSFER_COMPLETED: iso_status = USBD_HC_CC_NOERR; break;
-		case LIBUSB_TRANSFER_TIMED_OUT: iso_status = USBD_HC_CC_XACT; break;
-		case LIBUSB_TRANSFER_OVERFLOW: iso_status = USBD_HC_CC_BABBLE; break;
-		case LIBUSB_TRANSFER_ERROR:
-		case LIBUSB_TRANSFER_CANCELLED:
-		case LIBUSB_TRANSFER_STALL:
-		case LIBUSB_TRANSFER_NO_DEVICE:
-		default: iso_status = USBD_HC_CC_MISSMF; break;
-		}
-
-		usbd_transfer->iso_request.packets[index] = ((iso_status & 0xF) << 12 | (transfer->iso_packet_desc[index].actual_length & 0xFFF));
-	}
-
-	if (transfer->type == LIBUSB_TRANSFER_TYPE_CONTROL && usbd_transfer->control_destbuf)
-	{
-		memcpy(usbd_transfer->control_destbuf, transfer->buffer + LIBUSB_CONTROL_SETUP_SIZE, transfer->actual_length);
-		usbd_transfer->control_destbuf = nullptr;
-	}
-
-	usbd_transfer->busy = false;
-
-	send_message(SYS_USBD_TRANSFER_COMPLETE, usbd_transfer->transfer_id);
-
-	sys_usbd.trace("Transfer complete(0x%x): %s", usbd_transfer->transfer_id, *transfer);
-}
+//void usb_handler_thread::transfer_complete(struct libusb_transfer* transfer)
+//{
+//	std::lock_guard lock_tf(mutex_transfers);
+//
+//	UsbTransfer* usbd_transfer = static_cast<UsbTransfer*>(transfer->user_data);
+//
+//	if (transfer->status != 0)
+//	{
+//		sys_usbd.error("Transfer Error: %d", +transfer->status);
+//	}
+//
+//	switch (transfer->status)
+//	{
+//	case LIBUSB_TRANSFER_COMPLETED: usbd_transfer->result = HC_CC_NOERR; break;
+//	case LIBUSB_TRANSFER_TIMED_OUT: usbd_transfer->result = EHCI_CC_XACT; break;
+//	case LIBUSB_TRANSFER_OVERFLOW: usbd_transfer->result = EHCI_CC_BABBLE; break;
+//	case LIBUSB_TRANSFER_NO_DEVICE:
+//		usbd_transfer->result = EHCI_CC_HALTED;
+//		for (const auto& dev : usb_devices)
+//		{
+//			if (dev->assigned_number == usbd_transfer->assigned_number)
+//			{
+//				disconnect_usb_device(dev, true);
+//				break;
+//			}
+//		}
+//		break;
+//	case LIBUSB_TRANSFER_ERROR:
+//	case LIBUSB_TRANSFER_CANCELLED:
+//	case LIBUSB_TRANSFER_STALL:
+//	default:
+//		usbd_transfer->result = EHCI_CC_HALTED;
+//		break;
+//	}
+//
+//	usbd_transfer->count = transfer->actual_length;
+//
+//	for (s32 index = 0; index < transfer->num_iso_packets; index++)
+//	{
+//		u8 iso_status;
+//		switch (transfer->iso_packet_desc[index].status)
+//		{
+//		case LIBUSB_TRANSFER_COMPLETED: iso_status = USBD_HC_CC_NOERR; break;
+//		case LIBUSB_TRANSFER_TIMED_OUT: iso_status = USBD_HC_CC_XACT; break;
+//		case LIBUSB_TRANSFER_OVERFLOW: iso_status = USBD_HC_CC_BABBLE; break;
+//		case LIBUSB_TRANSFER_ERROR:
+//		case LIBUSB_TRANSFER_CANCELLED:
+//		case LIBUSB_TRANSFER_STALL:
+//		case LIBUSB_TRANSFER_NO_DEVICE:
+//		default: iso_status = USBD_HC_CC_MISSMF; break;
+//		}
+//
+//		usbd_transfer->iso_request.packets[index] = ((iso_status & 0xF) << 12 | (transfer->iso_packet_desc[index].actual_length & 0xFFF));
+//	}
+//
+//	if (transfer->type == LIBUSB_TRANSFER_TYPE_CONTROL && usbd_transfer->control_destbuf)
+//	{
+//		memcpy(usbd_transfer->control_destbuf, transfer->buffer + LIBUSB_CONTROL_SETUP_SIZE, transfer->actual_length);
+//		usbd_transfer->control_destbuf = nullptr;
+//	}
+//
+//	usbd_transfer->busy = false;
+//
+//	send_message(SYS_USBD_TRANSFER_COMPLETE, usbd_transfer->transfer_id);
+//
+//	sys_usbd.trace("Transfer complete(0x%x): %s", usbd_transfer->transfer_id, *transfer);
+//}
 
 bool usb_handler_thread::add_ldd(std::string_view product, u16 id_vendor, u16 id_product_min, u16 id_product_max)
 {
@@ -1420,29 +1420,29 @@ error_code sys_usbd_transfer_data(ppu_thread& ppu, u32 handle, u32 id_pipe, vm::
 		// Claiming interface
 		switch (request->bmRequestType)
 		{
-		case 0U /*silences warning*/ | LIBUSB_ENDPOINT_OUT | LIBUSB_REQUEST_TYPE_STANDARD | LIBUSB_RECIPIENT_DEVICE:
-		{
-			switch (request->bRequest)
-			{
-			case LIBUSB_REQUEST_SET_CONFIGURATION:
-			{
-				pipe.device->set_configuration(static_cast<u8>(+request->wValue));
-				pipe.device->set_interface(0);
-				break;
-			}
-			default: break;
-			}
-			break;
-		}
-		case 0U /*silences warning*/ | LIBUSB_ENDPOINT_IN | LIBUSB_REQUEST_TYPE_STANDARD | LIBUSB_RECIPIENT_DEVICE:
-		{
-			if (!buf)
-			{
-				sys_usbd.error("Invalid buffer for control_transfer");
-				return CELL_EFAULT;
-			}
-			break;
-		}
+//		case 0U /*silences warning*/ | LIBUSB_ENDPOINT_OUT | LIBUSB_REQUEST_TYPE_STANDARD | LIBUSB_RECIPIENT_DEVICE:
+//		{
+//			switch (request->bRequest)
+//			{
+//			case LIBUSB_REQUEST_SET_CONFIGURATION:
+//			{
+//				pipe.device->set_configuration(static_cast<u8>(+request->wValue));
+//				pipe.device->set_interface(0);
+//				break;
+//			}
+//			default: break;
+//			}
+//			break;
+//		}
+//		case 0U /*silences warning*/ | LIBUSB_ENDPOINT_IN | LIBUSB_REQUEST_TYPE_STANDARD | LIBUSB_RECIPIENT_DEVICE:
+//		{
+//			if (!buf)
+//			{
+//				sys_usbd.error("Invalid buffer for control_transfer");
+//				return CELL_EFAULT;
+//			}
+//			break;
+//		}
 		default: break;
 		}
 

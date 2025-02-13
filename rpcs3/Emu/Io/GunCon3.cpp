@@ -195,11 +195,11 @@ void usb_device_guncon3::interrupt_transfer(u32 buf_size, u8* buf, u32 endpoint,
 	transfer->expected_result = HC_CC_NOERR;
 	transfer->expected_time = get_timestamp() + 4000;
 
-	if ((endpoint & 0x80) == LIBUSB_ENDPOINT_OUT)
-	{
-		std::memcpy(m_key.data(), buf, std::min<usz>(buf_size, m_key.size()));
-		return;
-	}
+//	if ((endpoint & 0x80) == LIBUSB_ENDPOINT_OUT)
+//	{
+//		std::memcpy(m_key.data(), buf, std::min<usz>(buf_size, m_key.size()));
+//		return;
+//	}
 	// else ENDPOINT_IN
 
 	ensure(buf_size >= sizeof(GunCon3_data));

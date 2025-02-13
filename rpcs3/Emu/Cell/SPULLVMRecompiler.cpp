@@ -2745,7 +2745,7 @@ public:
 		}
 
 #if defined(__APPLE__)
-		pthread_jit_write_protect_np(false);
+//		pthread_jit_write_protect_np(false);
 #endif
 
 		if (g_cfg.core.spu_debug)
@@ -2789,7 +2789,7 @@ public:
 		}
 
 #if defined(__APPLE__)
-		pthread_jit_write_protect_np(true);
+//		pthread_jit_write_protect_np(true);
 #endif
 #if defined(ARCH_ARM64)
 		// Flush all cache lines after potentially writing executable code

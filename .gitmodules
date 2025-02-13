@@ -104,3 +104,9 @@
 	path = 3rdparty/fusion/fusion
 	url = ../../xioTechnologies/Fusion.git
 	ignore = dirty
+[submodule "3rdparty/vcpkg"]
+	path = 3rdparty/vcpkg
+	url = https://github.com/microsoft/vcpkg.git
+[submodule "3rdparty/ios-cmake"]
+	path = 3rdparty/ios-cmake
+	url = https://github.com/leetal/ios-cmake.git

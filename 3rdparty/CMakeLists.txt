@@ -53,34 +53,34 @@ endif()
 
 
 # libusb
-if(CMAKE_SYSTEM_NAME MATCHES "DragonFly|FreeBSD")
-	pkg_check_modules(LIBUSB REQUIRED IMPORTED_TARGET libusb-1.0>=1.0 )
-	cmake_dependent_option(USE_SYSTEM_LIBUSB "Use system libusb-1.0 as shared library" ON
-			"LIBUSB_FOUND" OFF)
-else()
-	pkg_check_modules(LIBUSB IMPORTED_TARGET libusb-1.0>=1.0 )
-	cmake_dependent_option(USE_SYSTEM_LIBUSB "Use system libusb-1.0 as shared library" OFF
-			"LIBUSB_FOUND" OFF)
-endif()
-if(CMAKE_SYSTEM_NAME MATCHES "DragonFly|FreeBSD")
-	# Always use system libusb as reference implementation isn't supported
-	add_library(usb-1.0-shared INTERFACE)
-	target_link_libraries(usb-1.0-shared INTERFACE PkgConfig::LIBUSB)
-elseif(MSVC)
-	# Windows time.h defines timespec but doesn't add any flag for it, which makes libusb attempt to define it again
-	add_definitions(-DHAVE_STRUCT_TIMESPEC=1)
-	add_subdirectory(libusb EXCLUDE_FROM_ALL)
-else()
-	if(USE_SYSTEM_LIBUSB)
-		# we have the system libusb and have selected to use it
-		add_library(usb-1.0-shared INTERFACE)
-		target_link_libraries(usb-1.0-shared INTERFACE PkgConfig::LIBUSB)
-	else()
-		# we don't have the system libusb, so we compile from submodule
-		unset(LIBUSB_LIBRARIES CACHE)
-		add_subdirectory(libusb EXCLUDE_FROM_ALL)
-	endif()
-endif()
+# if(CMAKE_SYSTEM_NAME MATCHES "DragonFly|FreeBSD")
+# 	pkg_check_modules(LIBUSB REQUIRED IMPORTED_TARGET libusb-1.0>=1.0 )
+# 	cmake_dependent_option(USE_SYSTEM_LIBUSB "Use system libusb-1.0 as shared library" ON
+# 			"LIBUSB_FOUND" OFF)
+# else()
+# 	pkg_check_modules(LIBUSB IMPORTED_TARGET libusb-1.0>=1.0 )
+# 	cmake_dependent_option(USE_SYSTEM_LIBUSB "Use system libusb-1.0 as shared library" OFF
+# 			"LIBUSB_FOUND" OFF)
+# endif()
+# if(CMAKE_SYSTEM_NAME MATCHES "DragonFly|FreeBSD")
+# 	# Always use system libusb as reference implementation isn't supported
+# 	add_library(usb-1.0-shared INTERFACE)
+# 	target_link_libraries(usb-1.0-shared INTERFACE PkgConfig::LIBUSB)
+# elseif(MSVC)
+# 	# Windows time.h defines timespec but doesn't add any flag for it, which makes libusb attempt to define it again
+# 	add_definitions(-DHAVE_STRUCT_TIMESPEC=1)
+# 	add_subdirectory(libusb EXCLUDE_FROM_ALL)
+# else()
+# 	if(USE_SYSTEM_LIBUSB)
+# 		# we have the system libusb and have selected to use it
+# 		add_library(usb-1.0-shared INTERFACE)
+# 		target_link_libraries(usb-1.0-shared INTERFACE PkgConfig::LIBUSB)
+# 	else()
+# 		# we don't have the system libusb, so we compile from submodule
+# 		unset(LIBUSB_LIBRARIES CACHE)
+# 		add_subdirectory(libusb EXCLUDE_FROM_ALL)
+# 	endif()
+# endif()
 
 
 # hidapi
@@ -112,22 +112,22 @@ endif()
 
 # OpenGL
 
-find_package(OpenGL REQUIRED OPTIONAL_COMPONENTS EGL)
+# find_package(OpenGL REQUIRED OPTIONAL_COMPONENTS EGL)
 
-add_library(3rdparty_opengl INTERFACE)
-target_include_directories(3rdparty_opengl INTERFACE GL)
+# add_library(3rdparty_opengl INTERFACE)
+# target_include_directories(3rdparty_opengl INTERFACE GL)
 
-if (WIN32)
-	if(NOT MSVC)
-		target_link_libraries(3rdparty_opengl INTERFACE OpenGL::GL OpenGL::GLU)
-	else()
-		target_link_libraries(3rdparty_opengl INTERFACE dxgi.lib d2d1.lib dwrite.lib)
-	endif()
-elseif(APPLE)
-	target_link_libraries(3rdparty_opengl INTERFACE OpenGL::GL OpenGL::GLU)
-else()
-	target_link_libraries(3rdparty_opengl INTERFACE OpenGL::GL OpenGL::GLU OpenGL::GLX)
-endif()
+# if (WIN32)
+# 	if(NOT MSVC)
+# 		target_link_libraries(3rdparty_opengl INTERFACE OpenGL::GL OpenGL::GLU)
+# 	else()
+# 		target_link_libraries(3rdparty_opengl INTERFACE dxgi.lib d2d1.lib dwrite.lib)
+# 	endif()
+# elseif(APPLE)
+# 	target_link_libraries(3rdparty_opengl INTERFACE OpenGL::GL OpenGL::GLU)
+# else()
+# 	target_link_libraries(3rdparty_opengl INTERFACE OpenGL::GL OpenGL::GLU OpenGL::GLX)
+# endif()
 
 
 # stblib
@@ -137,7 +137,7 @@ add_subdirectory(stblib)
 add_subdirectory(discord-rpc)
 
 # Cubeb
-add_subdirectory(cubeb EXCLUDE_FROM_ALL)
+# add_subdirectory(cubeb EXCLUDE_FROM_ALL)
 
 # SoundTouch
 add_subdirectory(SoundTouch EXCLUDE_FROM_ALL)
@@ -352,11 +352,11 @@ add_subdirectory(opencv EXCLUDE_FROM_ALL)
 add_subdirectory(fusion EXCLUDE_FROM_ALL)
 
 # add nice ALIAS targets for ease of use
-if(USE_SYSTEM_LIBUSB)
-	add_library(3rdparty::libusb ALIAS usb-1.0-shared)
-else()
-	add_library(3rdparty::libusb ALIAS usb-1.0-static)
-endif()
+# if(USE_SYSTEM_LIBUSB)
+# 	add_library(3rdparty::libusb ALIAS usb-1.0-shared)
+# else()
+# 	add_library(3rdparty::libusb ALIAS usb-1.0-static)
+# endif()
 add_library(3rdparty::zlib ALIAS 3rdparty_zlib)
 add_library(3rdparty::zstd ALIAS 3rdparty_zstd)
 add_library(3rdparty::7zip ALIAS 3rdparty_7zip)
@@ -367,7 +367,7 @@ add_library(3rdparty::yaml-cpp ALIAS yaml-cpp)
 add_library(3rdparty::xxhash ALIAS xxhash)
 add_library(3rdparty::hidapi ALIAS 3rdparty_hidapi)
 add_library(3rdparty::libpng ALIAS ${LIBPNG_TARGET})
-add_library(3rdparty::opengl ALIAS 3rdparty_opengl)
+# add_library(3rdparty::opengl ALIAS 3rdparty_opengl)
 add_library(3rdparty::stblib ALIAS 3rdparty_stblib)
 add_library(3rdparty::discordRPC ALIAS 3rdparty_discordRPC)
 add_library(3rdparty::faudio ALIAS ${FAUDIO_TARGET})

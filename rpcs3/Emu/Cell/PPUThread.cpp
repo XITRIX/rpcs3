@@ -2131,7 +2131,7 @@ void ppu_thread::cpu_task()
 		case ppu_cmd::lle_call:
 		{
 #ifdef __APPLE__
-			pthread_jit_write_protect_np(true);
+//			pthread_jit_write_protect_np(true);
 #endif
 			const vm::ptr<u32> opd(arg < 32 ? vm::cast(gpr[arg]) : vm::cast(arg));
 			cmd_pop(), fast_call(opd[0], opd[1]);
@@ -2140,7 +2140,7 @@ void ppu_thread::cpu_task()
 		case ppu_cmd::entry_call:
 		{
 #ifdef __APPLE__
-			pthread_jit_write_protect_np(true);
+//			pthread_jit_write_protect_np(true);
 #endif
 			cmd_pop(), fast_call(entry_func.addr, entry_func.rtoc, true);
 			break;
@@ -2153,7 +2153,7 @@ void ppu_thread::cpu_task()
 		case ppu_cmd::opd_call:
 		{
 #ifdef __APPLE__
-			pthread_jit_write_protect_np(true);
+//			pthread_jit_write_protect_np(true);
 #endif
 			const ppu_func_opd_t opd = cmd_get(1).as<ppu_func_opd_t>();
 			cmd_pop(1), fast_call(opd.addr, opd.rtoc);
@@ -2174,7 +2174,7 @@ void ppu_thread::cpu_task()
 		case ppu_cmd::initialize:
 		{
 #ifdef __APPLE__
-			pthread_jit_write_protect_np(false);
+//			pthread_jit_write_protect_np(false);
 #endif
 			cmd_pop();
 
@@ -2188,7 +2188,7 @@ void ppu_thread::cpu_task()
 			spu_cache::initialize();
 
 #ifdef __APPLE__
-			pthread_jit_write_protect_np(true);
+//			pthread_jit_write_protect_np(true);
 #endif
 #ifdef ARCH_ARM64
 			// Flush all cache lines after potentially writing executable code
@@ -2419,7 +2419,7 @@ ppu_thread::ppu_thread(const ppu_thread_params& param, std::string_view name, u3
 	syscall_history.count_debug_arguments = static_cast<u32>(g_cfg.core.ppu_call_history ? std::size(syscall_history.data[0].args) : 0);
 
 #ifdef __APPLE__
-	pthread_jit_write_protect_np(true);
+//	pthread_jit_write_protect_np(true);
 #endif
 #ifdef ARCH_ARM64
 	// Flush all cache lines after potentially writing executable code
@@ -4165,7 +4165,7 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_
 	named_thread_group workers("SPRX Worker ", std::min<u32>(software_thread_limit, cpu_thread_limit), [&]
 	{
 #ifdef __APPLE__
-		pthread_jit_write_protect_np(false);
+//		pthread_jit_write_protect_np(false);
 #endif
 		// Set low priority
 		thread_ctrl::scoped_priority low_prio(-1);
@@ -4351,7 +4351,7 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_
 		}
 
 #ifdef __APPLE__
-		pthread_jit_write_protect_np(false);
+//		pthread_jit_write_protect_np(false);
 #endif
 		// Set low priority
 		thread_ctrl::scoped_priority low_prio(-1);
@@ -5378,7 +5378,7 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 				thread_ctrl::scoped_priority low_prio(-1);
 
 	#ifdef __APPLE__
-				pthread_jit_write_protect_np(false);
+//				pthread_jit_write_protect_np(false);
 	#endif
 				for (u32 i = work_cv++; i < workload.size(); i = work_cv++, g_progr_pdone++)
 				{
@@ -5510,7 +5510,7 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 
 	// Jit can be null if the loop doesn't ever enter.
 #ifdef __APPLE__
-	pthread_jit_write_protect_np(false);
+//	pthread_jit_write_protect_np(false);
 #endif
 	// Try to patch all single and unregistered BLRs with the same function (TODO: Maybe generalize it into PIC code detection and patching)
 	ppu_intrp_func_t BLR_func = nullptr;
@@ -5538,7 +5538,7 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 
 #ifdef __APPLE__
 	// Symbol resolver is in JIT mem, so we must enable execution
-	pthread_jit_write_protect_np(true);
+//	pthread_jit_write_protect_np(true);
 #endif
 	{
 		usz index = umax;
@@ -5554,7 +5554,7 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 
 #ifdef __APPLE__
 	// Symbol resolver is in JIT mem, so we must enable execution
-	pthread_jit_write_protect_np(false);
+//	pthread_jit_write_protect_np(false);
 #endif
 
 	// Find a BLR-only function in order to copy it to all BLRs (some games need it)
