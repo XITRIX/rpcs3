@@ -1,0 +1,6 @@
+framework module dis {
+  umbrella header "dis.h"
+  export *
+
+  module * { export * }
+}

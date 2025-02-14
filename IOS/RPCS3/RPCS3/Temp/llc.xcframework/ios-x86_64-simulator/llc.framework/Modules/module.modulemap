@@ -1,0 +1,6 @@
+framework module llc {
+  umbrella header "llc.h"
+  export *
+
+  module * { export * }
+}

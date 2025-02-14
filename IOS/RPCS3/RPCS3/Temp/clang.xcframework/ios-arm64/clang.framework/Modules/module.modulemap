@@ -1,0 +1,6 @@
+framework module clang {
+  umbrella header "clang.h"
+  export *
+
+  module * { export * }
+}

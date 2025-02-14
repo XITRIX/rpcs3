@@ -1,0 +1,642 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		7CDBA4A92D346A500095EC15 /* librpcs3_emu.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA49D2D346A310095EC15 /* librpcs3_emu.a */; };
+		7CDBA4B22D347DB90095EC15 /* libzstd.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4932D346A310095EC15 /* libzstd.a */; };
+		7CDBA4B32D347DCD0095EC15 /* libasmjit.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4892D346A310095EC15 /* libasmjit.a */; };
+		7CDBA4B42D347E010095EC15 /* libsoundtouch.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4A12D346A310095EC15 /* libsoundtouch.a */; };
+		7CDBA4B52D347E580095EC15 /* libminiupnpc.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4912D346A310095EC15 /* libminiupnpc.a */; };
+		7CDBA4B62D347E9D0095EC15 /* libyaml-cppd.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4A72D346A310095EC15 /* libyaml-cppd.a */; };
+		7CDBA4BD2D3484670095EC15 /* libpugixml.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4992D346A310095EC15 /* libpugixml.a */; };
+		7CDBA4BF2D34851F0095EC15 /* OpenAL.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4BE2D34851F0095EC15 /* OpenAL.framework */; };
+		7CDBA4C02D3485890095EC15 /* libzstd.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4932D346A310095EC15 /* libzstd.a */; };
+		7CDBA4C22D34859F0095EC15 /* libz.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4C12D3485910095EC15 /* libz.tbd */; };
+		7CDBA4C42D3486110095EC15 /* libiconv.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4C32D34860D0095EC15 /* libiconv.tbd */; };
+		7CDBA4C52D34862C0095EC15 /* libpng16d.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4972D346A310095EC15 /* libpng16d.a */; };
+		7CDBA4D42D3486F30095EC15 /* VideoToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4D32D3486F30095EC15 /* VideoToolbox.framework */; };
+		7CDBA4D62D3487010095EC15 /* CoreMedia.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4D52D3487000095EC15 /* CoreMedia.framework */; };
+		7CDBA4D72D3487180095EC15 /* libwolfssl.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4A32D346A310095EC15 /* libwolfssl.a */; };
+		7CDBA4D92D34874C0095EC15 /* libbz2.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4D82D3487470095EC15 /* libbz2.tbd */; };
+		7CDBA4DA2D3487600095EC15 /* libxxhash.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4A52D346A310095EC15 /* libxxhash.a */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		7CDBA4882D346A310095EC15 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = 6B4E85255F0E4061849B1522;
+			remoteInfo = asmjit;
+		};
+		7CDBA4902D346A310095EC15 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = 1B1268AD630E4BCFAB4A0C1F;
+			remoteInfo = "libminiupnpc-static";
+		};
+		7CDBA4922D346A310095EC15 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = 2BB09385E0C041A8AE4A19E7;
+			remoteInfo = libzstd_static;
+		};
+		7CDBA4962D346A310095EC15 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = E1E46B91B05F458395907771;
+			remoteInfo = png_static;
+		};
+		7CDBA4982D346A310095EC15 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = 3E9A912BD1C54A23BBDB55B9;
+			remoteInfo = "pugixml-static";
+		};
+		7CDBA49C2D346A310095EC15 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = 087B48DF29464FE78FE05B55;
+			remoteInfo = rpcs3_emu;
+		};
+		7CDBA4A02D346A310095EC15 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = A80E4287699B45C48A66A88E;
+			remoteInfo = soundtouch;
+		};
+		7CDBA4A22D346A310095EC15 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = A0E4D62E929545FC90A30A91;
+			remoteInfo = wolfssl;
+		};
+		7CDBA4A42D346A310095EC15 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = 7993122EE79343FDBC8DCACC;
+			remoteInfo = xxhash;
+		};
+		7CDBA4A62D346A310095EC15 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = B234CA6B692A403A91BC577F;
+			remoteInfo = "yaml-cpp";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		7CDBA4BB2D3483990095EC15 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		7CDBA42C2D3469EF0095EC15 /* RPCS3.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RPCS3.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; name = rpcs3.xcodeproj; path = "../../build-ios/rpcs3.xcodeproj"; sourceTree = "<absolute>"; };
+		7CDBA4BE2D34851F0095EC15 /* OpenAL.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = OpenAL.framework; path = System/Library/Frameworks/OpenAL.framework; sourceTree = SDKROOT; };
+		7CDBA4C12D3485910095EC15 /* libz.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libz.tbd; path = usr/lib/libz.tbd; sourceTree = SDKROOT; };
+		7CDBA4C32D34860D0095EC15 /* libiconv.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libiconv.tbd; path = usr/lib/libiconv.tbd; sourceTree = SDKROOT; };
+		7CDBA4D32D3486F30095EC15 /* VideoToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = VideoToolbox.framework; path = System/Library/Frameworks/VideoToolbox.framework; sourceTree = SDKROOT; };
+		7CDBA4D52D3487000095EC15 /* CoreMedia.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMedia.framework; path = System/Library/Frameworks/CoreMedia.framework; sourceTree = SDKROOT; };
+		7CDBA4D82D3487470095EC15 /* libbz2.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libbz2.tbd; path = usr/lib/libbz2.tbd; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		7CDBA5292D359B7A0095EC15 /* Exceptions for "RPCS3" folder in "RPCS3" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				Temp/ar.xcframework,
+				Temp/clang.xcframework,
+				Temp/dis.xcframework,
+				Temp/ios_system.xcframework,
+				Temp/libLLVM.xcframework,
+				Temp/link.xcframework,
+				Temp/llc.xcframework,
+				Temp/lld.xcframework,
+				Temp/lli.xcframework,
+				Temp/LLVM.xcframework,
+				Temp/nm.xcframework,
+				Temp/opt.xcframework,
+			);
+			target = 7CDBA42B2D3469EF0095EC15 /* RPCS3 */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
+		7C80DDAE2D5162E6005692B7 /* Exceptions for "RPCS3" folder in "Embed Frameworks" phase from "RPCS3" target */ = {
+			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
+			attributesByRelativePath = {
+				Frameworks/avcodec.xcframework = (CodeSignOnCopy, RemoveHeadersOnCopy, );
+				Frameworks/avformat.xcframework = (CodeSignOnCopy, RemoveHeadersOnCopy, );
+				Frameworks/avutil.xcframework = (CodeSignOnCopy, RemoveHeadersOnCopy, );
+				Frameworks/swresample.xcframework = (CodeSignOnCopy, RemoveHeadersOnCopy, );
+				Frameworks/swscale.xcframework = (CodeSignOnCopy, RemoveHeadersOnCopy, );
+			};
+			buildPhase = 7CDBA4BB2D3483990095EC15 /* Embed Frameworks */;
+			membershipExceptions = (
+				Frameworks/avcodec.xcframework,
+				Frameworks/avformat.xcframework,
+				Frameworks/avutil.xcframework,
+				Frameworks/swresample.xcframework,
+				Frameworks/swscale.xcframework,
+			);
+		};
+/* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		7CDBA42E2D3469EF0095EC15 /* RPCS3 */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				7CDBA5292D359B7A0095EC15 /* Exceptions for "RPCS3" folder in "RPCS3" target */,
+				7C80DDAE2D5162E6005692B7 /* Exceptions for "RPCS3" folder in "Embed Frameworks" phase from "RPCS3" target */,
+			);
+			path = RPCS3;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		7CDBA4292D3469EF0095EC15 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7CDBA4BD2D3484670095EC15 /* libpugixml.a in Frameworks */,
+				7CDBA4C22D34859F0095EC15 /* libz.tbd in Frameworks */,
+				7CDBA4B32D347DCD0095EC15 /* libasmjit.a in Frameworks */,
+				7CDBA4DA2D3487600095EC15 /* libxxhash.a in Frameworks */,
+				7CDBA4B42D347E010095EC15 /* libsoundtouch.a in Frameworks */,
+				7CDBA4B52D347E580095EC15 /* libminiupnpc.a in Frameworks */,
+				7CDBA4B62D347E9D0095EC15 /* libyaml-cppd.a in Frameworks */,
+				7CDBA4C42D3486110095EC15 /* libiconv.tbd in Frameworks */,
+				7CDBA4B22D347DB90095EC15 /* libzstd.a in Frameworks */,
+				7CDBA4C02D3485890095EC15 /* libzstd.a in Frameworks */,
+				7CDBA4D72D3487180095EC15 /* libwolfssl.a in Frameworks */,
+				7CDBA4C52D34862C0095EC15 /* libpng16d.a in Frameworks */,
+				7CDBA4D92D34874C0095EC15 /* libbz2.tbd in Frameworks */,
+				7CDBA4BF2D34851F0095EC15 /* OpenAL.framework in Frameworks */,
+				7CDBA4D62D3487010095EC15 /* CoreMedia.framework in Frameworks */,
+				7CDBA4A92D346A500095EC15 /* librpcs3_emu.a in Frameworks */,
+				7CDBA4D42D3486F30095EC15 /* VideoToolbox.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		7CDBA4232D3469EF0095EC15 = {
+			isa = PBXGroup;
+			children = (
+				7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */,
+				7CDBA42E2D3469EF0095EC15 /* RPCS3 */,
+				7CDBA4A82D346A500095EC15 /* Frameworks */,
+				7CDBA42D2D3469EF0095EC15 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		7CDBA42D2D3469EF0095EC15 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				7CDBA42C2D3469EF0095EC15 /* RPCS3.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		7CDBA4472D346A310095EC15 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				7CDBA4892D346A310095EC15 /* libasmjit.a */,
+				7CDBA4912D346A310095EC15 /* libminiupnpc.a */,
+				7CDBA4932D346A310095EC15 /* libzstd.a */,
+				7CDBA4972D346A310095EC15 /* libpng16d.a */,
+				7CDBA4992D346A310095EC15 /* libpugixml.a */,
+				7CDBA49D2D346A310095EC15 /* librpcs3_emu.a */,
+				7CDBA4A12D346A310095EC15 /* libsoundtouch.a */,
+				7CDBA4A32D346A310095EC15 /* libwolfssl.a */,
+				7CDBA4A52D346A310095EC15 /* libxxhash.a */,
+				7CDBA4A72D346A310095EC15 /* libyaml-cppd.a */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		7CDBA4A82D346A500095EC15 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				7CDBA4D82D3487470095EC15 /* libbz2.tbd */,
+				7CDBA4D52D3487000095EC15 /* CoreMedia.framework */,
+				7CDBA4D32D3486F30095EC15 /* VideoToolbox.framework */,
+				7CDBA4C32D34860D0095EC15 /* libiconv.tbd */,
+				7CDBA4C12D3485910095EC15 /* libz.tbd */,
+				7CDBA4BE2D34851F0095EC15 /* OpenAL.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		7CDBA42B2D3469EF0095EC15 /* RPCS3 */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7CDBA43F2D3469F10095EC15 /* Build configuration list for PBXNativeTarget "RPCS3" */;
+			buildPhases = (
+				7CDBA4282D3469EF0095EC15 /* Sources */,
+				7CDBA4292D3469EF0095EC15 /* Frameworks */,
+				7CDBA42A2D3469EF0095EC15 /* Resources */,
+				7CDBA4BB2D3483990095EC15 /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				7CDBA42E2D3469EF0095EC15 /* RPCS3 */,
+			);
+			name = RPCS3;
+			packageProductDependencies = (
+			);
+			productName = RPCS3;
+			productReference = 7CDBA42C2D3469EF0095EC15 /* RPCS3.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		7CDBA4242D3469EF0095EC15 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					7CDBA42B2D3469EF0095EC15 = {
+						CreatedOnToolsVersion = 16.0;
+						LastSwiftMigration = 1600;
+					};
+				};
+			};
+			buildConfigurationList = 7CDBA4272D3469EF0095EC15 /* Build configuration list for PBXProject "RPCS3" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 7CDBA4232D3469EF0095EC15;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 7CDBA42D2D3469EF0095EC15 /* Products */;
+			projectDirPath = "";
+			projectReferences = (
+				{
+					ProductGroup = 7CDBA4472D346A310095EC15 /* Products */;
+					ProjectRef = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
+				},
+			);
+			projectRoot = "";
+			targets = (
+				7CDBA42B2D3469EF0095EC15 /* RPCS3 */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXReferenceProxy section */
+		7CDBA4892D346A310095EC15 /* libasmjit.a */ = {
+			isa = PBXReferenceProxy;
+			fileType = archive.ar;
+			path = libasmjit.a;
+			remoteRef = 7CDBA4882D346A310095EC15 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		7CDBA4912D346A310095EC15 /* libminiupnpc.a */ = {
+			isa = PBXReferenceProxy;
+			fileType = archive.ar;
+			path = libminiupnpc.a;
+			remoteRef = 7CDBA4902D346A310095EC15 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		7CDBA4932D346A310095EC15 /* libzstd.a */ = {
+			isa = PBXReferenceProxy;
+			fileType = archive.ar;
+			path = libzstd.a;
+			remoteRef = 7CDBA4922D346A310095EC15 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		7CDBA4972D346A310095EC15 /* libpng16d.a */ = {
+			isa = PBXReferenceProxy;
+			fileType = archive.ar;
+			path = libpng16d.a;
+			remoteRef = 7CDBA4962D346A310095EC15 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		7CDBA4992D346A310095EC15 /* libpugixml.a */ = {
+			isa = PBXReferenceProxy;
+			fileType = archive.ar;
+			path = libpugixml.a;
+			remoteRef = 7CDBA4982D346A310095EC15 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		7CDBA49D2D346A310095EC15 /* librpcs3_emu.a */ = {
+			isa = PBXReferenceProxy;
+			fileType = archive.ar;
+			path = librpcs3_emu.a;
+			remoteRef = 7CDBA49C2D346A310095EC15 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		7CDBA4A12D346A310095EC15 /* libsoundtouch.a */ = {
+			isa = PBXReferenceProxy;
+			fileType = archive.ar;
+			path = libsoundtouch.a;
+			remoteRef = 7CDBA4A02D346A310095EC15 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		7CDBA4A32D346A310095EC15 /* libwolfssl.a */ = {
+			isa = PBXReferenceProxy;
+			fileType = archive.ar;
+			path = libwolfssl.a;
+			remoteRef = 7CDBA4A22D346A310095EC15 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		7CDBA4A52D346A310095EC15 /* libxxhash.a */ = {
+			isa = PBXReferenceProxy;
+			fileType = archive.ar;
+			path = libxxhash.a;
+			remoteRef = 7CDBA4A42D346A310095EC15 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		7CDBA4A72D346A310095EC15 /* libyaml-cppd.a */ = {
+			isa = PBXReferenceProxy;
+			fileType = archive.ar;
+			path = "libyaml-cppd.a";
+			remoteRef = 7CDBA4A62D346A310095EC15 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+/* End PBXReferenceProxy section */
+
+/* Begin PBXResourcesBuildPhase section */
+		7CDBA42A2D3469EF0095EC15 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		7CDBA4282D3469EF0095EC15 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		7CDBA4402D3469F10095EC15 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = D59DHVRS87;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					../../,
+					../../rpcs3,
+					../../3rdparty/stblib/stb,
+					../../rpcs3/Input,
+				);
+				INFOPLIST_FILE = RPCS3/Info.plist;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_UIMainStoryboardFile = Main;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/RPCS3/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ru.xitrix.RPCS3;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "RPCS3/RPCS3-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		7CDBA4412D3469F10095EC15 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = D59DHVRS87;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					../../,
+					../../rpcs3,
+					../../3rdparty/stblib/stb,
+					../../rpcs3/Input,
+				);
+				INFOPLIST_FILE = RPCS3/Info.plist;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_UIMainStoryboardFile = Main;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/RPCS3/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ru.xitrix.RPCS3;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "RPCS3/RPCS3-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		7CDBA4422D3469F10095EC15 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		7CDBA4432D3469F10095EC15 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		7CDBA4272D3469EF0095EC15 /* Build configuration list for PBXProject "RPCS3" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7CDBA4422D3469F10095EC15 /* Debug */,
+				7CDBA4432D3469F10095EC15 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7CDBA43F2D3469F10095EC15 /* Build configuration list for PBXNativeTarget "RPCS3" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7CDBA4402D3469F10095EC15 /* Debug */,
+				7CDBA4412D3469F10095EC15 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 7CDBA4242D3469EF0095EC15 /* Project object */;
+}

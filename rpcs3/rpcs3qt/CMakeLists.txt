@@ -146,7 +146,7 @@ target_compile_definitions(rpcs3_ui PRIVATE WIN32_LEAN_AND_MEAN)
 
 target_link_libraries(rpcs3_ui
     PUBLIC
-        3rdparty::qt6
+        # 3rdparty::qt6
         3rdparty::yaml-cpp
 
     PRIVATE

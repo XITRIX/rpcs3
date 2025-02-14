@@ -156,6 +156,9 @@ export Qt6BundledHarfbuzz_DIR=/Users/xitrix/Documents/Dev/QT/6.7.3/ios/lib/cmake
 export Qt6BundledLibjpeg_DIR=/Users/xitrix/Documents/Dev/QT/6.7.3/ios/lib/cmake/Qt6BundledLibjpeg
 export Qt6BundledFreetype_DIR=/Users/xitrix/Documents/Dev/QT/6.7.3/ios/lib/cmake/Qt6BundledFreetype
 
+export LLVM_DIR="/opt/homebrew/opt/llvm@19"
+export LLVM_DIR="/Users/xitrix/Downloads/LLVM-iphoneos"
+
 /Users/xitrix/Documents/Dev/QT/6.7.3/ios/bin/qt-
 cmake .. \
     -DUSE_SDL=ON \
@@ -183,6 +186,7 @@ cmake .. \
     -DUSE_SYSTEM_OPENCV=OFF \
     -DUSE_SYSTEM_OPENCV=OFF \
     -DUSE_SYSTEM_FAUDIO=OFF \
+    -DUSE_SYSTEM_CURL=OFF \
     -DUSE_FAUDIO=ON \
     -DBUILD_LLVM=OFF \
     $CMAKE_EXTRA_OPTS \
@@ -194,10 +198,11 @@ cmake .. \
     -DCMAKE_TOOLCHAIN_FILE=buildfiles/cmake/ios.toolchain.cmake \
     -DSDL_DISABLE_IMMINTRIN_H=ON \
     -DPLATFORM=OS64 \
-    -DCMAKE_PREFIX_PATH="/Users/xitrix/Documents/Dev/QT/6.7.3/ios/lib/cmake" \
     -DCMAKE_CXX_FLAGS="-D__MAC_OS_X_VERSION_MIN_REQUIRED=130000" \
-    -DLLVM_DIR="/Users/xitrix/Documents/Dev/iOS/LLVMTest/Frameworks/LLVM-iphoneos/lib/cmake/llvm" \
     -G Xcode
+
+
+    -DLLVM_DIR="/Users/xitrix/Downloads/LLVM-iphoneos" \
 
 "$BREW_PATH/bin/ninja"; build_status=$?;
 

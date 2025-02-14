@@ -1,0 +1,6 @@
+framework module nm {
+  umbrella header "nm.h"
+  export *
+
+  module * { export * }
+}

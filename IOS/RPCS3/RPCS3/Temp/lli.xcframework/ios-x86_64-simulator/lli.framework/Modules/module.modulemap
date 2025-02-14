@@ -1,0 +1,6 @@
+framework module lli {
+  umbrella header "lli.h"
+  export *
+
+  module * { export * }
+}

@@ -1,0 +1,6 @@
+framework module ar {
+  umbrella header "ar.h"
+  export *
+
+  module * { export * }
+}

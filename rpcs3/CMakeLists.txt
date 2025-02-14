@@ -37,7 +37,7 @@ endif()
 # finds Qt libraries and setups custom commands for MOC and UIC
 # Must be done here because generated MOC and UIC targets cant
 # be found otherwise
-include(${CMAKE_SOURCE_DIR}/3rdparty/qt6.cmake)
+# include(${CMAKE_SOURCE_DIR}/3rdparty/qt6.cmake)
 
 # subdirectories
 add_subdirectory(Emu)
@@ -102,9 +102,9 @@ set_target_properties(rpcs3
 target_link_libraries(rpcs3
     PRIVATE
         rpcs3_emu
-        rpcs3_ui
+        # rpcs3_ui
         3rdparty::discordRPC
-        3rdparty::qt6
+        # 3rdparty::qt6
         3rdparty::hidapi
         # 3rdparty::libusb
         3rdparty::wolfssl
@@ -147,7 +147,7 @@ if(APPLE)
     else()
         set(QT_DEPLOY_FLAGS "")
     endif()
-    qt_finalize_target(rpcs3)
+    # qt_finalize_target(rpcs3)
     add_custom_command(TARGET rpcs3 POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/rpcs3.icns $<TARGET_FILE_DIR:rpcs3>/../Resources/rpcs3.icns
         COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/bin/Icons $<TARGET_FILE_DIR:rpcs3>/../Resources/Icons

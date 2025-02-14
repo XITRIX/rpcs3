@@ -1,0 +1,6 @@
+framework module libLLVM {
+  umbrella header "libLLVM.h"
+  export *
+
+  module * { export * }
+}

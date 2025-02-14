@@ -1,0 +1,6 @@
+framework module opt {
+  umbrella header "opt.h"
+  export *
+
+  module * { export * }
+}
