@@ -4,7 +4,7 @@
 	ignore = dirty
 [submodule "asmjit"]
 	path = 3rdparty/asmjit/asmjit
-	url = ../../asmjit/asmjit.git
+	url = ../../XITRIX/asmjit.git
 	branch = master
 	ignore = dirty
 [submodule "3rdparty/llvm/llvm"]
