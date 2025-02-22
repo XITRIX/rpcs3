@@ -107,7 +107,7 @@ void cfg_vfs::load()
 	else
 	{
 		vfs_log.notice("VFS config missing. Using default settings. Path: %s", path);
-		from_default();
+//		from_default();
 	}
 }
 

@@ -7,7 +7,7 @@
 
 #import "TestViewController.h"
 
-#include <EMU/System.h>
+#include "RPCS3.hpp"
 
 @interface TestViewController ()
 @property (strong, nonatomic) IBOutlet UIButton *installFirmwareButton;
@@ -23,10 +23,9 @@
 }
 
 - (IBAction)installFirmwareAction:(UIButton *)sender {
-    Emu.CallFromMainThread([]()
-    {
-        
-    }, nullptr, false);
+    RPCS3::getShared()->callFromMainThread([]() {
+        printf("Test\n");
+    });
 
 }
 

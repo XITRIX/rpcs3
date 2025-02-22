@@ -16,6 +16,28 @@
 #include <sys/types.h>
 #endif
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
+#ifdef TARGET_OS_IPHONE
+#include "mach_jit_workaround.hpp"
+#include <map>
+std::map<int, unsigned long> _shared_memory_sizes;
+std::mutex _shared_memory__mutex;
+
+void set_shared_memory_sizes(int ptr, unsigned long size) {
+	std::lock_guard<std::mutex> guard(_shared_memory__mutex);
+	_shared_memory_sizes[ptr] = size;
+}
+
+unsigned long get_shared_memory_sizes(int ptr) {
+	std::lock_guard<std::mutex> guard(_shared_memory__mutex);
+	return _shared_memory_sizes[ptr];
+}
+
+#endif
+
 #if defined(__FreeBSD__)
 #include <sys/sysctl.h>
 #include <vm/vm_param.h>
@@ -253,7 +275,7 @@ namespace utils
 
 #ifdef __APPLE__
 #ifdef ARCH_ARM64
-		auto ptr = ::mmap(use_addr, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE | MAP_JIT | c_map_noreserve, -1, 0);
+		auto ptr = ::mmap(use_addr, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE | c_map_noreserve, -1, 0);
 #else
 		auto ptr = ::mmap(use_addr, size, PROT_NONE, MAP_ANON | MAP_PRIVATE | MAP_JIT | c_map_noreserve, -1, 0);
 #endif
@@ -684,6 +706,14 @@ namespace utils
 			m_storage = std::move(storage1);
 		}
 #else
+
+#ifdef TARGET_OS_IPHONE
+		m_file = static_cast<int>(MachJitWorkaround::AllocateSharedMemory(m_size, false));
+		if (m_file != 0) {
+			set_shared_memory_sizes(m_file, m_size);
+		}
+		return;
+#endif
 
 #ifdef __linux__
 		if (const char c = fs::file("/proc/sys/vm/overcommit_memory").read<char>(); c == '0' || c == '1')

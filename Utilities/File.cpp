@@ -137,6 +137,7 @@ static fs::error to_error(DWORD e)
 #include <utime.h>
 
 #if defined(__APPLE__)
+#include <TargetConditionals.h>
 #include <copyfile.h>
 #include <mach-o/dyld.h>
 #include <limits.h>
@@ -2080,9 +2081,13 @@ const std::string& fs::get_config_dir([[maybe_unused]] bool get_config_subdirect
 		dir.resize(dir.rfind('/') + 1);
 #else
 
-#ifdef __APPLE__
+#if defined(__APPLE__)
 		if (const char* home = ::getenv("HOME"))
+#ifdef TARGET_OS_IPHONE
+			dir = home + "/Documents/Config"s;
+#else
 			dir = home + "/Library/Application Support"s;
+#endif
 #else
 		if (const char* conf = ::getenv("XDG_CONFIG_HOME"))
 			dir = conf;
@@ -2124,9 +2129,13 @@ const std::string& fs::get_cache_dir()
 		dir = get_config_dir();
 #else
 
-#ifdef __APPLE__
+#if defined(__APPLE__)
 		if (const char* home = ::getenv("HOME"))
+#ifdef TARGET_OS_IPHONE
+			dir = home + "/Documents/Caches"s;
+#else
 			dir = home + "/Library/Caches"s;
+#endif
 #else
 		if (const char* cache = ::getenv("XDG_CACHE_HOME"))
 			dir = cache;

@@ -102,7 +102,7 @@ namespace rpcs3::utils
 
 	std::string get_emu_dir()
 	{
-		const std::string& emu_dir_ = g_cfg_vfs.emulator_dir;
+		const std::string& emu_dir_ = "";// g_cfg_vfs.emulator_dir;
 		return emu_dir_.empty() ? fs::get_config_dir() : emu_dir_;
 	}
 

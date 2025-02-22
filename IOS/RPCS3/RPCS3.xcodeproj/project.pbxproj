@@ -7,94 +7,93 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		7CDBA4A92D346A500095EC15 /* librpcs3_emu.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA49D2D346A310095EC15 /* librpcs3_emu.a */; };
-		7CDBA4B22D347DB90095EC15 /* libzstd.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4932D346A310095EC15 /* libzstd.a */; };
-		7CDBA4B32D347DCD0095EC15 /* libasmjit.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4892D346A310095EC15 /* libasmjit.a */; };
-		7CDBA4B42D347E010095EC15 /* libsoundtouch.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4A12D346A310095EC15 /* libsoundtouch.a */; };
-		7CDBA4B52D347E580095EC15 /* libminiupnpc.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4912D346A310095EC15 /* libminiupnpc.a */; };
-		7CDBA4B62D347E9D0095EC15 /* libyaml-cppd.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4A72D346A310095EC15 /* libyaml-cppd.a */; };
-		7CDBA4BD2D3484670095EC15 /* libpugixml.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4992D346A310095EC15 /* libpugixml.a */; };
+		7C80CA222D6910BD002B08FA /* librpcs3_emu.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7C80CA152D6910BD002B08FA /* librpcs3_emu.a */; };
+		7C80CA232D6910E5002B08FA /* libzstd.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7C80CA0B2D6910BD002B08FA /* libzstd.a */; };
+		7C80CA242D691102002B08FA /* libsoundtouch.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7C80CA1B2D6910BD002B08FA /* libsoundtouch.a */; };
+		7C80CA252D691106002B08FA /* libyaml-cppd.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7C80CA212D6910BD002B08FA /* libyaml-cppd.a */; };
+		7C80CA262D691125002B08FA /* libminiupnpc.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7C80CA092D6910BD002B08FA /* libminiupnpc.a */; };
+		7C80CA272D691129002B08FA /* libpugixml.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7C80CA112D6910BD002B08FA /* libpugixml.a */; };
+		7C80CA282D691133002B08FA /* libasmjit.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7C80C9212D6910BD002B08FA /* libasmjit.a */; };
+		7C80CA292D69115C002B08FA /* libz.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4C12D3485910095EC15 /* libz.tbd */; };
+		7C80CA2A2D69116D002B08FA /* libpng16d.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7C80CA0F2D6910BD002B08FA /* libpng16d.a */; };
+		7C80CA2B2D691182002B08FA /* libbz2.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4D82D3487470095EC15 /* libbz2.tbd */; };
+		7C80CA2C2D691189002B08FA /* libwolfssl.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7C80CA1D2D6910BD002B08FA /* libwolfssl.a */; };
+		7C80CA2D2D6911D6002B08FA /* libxxhash.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7C80CA1F2D6910BD002B08FA /* libxxhash.a */; };
+		7C80CA2E2D6911DA002B08FA /* libiconv.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4C32D34860D0095EC15 /* libiconv.tbd */; };
 		7CDBA4BF2D34851F0095EC15 /* OpenAL.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4BE2D34851F0095EC15 /* OpenAL.framework */; };
-		7CDBA4C02D3485890095EC15 /* libzstd.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4932D346A310095EC15 /* libzstd.a */; };
-		7CDBA4C22D34859F0095EC15 /* libz.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4C12D3485910095EC15 /* libz.tbd */; };
-		7CDBA4C42D3486110095EC15 /* libiconv.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4C32D34860D0095EC15 /* libiconv.tbd */; };
-		7CDBA4C52D34862C0095EC15 /* libpng16d.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4972D346A310095EC15 /* libpng16d.a */; };
 		7CDBA4D42D3486F30095EC15 /* VideoToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4D32D3486F30095EC15 /* VideoToolbox.framework */; };
 		7CDBA4D62D3487010095EC15 /* CoreMedia.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4D52D3487000095EC15 /* CoreMedia.framework */; };
-		7CDBA4D72D3487180095EC15 /* libwolfssl.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4A32D346A310095EC15 /* libwolfssl.a */; };
-		7CDBA4D92D34874C0095EC15 /* libbz2.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4D82D3487470095EC15 /* libbz2.tbd */; };
-		7CDBA4DA2D3487600095EC15 /* libxxhash.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDBA4A52D346A310095EC15 /* libxxhash.a */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
-		7CDBA4882D346A310095EC15 /* PBXContainerItemProxy */ = {
+		7C80C9202D6910BD002B08FA /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
 			proxyType = 2;
-			remoteGlobalIDString = 6B4E85255F0E4061849B1522;
+			remoteGlobalIDString = 895EB952EBCA464D81DDAAEA;
 			remoteInfo = asmjit;
 		};
-		7CDBA4902D346A310095EC15 /* PBXContainerItemProxy */ = {
+		7C80CA082D6910BD002B08FA /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
 			proxyType = 2;
-			remoteGlobalIDString = 1B1268AD630E4BCFAB4A0C1F;
+			remoteGlobalIDString = B545236CF603444A9C9F2725;
 			remoteInfo = "libminiupnpc-static";
 		};
-		7CDBA4922D346A310095EC15 /* PBXContainerItemProxy */ = {
+		7C80CA0A2D6910BD002B08FA /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
 			proxyType = 2;
-			remoteGlobalIDString = 2BB09385E0C041A8AE4A19E7;
+			remoteGlobalIDString = 9F677273187C4714B6BC750E;
 			remoteInfo = libzstd_static;
 		};
-		7CDBA4962D346A310095EC15 /* PBXContainerItemProxy */ = {
+		7C80CA0E2D6910BD002B08FA /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
 			proxyType = 2;
-			remoteGlobalIDString = E1E46B91B05F458395907771;
+			remoteGlobalIDString = 8C22D31B7C1C4345A20792DF;
 			remoteInfo = png_static;
 		};
-		7CDBA4982D346A310095EC15 /* PBXContainerItemProxy */ = {
+		7C80CA102D6910BD002B08FA /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
 			proxyType = 2;
-			remoteGlobalIDString = 3E9A912BD1C54A23BBDB55B9;
+			remoteGlobalIDString = A27AFC27096F41EDAAC029B9;
 			remoteInfo = "pugixml-static";
 		};
-		7CDBA49C2D346A310095EC15 /* PBXContainerItemProxy */ = {
+		7C80CA142D6910BD002B08FA /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
 			proxyType = 2;
-			remoteGlobalIDString = 087B48DF29464FE78FE05B55;
+			remoteGlobalIDString = 50F181AC8BAB4CD09A6CF8DD;
 			remoteInfo = rpcs3_emu;
 		};
-		7CDBA4A02D346A310095EC15 /* PBXContainerItemProxy */ = {
+		7C80CA1A2D6910BD002B08FA /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
 			proxyType = 2;
-			remoteGlobalIDString = A80E4287699B45C48A66A88E;
+			remoteGlobalIDString = 8EA3437E980D4422B68A27B9;
 			remoteInfo = soundtouch;
 		};
-		7CDBA4A22D346A310095EC15 /* PBXContainerItemProxy */ = {
+		7C80CA1C2D6910BD002B08FA /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
 			proxyType = 2;
-			remoteGlobalIDString = A0E4D62E929545FC90A30A91;
+			remoteGlobalIDString = 0B0B5F4A517A4165904B8E45;
 			remoteInfo = wolfssl;
 		};
-		7CDBA4A42D346A310095EC15 /* PBXContainerItemProxy */ = {
+		7C80CA1E2D6910BD002B08FA /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
 			proxyType = 2;
-			remoteGlobalIDString = 7993122EE79343FDBC8DCACC;
+			remoteGlobalIDString = EB5D6C59487A4AFF96EC27E0;
 			remoteInfo = xxhash;
 		};
-		7CDBA4A62D346A310095EC15 /* PBXContainerItemProxy */ = {
+		7C80CA202D6910BD002B08FA /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */;
 			proxyType = 2;
-			remoteGlobalIDString = B234CA6B692A403A91BC577F;
+			remoteGlobalIDString = 3485126EE529413EA2314EB9;
 			remoteInfo = "yaml-cpp";
 		};
 /* End PBXContainerItemProxy section */
@@ -113,6 +112,12 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		7C4EDE772D690E350037E6B8 /* libasmjit.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libasmjit.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		7C4EDE792D690E4B0037E6B8 /* libxxhash.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libxxhash.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		7C4EDE7B2D690E550037E6B8 /* libsoundtouch.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libsoundtouch.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		7C4EDE7D2D690E5F0037E6B8 /* libminiupnpc.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libminiupnpc.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		7C4EDE7F2D690E780037E6B8 /* librpcs3_emu.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = librpcs3_emu.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		7CA667D02D690E14005F2D1D /* libpugixml.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libpugixml.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		7CDBA42C2D3469EF0095EC15 /* RPCS3.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RPCS3.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7CDBA4442D346A300095EC15 /* rpcs3.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; name = rpcs3.xcodeproj; path = "../../build-ios/rpcs3.xcodeproj"; sourceTree = "<absolute>"; };
 		7CDBA4BE2D34851F0095EC15 /* OpenAL.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = OpenAL.framework; path = System/Library/Frameworks/OpenAL.framework; sourceTree = SDKROOT; };
@@ -183,22 +188,21 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				7CDBA4BD2D3484670095EC15 /* libpugixml.a in Frameworks */,
-				7CDBA4C22D34859F0095EC15 /* libz.tbd in Frameworks */,
-				7CDBA4B32D347DCD0095EC15 /* libasmjit.a in Frameworks */,
-				7CDBA4DA2D3487600095EC15 /* libxxhash.a in Frameworks */,
-				7CDBA4B42D347E010095EC15 /* libsoundtouch.a in Frameworks */,
-				7CDBA4B52D347E580095EC15 /* libminiupnpc.a in Frameworks */,
-				7CDBA4B62D347E9D0095EC15 /* libyaml-cppd.a in Frameworks */,
-				7CDBA4C42D3486110095EC15 /* libiconv.tbd in Frameworks */,
-				7CDBA4B22D347DB90095EC15 /* libzstd.a in Frameworks */,
-				7CDBA4C02D3485890095EC15 /* libzstd.a in Frameworks */,
-				7CDBA4D72D3487180095EC15 /* libwolfssl.a in Frameworks */,
-				7CDBA4C52D34862C0095EC15 /* libpng16d.a in Frameworks */,
-				7CDBA4D92D34874C0095EC15 /* libbz2.tbd in Frameworks */,
 				7CDBA4BF2D34851F0095EC15 /* OpenAL.framework in Frameworks */,
+				7C80CA242D691102002B08FA /* libsoundtouch.a in Frameworks */,
+				7C80CA2D2D6911D6002B08FA /* libxxhash.a in Frameworks */,
+				7C80CA222D6910BD002B08FA /* librpcs3_emu.a in Frameworks */,
+				7C80CA262D691125002B08FA /* libminiupnpc.a in Frameworks */,
+				7C80CA292D69115C002B08FA /* libz.tbd in Frameworks */,
+				7C80CA272D691129002B08FA /* libpugixml.a in Frameworks */,
+				7C80CA2B2D691182002B08FA /* libbz2.tbd in Frameworks */,
+				7C80CA282D691133002B08FA /* libasmjit.a in Frameworks */,
+				7C80CA2C2D691189002B08FA /* libwolfssl.a in Frameworks */,
+				7C80CA232D6910E5002B08FA /* libzstd.a in Frameworks */,
+				7C80CA2A2D69116D002B08FA /* libpng16d.a in Frameworks */,
+				7C80CA252D691106002B08FA /* libyaml-cppd.a in Frameworks */,
+				7C80CA2E2D6911DA002B08FA /* libiconv.tbd in Frameworks */,
 				7CDBA4D62D3487010095EC15 /* CoreMedia.framework in Frameworks */,
-				7CDBA4A92D346A500095EC15 /* librpcs3_emu.a in Frameworks */,
 				7CDBA4D42D3486F30095EC15 /* VideoToolbox.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -227,16 +231,16 @@
 		7CDBA4472D346A310095EC15 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				7CDBA4892D346A310095EC15 /* libasmjit.a */,
-				7CDBA4912D346A310095EC15 /* libminiupnpc.a */,
-				7CDBA4932D346A310095EC15 /* libzstd.a */,
-				7CDBA4972D346A310095EC15 /* libpng16d.a */,
-				7CDBA4992D346A310095EC15 /* libpugixml.a */,
-				7CDBA49D2D346A310095EC15 /* librpcs3_emu.a */,
-				7CDBA4A12D346A310095EC15 /* libsoundtouch.a */,
-				7CDBA4A32D346A310095EC15 /* libwolfssl.a */,
-				7CDBA4A52D346A310095EC15 /* libxxhash.a */,
-				7CDBA4A72D346A310095EC15 /* libyaml-cppd.a */,
+				7C80C9212D6910BD002B08FA /* libasmjit.a */,
+				7C80CA092D6910BD002B08FA /* libminiupnpc.a */,
+				7C80CA0B2D6910BD002B08FA /* libzstd.a */,
+				7C80CA0F2D6910BD002B08FA /* libpng16d.a */,
+				7C80CA112D6910BD002B08FA /* libpugixml.a */,
+				7C80CA152D6910BD002B08FA /* librpcs3_emu.a */,
+				7C80CA1B2D6910BD002B08FA /* libsoundtouch.a */,
+				7C80CA1D2D6910BD002B08FA /* libwolfssl.a */,
+				7C80CA1F2D6910BD002B08FA /* libxxhash.a */,
+				7C80CA212D6910BD002B08FA /* libyaml-cppd.a */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -244,6 +248,12 @@
 		7CDBA4A82D346A500095EC15 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				7C4EDE7F2D690E780037E6B8 /* librpcs3_emu.a */,
+				7C4EDE7D2D690E5F0037E6B8 /* libminiupnpc.a */,
+				7C4EDE7B2D690E550037E6B8 /* libsoundtouch.a */,
+				7C4EDE792D690E4B0037E6B8 /* libxxhash.a */,
+				7C4EDE772D690E350037E6B8 /* libasmjit.a */,
+				7CA667D02D690E14005F2D1D /* libpugixml.a */,
 				7CDBA4D82D3487470095EC15 /* libbz2.tbd */,
 				7CDBA4D52D3487000095EC15 /* CoreMedia.framework */,
 				7CDBA4D32D3486F30095EC15 /* VideoToolbox.framework */,
@@ -322,74 +332,74 @@
 /* End PBXProject section */
 
 /* Begin PBXReferenceProxy section */
-		7CDBA4892D346A310095EC15 /* libasmjit.a */ = {
+		7C80C9212D6910BD002B08FA /* libasmjit.a */ = {
 			isa = PBXReferenceProxy;
 			fileType = archive.ar;
 			path = libasmjit.a;
-			remoteRef = 7CDBA4882D346A310095EC15 /* PBXContainerItemProxy */;
+			remoteRef = 7C80C9202D6910BD002B08FA /* PBXContainerItemProxy */;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
-		7CDBA4912D346A310095EC15 /* libminiupnpc.a */ = {
+		7C80CA092D6910BD002B08FA /* libminiupnpc.a */ = {
 			isa = PBXReferenceProxy;
 			fileType = archive.ar;
 			path = libminiupnpc.a;
-			remoteRef = 7CDBA4902D346A310095EC15 /* PBXContainerItemProxy */;
+			remoteRef = 7C80CA082D6910BD002B08FA /* PBXContainerItemProxy */;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
-		7CDBA4932D346A310095EC15 /* libzstd.a */ = {
+		7C80CA0B2D6910BD002B08FA /* libzstd.a */ = {
 			isa = PBXReferenceProxy;
 			fileType = archive.ar;
 			path = libzstd.a;
-			remoteRef = 7CDBA4922D346A310095EC15 /* PBXContainerItemProxy */;
+			remoteRef = 7C80CA0A2D6910BD002B08FA /* PBXContainerItemProxy */;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
-		7CDBA4972D346A310095EC15 /* libpng16d.a */ = {
+		7C80CA0F2D6910BD002B08FA /* libpng16d.a */ = {
 			isa = PBXReferenceProxy;
 			fileType = archive.ar;
 			path = libpng16d.a;
-			remoteRef = 7CDBA4962D346A310095EC15 /* PBXContainerItemProxy */;
+			remoteRef = 7C80CA0E2D6910BD002B08FA /* PBXContainerItemProxy */;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
-		7CDBA4992D346A310095EC15 /* libpugixml.a */ = {
+		7C80CA112D6910BD002B08FA /* libpugixml.a */ = {
 			isa = PBXReferenceProxy;
 			fileType = archive.ar;
 			path = libpugixml.a;
-			remoteRef = 7CDBA4982D346A310095EC15 /* PBXContainerItemProxy */;
+			remoteRef = 7C80CA102D6910BD002B08FA /* PBXContainerItemProxy */;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
-		7CDBA49D2D346A310095EC15 /* librpcs3_emu.a */ = {
+		7C80CA152D6910BD002B08FA /* librpcs3_emu.a */ = {
 			isa = PBXReferenceProxy;
 			fileType = archive.ar;
 			path = librpcs3_emu.a;
-			remoteRef = 7CDBA49C2D346A310095EC15 /* PBXContainerItemProxy */;
+			remoteRef = 7C80CA142D6910BD002B08FA /* PBXContainerItemProxy */;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
-		7CDBA4A12D346A310095EC15 /* libsoundtouch.a */ = {
+		7C80CA1B2D6910BD002B08FA /* libsoundtouch.a */ = {
 			isa = PBXReferenceProxy;
 			fileType = archive.ar;
 			path = libsoundtouch.a;
-			remoteRef = 7CDBA4A02D346A310095EC15 /* PBXContainerItemProxy */;
+			remoteRef = 7C80CA1A2D6910BD002B08FA /* PBXContainerItemProxy */;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
-		7CDBA4A32D346A310095EC15 /* libwolfssl.a */ = {
+		7C80CA1D2D6910BD002B08FA /* libwolfssl.a */ = {
 			isa = PBXReferenceProxy;
 			fileType = archive.ar;
 			path = libwolfssl.a;
-			remoteRef = 7CDBA4A22D346A310095EC15 /* PBXContainerItemProxy */;
+			remoteRef = 7C80CA1C2D6910BD002B08FA /* PBXContainerItemProxy */;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
-		7CDBA4A52D346A310095EC15 /* libxxhash.a */ = {
+		7C80CA1F2D6910BD002B08FA /* libxxhash.a */ = {
 			isa = PBXReferenceProxy;
 			fileType = archive.ar;
 			path = libxxhash.a;
-			remoteRef = 7CDBA4A42D346A310095EC15 /* PBXContainerItemProxy */;
+			remoteRef = 7C80CA1E2D6910BD002B08FA /* PBXContainerItemProxy */;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
-		7CDBA4A72D346A310095EC15 /* libyaml-cppd.a */ = {
+		7C80CA212D6910BD002B08FA /* libyaml-cppd.a */ = {
 			isa = PBXReferenceProxy;
 			fileType = archive.ar;
 			path = "libyaml-cppd.a";
-			remoteRef = 7CDBA4A62D346A310095EC15 /* PBXContainerItemProxy */;
+			remoteRef = 7C80CA202D6910BD002B08FA /* PBXContainerItemProxy */;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
 /* End PBXReferenceProxy section */

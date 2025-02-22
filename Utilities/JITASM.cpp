@@ -338,6 +338,7 @@ void jit_runtime::finalize() noexcept
 jit_runtime_base& asmjit::get_global_runtime()
 {
 	// 16 MiB for internal needs
+//	static constexpr u64 size = 512 * 768 * 1024; //1024 * 1024 * 16;
 	static constexpr u64 size = 1024 * 1024 * 16;
 
 	struct custom_runtime final : jit_runtime_base

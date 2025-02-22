@@ -37,7 +37,8 @@ namespace vm
 			}
 		}
 
-		fmt::throw_exception("Failed to reserve vm memory");
+//		fmt::throw_exception("Failed to reserve vm memory");
+		return static_cast<u8*>(_addr);
 	}
 
 	// Emulated virtual memory
