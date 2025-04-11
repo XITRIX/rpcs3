@@ -183,7 +183,7 @@ add_subdirectory(yaml-cpp)
 
 # OpenGL
 
-if (NOT ANDROID AND NOT WITHOUT_OPENGL)
+if (NOT ANDROID AND NOT IOS AND NOT WITHOUT_OPENGL)
 	find_package(OpenGL REQUIRED OPTIONAL_COMPONENTS EGL)
 
 	add_library(3rdparty_opengl INTERFACE)
@@ -290,7 +290,7 @@ endif()
 add_subdirectory(asmjit EXCLUDE_FROM_ALL)
 
 # OpenAL
-if (NOT ANDROID AND NOT WITHOUT_OPENAL)
+if (NOT ANDROID AND NOT IOS AND NOT WITHOUT_OPENAL)
 	add_subdirectory(OpenAL EXCLUDE_FROM_ALL)
 else()
 	add_library(3rdparty_openal INTERFACE)
@@ -337,7 +337,7 @@ set_property(TARGET ${FAUDIO_TARGET} PROPERTY FOLDER "3rdparty/")
 
 # GLEW
 add_library(3rdparty_glew INTERFACE)
-if(NOT MSVC AND NOT ANDROID AND NOT WITHOUT_OPENGLEW)
+if(NOT MSVC AND NOT ANDROID AND NOT IOS AND NOT WITHOUT_OPENGLEW)
 	find_package(GLEW REQUIRED)
 	target_link_libraries(3rdparty_glew INTERFACE GLEW::GLEW)
 endif()
@@ -389,11 +389,11 @@ add_subdirectory(fusion EXCLUDE_FROM_ALL)
 
 
 # add nice ALIAS targets for ease of use
-if(USE_SYSTEM_LIBUSB)
-	add_library(3rdparty::libusb ALIAS usb-1.0-shared)
-else()
-	add_library(3rdparty::libusb ALIAS usb-1.0-static)
-endif()
+# if(USE_SYSTEM_LIBUSB)
+# 	add_library(3rdparty::libusb ALIAS usb-1.0-shared)
+# else()
+# 	add_library(3rdparty::libusb ALIAS usb-1.0-static)
+# endif()
 
 if (ANDROID)
 	add_subdirectory(libadrenotools)

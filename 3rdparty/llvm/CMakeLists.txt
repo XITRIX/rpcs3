@@ -168,14 +168,16 @@ if(WITH_LLVM)
 			list (APPEND LLVM_ADDITIONAL_LIBS PerfJITEvents)
 		endif()
 
-		llvm_map_components_to_libnames(LLVM_LIBS
-			${LLVM_TARGETS_TO_BUILD}
-			${LLVM_ADDITIONAL_LIBS}
-			Core
-			ExecutionEngine
-			MCJIT
-			Passes
-		)
+		if (NOT IOS)
+			llvm_map_components_to_libnames(LLVM_LIBS
+				${LLVM_TARGETS_TO_BUILD}
+				${LLVM_ADDITIONAL_LIBS}
+				Core
+				ExecutionEngine
+				MCJIT
+				Passes
+			)
+		endif()
 	else()
 		set(LLVM_LIBS LLVM)
 	endif()

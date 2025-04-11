@@ -442,7 +442,7 @@ target_link_libraries(rpcs3_emu
         3rdparty::ffmpeg 3rdparty::sdl3
         3rdparty::opengl 3rdparty::stblib
         3rdparty::vulkan 3rdparty::glew
-        3rdparty::libusb 3rdparty::wolfssl
+        3rdparty::wolfssl
         Vulkan::Headers
         rpcsx::fw::ps3::api
 

@@ -20,4 +20,4 @@ macro(append_compiler_flags)
 	endforeach()
 endmacro()
 
-include(libusb.cmake)
+# include(libusb.cmake)
