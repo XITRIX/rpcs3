@@ -2781,7 +2781,7 @@ public:
 			fmt::throw_exception("Compilation failed");
 		}
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) && !TARGET_OS_IOS
 		pthread_jit_write_protect_np(false);
 #endif
 
@@ -2825,7 +2825,7 @@ public:
 			fs::write_file(m_spurt->get_cache_path() + "spu-ir.log", fs::create + fs::write + fs::append, llvm_log);
 		}
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) && !TARGET_OS_IOS
 		pthread_jit_write_protect_np(true);
 #endif
 #if defined(ARCH_ARM64)

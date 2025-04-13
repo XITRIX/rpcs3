@@ -1449,7 +1449,7 @@ public:
 			return false;
 		}
 
-		m_tracker.set_image_data(m_camera_info.buffer.get_ptr(), m_camera_info.bytesize, m_camera_info.width, m_camera_info.height, m_camera_info.format);
+//		m_tracker.set_image_data(m_camera_info.buffer.get_ptr(), m_camera_info.bytesize, m_camera_info.width, m_camera_info.height, m_camera_info.format);
 		return true;
 	}
 
@@ -1476,10 +1476,10 @@ public:
 			return;
 		}
 
-		if (!g_cfg_move.load())
-		{
+//		if (!g_cfg_move.load())
+//		{
 			cellGem.notice("Could not load PS Move config. Using defaults.");
-		}
+//		}
 
 		auto& gem = g_fxo->get<gem_config>();
 
@@ -1528,10 +1528,10 @@ public:
 						}
 						else
 						{
-							const cfg_ps_move* config = ::at32(g_cfg_move.move, gem_num);
-							binding.device->color_override.r = config->r.get();
-							binding.device->color_override.g = config->g.get();
-							binding.device->color_override.b = config->b.get();
+//							const cfg_ps_move* config = ::at32(g_cfg_move.move, gem_num);
+//							binding.device->color_override.r = config->r.get();
+//							binding.device->color_override.g = config->g.get();
+//							binding.device->color_override.b = config->b.get();
 						}
 					}
 				}
@@ -1541,25 +1541,25 @@ public:
 			for (u32 gem_num = 0; gem_num < CELL_GEM_MAX_NUM; gem_num++)
 			{
 				const auto& controller = gem.controllers[gem_num];
-				const cfg_ps_move* config = g_cfg_move.move[gem_num];
+//				const cfg_ps_move* config = g_cfg_move.move[gem_num];
 
-				m_tracker.set_active(gem_num, controller.enabled_tracking && controller.status == CELL_GEM_STATUS_READY);
-				m_tracker.set_hue(gem_num, g_cfg.io.allow_move_hue_set_by_game ? controller.hue : config->hue);
-				m_tracker.set_hue_threshold(gem_num, config->hue_threshold);
-				m_tracker.set_saturation_threshold(gem_num, config->saturation_threshold);
+//				m_tracker.set_active(gem_num, controller.enabled_tracking && controller.status == CELL_GEM_STATUS_READY);
+//				m_tracker.set_hue(gem_num, g_cfg.io.allow_move_hue_set_by_game ? controller.hue : config->hue);
+//				m_tracker.set_hue_threshold(gem_num, config->hue_threshold);
+//				m_tracker.set_saturation_threshold(gem_num, config->saturation_threshold);
 			}
 
-			m_tracker.set_min_radius(static_cast<f32>(g_cfg_move.min_radius) / 100.0f);
-			m_tracker.set_max_radius(static_cast<f32>(g_cfg_move.max_radius) / 100.0f);
+//			m_tracker.set_min_radius(static_cast<f32>(g_cfg_move.min_radius) / 100.0f);
+//			m_tracker.set_max_radius(static_cast<f32>(g_cfg_move.max_radius) / 100.0f);
 
 			// Process camera image
-			m_tracker.process_image();
+//			m_tracker.process_image();
 
 			// Update cellGem with results
 			{
 				std::lock_guard lock(mutex);
-				m_hues = m_tracker.hues();
-				m_info = m_tracker.info();
+//				m_hues = m_tracker.hues();
+//				m_info = m_tracker.info();
 
 				for (u32 gem_num = 0; gem_num < CELL_GEM_MAX_NUM; gem_num++)
 				{
@@ -1591,7 +1591,7 @@ private:
 	atomic_t<u32> m_wake_up_tracker = 0;
 	atomic_t<u32> m_tracker_done = 0;
 	atomic_t<bool> m_busy = false;
-	ps_move_tracker<false> m_tracker{};
+//	ps_move_tracker<false> m_tracker{};
 	CellCameraInfoEx m_camera_info{};
 	std::array<u32, 360> m_hues{};
 	std::array<ps_move_info, CELL_GEM_MAX_NUM> m_info{};
@@ -2571,8 +2571,8 @@ error_code cellGemForceRGB(u32 gem_num, f32 r, f32 g, f32 b)
 	controller.sphere_rgb = gem_config::gem_color(r, g, b);
 	controller.enabled_tracking = false;
 
-	const auto [h, s, v] = ps_move_tracker<false>::rgb_to_hsv(r, g, b);
-	controller.hue = h;
+//	const auto [h, s, v] = ps_move_tracker<false>::rgb_to_hsv(r, g, b);
+//	controller.hue = h;
 
 	return CELL_OK;
 }
@@ -3589,8 +3589,8 @@ error_code cellGemTrackHues(vm::cptr<u32> req_hues, vm::ptr<u32> res_hues)
 				break;
 			}
 
-			const auto [r, g, b] = ps_move_tracker<false>::hsv_to_rgb(gem.controllers[i].hue, 1.0f, 1.0f);
-			gem.controllers[i].sphere_rgb = gem_config::gem_color(r / 255.0f, g / 255.0f, b / 255.0f);
+//			const auto [r, g, b] = ps_move_tracker<false>::hsv_to_rgb(gem.controllers[i].hue, 1.0f, 1.0f);
+//			gem.controllers[i].sphere_rgb = gem_config::gem_color(r / 255.0f, g / 255.0f, b / 255.0f);
 
 			if (res_hues)
 			{
@@ -3620,8 +3620,8 @@ error_code cellGemTrackHues(vm::cptr<u32> req_hues, vm::ptr<u32> res_hues)
 			gem.controllers[i].hue_set = true;
 			gem.controllers[i].hue = req_hues[i];
 
-			const auto [r, g, b] = ps_move_tracker<false>::hsv_to_rgb(gem.controllers[i].hue, 1.0f, 1.0f);
-			gem.controllers[i].sphere_rgb = gem_config::gem_color(r / 255.0f, g / 255.0f, b / 255.0f);
+//			const auto [r, g, b] = ps_move_tracker<false>::hsv_to_rgb(gem.controllers[i].hue, 1.0f, 1.0f);
+//			gem.controllers[i].sphere_rgb = gem_config::gem_color(r / 255.0f, g / 255.0f, b / 255.0f);
 
 			if (res_hues)
 			{

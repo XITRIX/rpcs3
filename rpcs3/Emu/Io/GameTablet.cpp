@@ -134,22 +134,22 @@ void usb_device_gametablet::control_transfer(u8 bmRequestType, u8 bRequest, u16 
 	// Control transfers are nearly instant
 	switch (bmRequestType)
 	{
-	case 0U /*silences warning*/ | LIBUSB_ENDPOINT_OUT | LIBUSB_REQUEST_TYPE_CLASS | LIBUSB_RECIPIENT_INTERFACE: // 0x21
-		switch (bRequest)
-		{
-		case 0x09: // SET_REPORT
-			ensure(buf_size > 2);
-			gametablet_log.trace("Leds: %s/%s/%s/%s",
-				buf[2] & 1 ? "ON" : "OFF",
-				buf[2] & 2 ? "ON" : "OFF",
-				buf[2] & 4 ? "ON" : "OFF",
-				buf[2] & 8 ? "ON" : "OFF");
-			break;
-		default:
-			gametablet_log.error("Unhandled Request: 0x%02X/0x%02X", bmRequestType, bRequest);
-			break;
-		}
-		break;
+//	case 0U /*silences warning*/ | LIBUSB_ENDPOINT_OUT | LIBUSB_REQUEST_TYPE_CLASS | LIBUSB_RECIPIENT_INTERFACE: // 0x21
+//		switch (bRequest)
+//		{
+//		case 0x09: // SET_REPORT
+//			ensure(buf_size > 2);
+//			gametablet_log.trace("Leds: %s/%s/%s/%s",
+//				buf[2] & 1 ? "ON" : "OFF",
+//				buf[2] & 2 ? "ON" : "OFF",
+//				buf[2] & 4 ? "ON" : "OFF",
+//				buf[2] & 8 ? "ON" : "OFF");
+//			break;
+//		default:
+//			gametablet_log.error("Unhandled Request: 0x%02X/0x%02X", bmRequestType, bRequest);
+//			break;
+//		}
+//		break;
 	default:
 		usb_device_emulated::control_transfer(bmRequestType, bRequest, wValue, wIndex, wLength, buf_size, buf, transfer);
 		break;

@@ -2,6 +2,8 @@
 
 #ifdef _WIN32
 #define VK_USE_PLATFORM_WIN32_KHR
+#elif TARGET_OS_IOS
+#define VK_USE_PLATFORM_IOS_MVK
 #elif defined(__APPLE__)
 #define VK_USE_PLATFORM_MACOS_MVK
 #elif defined(ANDROID)

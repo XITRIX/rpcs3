@@ -191,6 +191,6 @@ if (WITH_RPCS3)
     add_subdirectory(ps3fw)
 endif()
 
-if (NOT ANDROID AND WITH_RPCS3_QT_UI AND WITH_RPCS3)
+if (NOT ANDROID AND NOT IOS AND WITH_RPCS3_QT_UI AND WITH_RPCS3)
     add_subdirectory(rpcs3qt-legacy)
 endif()

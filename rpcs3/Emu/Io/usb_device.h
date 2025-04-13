@@ -8,7 +8,7 @@
 #pragma GCC diagnostic ignored "-Wextra"
 #pragma GCC diagnostic ignored "-Wold-style-cast"
 #endif
-#include <libusb.h>
+//#include <libusb.h>
 #ifdef _MSC_VER
 #pragma warning(pop)
 #else
@@ -96,11 +96,11 @@ struct UsbTransfer
 	UsbDeviceIsoRequest iso_request{};
 
 	std::vector<u8> setup_buf;
-	libusb_transfer* transfer = nullptr;
-	bool busy = false;
+//	libusb_transfer* transfer = nullptr;
+	bool busy                 = false;
 
 	// For control transfers
-	u8* control_destbuf = nullptr;
+	u8 *control_destbuf = nullptr;
 
 	// For fake transfers
 	bool fake = false;
@@ -208,7 +208,7 @@ protected:
 class usb_device_passthrough : public usb_device
 {
 public:
-	usb_device_passthrough(libusb_device* _device, libusb_device_descriptor& desc, const std::array<u8, 7>& location);
+//	usb_device_passthrough(libusb_device* _device, libusb_device_descriptor& desc, const std::array<u8, 7>& location);
 	~usb_device_passthrough();
 
 	bool open_device() override;
@@ -221,11 +221,11 @@ public:
 	void isochronous_transfer(UsbTransfer* transfer) override;
 
 protected:
-	void send_libusb_transfer(libusb_transfer* transfer);
+//	void send_libusb_transfer(libusb_transfer* transfer);
 
 protected:
-	libusb_device* lusb_device = nullptr;
-	libusb_device_handle* lusb_handle = nullptr;
+//	libusb_device* lusb_device        = nullptr;
+//	libusb_device_handle* lusb_handle = nullptr;
 };
 
 class usb_device_emulated : public usb_device

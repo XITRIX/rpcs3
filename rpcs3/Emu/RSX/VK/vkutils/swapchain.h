@@ -4,6 +4,8 @@
 #include "swapchain_win32.hpp"
 #elif defined(ANDROID)
 #include "swapchain_android.hpp"
+#elif TARGET_OS_IOS
+#include "swapchain_ios.hpp"
 #elif defined(__APPLE__)
 #include "swapchain_macos.hpp"
 #else // Both linux and BSD families

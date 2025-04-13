@@ -17,7 +17,7 @@ typedef BOOL(WINAPI* PFNWGLSWAPINTERVALEXTPROC)(int interval);
 #undef WGL_PROC
 #undef OPENGL_PROC2
 
-#elif defined(__APPLE__)
+#elif defined(__APPLE__) && !TARGET_OS_IPHONE
 #include <OpenGL/gl.h>
 #include <OpenGL/glu.h>
 

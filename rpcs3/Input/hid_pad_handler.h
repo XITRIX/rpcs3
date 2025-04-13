@@ -4,7 +4,9 @@
 #include "util/CRC.h"
 #include "util/Thread.h"
 
+#if !TARGET_OS_IOS
 #include "hidapi.h"
+#endif
 
 #ifdef ANDROID
 #include "hidapi_libusb.h"
@@ -58,7 +60,10 @@ class HidDevice : public PadDevice
 public:
 	void close();
 
+#if !TARGET_OS_IOS
 	hid_device* hidDevice{nullptr};
+#endif
+
 #ifdef _WIN32
 	hid_device* bt_device{nullptr}; // Used in ps move handler
 #endif
@@ -113,7 +118,10 @@ protected:
 	void update_devices();
 	std::shared_ptr<Device> get_hid_device(const std::string& padId);
 
+#if !TARGET_OS_IOS
 	virtual void check_add_device(hid_device* hidDevice, hid_enumerated_device_view path, std::wstring_view serial) = 0;
+#endif
+	
 	virtual int send_output_report(Device* device) = 0;
 	virtual DataStatus get_data(Device* device) = 0;
 

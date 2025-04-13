@@ -125,23 +125,23 @@ add_library(rpcs3 STATIC
     Loader/TROPUSR.cpp
     Loader/TRP.cpp
 
-    Input/ds3_pad_handler.cpp
-    Input/ds4_pad_handler.cpp
-    Input/dualsense_pad_handler.cpp
+    # Input/ds3_pad_handler.cpp
+    # Input/ds4_pad_handler.cpp
+    # Input/dualsense_pad_handler.cpp
     Input/evdev_joystick_handler.cpp
     Input/evdev_gun_handler.cpp
-    Input/hid_pad_handler.cpp
+    # Input/hid_pad_handler.cpp
     Input/mm_joystick_handler.cpp
     Input/pad_thread.cpp
     Input/product_info.cpp
-    Input/ps_move_calibration.cpp
-    Input/ps_move_config.cpp
-    Input/ps_move_handler.cpp
-    Input/ps_move_tracker.cpp
+    # Input/ps_move_calibration.cpp
+    # Input/ps_move_config.cpp
+    # Input/ps_move_handler.cpp
+    # Input/ps_move_tracker.cpp
     Input/raw_mouse_config.cpp
     Input/raw_mouse_handler.cpp
     Input/sdl_pad_handler.cpp
-    Input/skateboard_pad_handler.cpp
+    # Input/skateboard_pad_handler.cpp
     Input/xinput_pad_handler.cpp
     Input/virtual_pad_handler.cpp
 )
@@ -169,7 +169,7 @@ target_link_libraries(rpcs3 PUBLIC
     3rdparty::zlib
     3rdparty::pugixml
     3rdparty::discordRPC
-    3rdparty::hidapi
+    # 3rdparty::hidapi
     # 3rdparty::libusb
     3rdparty::libpng
     3rdparty::7zip

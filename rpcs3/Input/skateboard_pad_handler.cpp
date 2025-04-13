@@ -149,6 +149,7 @@ void skateboard_pad_handler::init_config(cfg_pad* cfg)
 	cfg->from_default();
 }
 
+#if !TARGET_OS_IOS
 void skateboard_pad_handler::check_add_device(hid_device* hidDevice, hid_enumerated_device_view path, std::wstring_view wide_serial)
 {
 	if (!hidDevice)
@@ -196,6 +197,7 @@ void skateboard_pad_handler::check_add_device(hid_device* hidDevice, hid_enumera
 
 	skateboard_log.notice("Added device: serial='%s', path='%s'", serial, device->path);
 }
+#endif
 
 skateboard_pad_handler::DataStatus skateboard_pad_handler::get_data(skateboard_device* device)
 {
