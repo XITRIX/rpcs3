@@ -105,6 +105,7 @@ if(RPCS3_FRONTEND STREQUAL "IOS")
         ../../Utilities/JITIOS.h
         ../ios/FFmpegStubs.c
         ../ios/FrontendSupport.cpp
+        ../ios/UPnPStubs.cpp
         ../ios/USBStubs.c
         ../Input/mouse_gyro_handler.cpp
         ../Input/pad_thread.cpp
@@ -497,10 +498,13 @@ target_sources(rpcs3_emu PRIVATE
     NP/rpcn_config.cpp
     NP/rpcn_countries.cpp
     NP/upnp_config.cpp
-    NP/upnp_handler.cpp
     NP/ip_address.cpp
     NP/generated/np2_structs.pb.cc
 )
+
+if(NOT RPCS3_FRONTEND STREQUAL "IOS")
+    target_sources(rpcs3_emu PRIVATE NP/upnp_handler.cpp)
+endif()
 
 # Memory
 target_sources(rpcs3_emu PRIVATE
