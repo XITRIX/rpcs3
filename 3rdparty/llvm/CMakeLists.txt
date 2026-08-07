@@ -73,6 +73,22 @@ if(WITH_LLVM)
 		endif()
 	endif()
 
+	# LLVM's generated package metadata can carry a desktop librt dependency when
+	# it was cross-compiled with static try-compile checks.  The APIs it supplies
+	# are part of libSystem on iOS, where no standalone librt exists.
+	if(RPCS3_FRONTEND STREQUAL "IOS")
+		foreach(llvm_library IN LISTS LLVM_AVAILABLE_LIBS)
+			if(TARGET "${llvm_library}")
+				get_target_property(llvm_link_libraries "${llvm_library}" INTERFACE_LINK_LIBRARIES)
+				if(llvm_link_libraries)
+					list(REMOVE_ITEM llvm_link_libraries rt)
+					set_property(TARGET "${llvm_library}" PROPERTY
+						INTERFACE_LINK_LIBRARIES "${llvm_link_libraries}")
+				endif()
+			endif()
+		endforeach()
+	endif()
+
 	if (STATIC_LINK_LLVM)
 		if (NOT DEFINED LLVM_TARGETS_TO_BUILD)
 			if(COMPILER_ARM)
