@@ -16,7 +16,7 @@
 
 #include <charconv>
 
-			#if defined(__APPLE__) && !defined(RPCS3_IOS)
+#if defined(__APPLE__) && !defined(RPCS3_IOS)
 #include <pthread.h>
 #endif
 
@@ -71,7 +71,7 @@ namespace
 		// handler, only this helper thread exits.
 		named_thread worker("LLVM JIT", [&]()
 		{
-			#if defined(__APPLE__) && !defined(RPCS3_IOS)
+#if defined(__APPLE__) && !defined(RPCS3_IOS)
 			jit_write_protect(false);
 #endif
 			g_llvm_fatal_message = &error;
