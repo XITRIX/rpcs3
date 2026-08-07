@@ -10,9 +10,13 @@
 #include "util/asm.hpp"
 #include "Crypto/unzip.h"
 
+#ifdef RPCS3_IOS
+#include "JITIOS.h"
+#endif
+
 #include <charconv>
 
-#if defined(__APPLE__)
+			#if defined(__APPLE__) && !defined(RPCS3_IOS)
 #include <pthread.h>
 #endif
 
@@ -67,8 +71,8 @@ namespace
 		// handler, only this helper thread exits.
 		named_thread worker("LLVM JIT", [&]()
 		{
-#if defined(__APPLE__)
-			pthread_jit_write_protect_np(false);
+			#if defined(__APPLE__) && !defined(RPCS3_IOS)
+			jit_write_protect(false);
 #endif
 			g_llvm_fatal_message = &error;
 
@@ -76,7 +80,7 @@ namespace
 
 			g_llvm_fatal_message = nullptr;
 #if defined(__APPLE__)
-			pthread_jit_write_protect_np(true);
+			jit_write_protect(true);
 #endif
 		});
 
@@ -234,6 +238,18 @@ struct MemoryManager1 : llvm::RTDyldMemoryManager
 	u64 data_ro_ptr = 0;
 	u64 data_rw_ptr = 0;
 
+#ifdef RPCS3_IOS
+	struct code_mapping
+	{
+		u8* local = nullptr;
+		u8* target = nullptr;
+		usz size = 0;
+	};
+
+	std::vector<code_mapping> m_pending_code;
+	std::vector<code_mapping> m_code;
+#endif
+
 	// First fallback for non-existing symbols
 	// May be a memory container internally
 	std::function<u64(const std::string&)> m_symbols_cement;
@@ -241,12 +257,17 @@ struct MemoryManager1 : llvm::RTDyldMemoryManager
 	MemoryManager1(std::function<u64(const std::string&)> symbols_cement = {}) noexcept
 		: m_symbols_cement(std::move(symbols_cement))
 	{
+#ifdef RPCS3_IOS
+		m_code_mems = ensure(rpcs3::ios::jit::reserve(c_max_size));
+		m_data_rw_mems = ensure(utils::memory_reserve(c_max_size, false));
+#else
 		auto ptr = reinterpret_cast<u8*>(utils::memory_reserve(c_max_size * 3, true));
 		m_code_mems = ptr;
 		// ptr += c_max_size;
 		// m_data_ro_mems = ptr;
 		 ptr += c_max_size;
 		m_data_rw_mems = ptr;
+#endif
 	}
 
 	MemoryManager1(const MemoryManager1&) = delete;
@@ -260,7 +281,12 @@ struct MemoryManager1 : llvm::RTDyldMemoryManager
 		// utils::memory_decommit(m_code_mems, how_much(code_ptr));
 		// utils::memory_decommit(m_data_ro_mems, how_much(data_ro_ptr));
 		// utils::memory_decommit(m_data_rw_mems, how_much(data_rw_ptr));
+#ifdef RPCS3_IOS
+		rpcs3::ios::jit::release(m_code_mems, c_max_size);
+		utils::memory_release(m_data_rw_mems, c_max_size);
+#else
 		utils::memory_decommit(m_code_mems, c_max_size * 3, true);
+#endif
 	}
 
 	llvm::JITSymbol findSymbol(const std::string& name) override
@@ -327,7 +353,16 @@ struct MemoryManager1 : llvm::RTDyldMemoryManager
 		{
 			const u64 pagea = utils::align(oldp, page_quarter);
 			const u64 psize = utils::align(std::min(newp, c_page_size) - pagea, page_quarter);
-			utils::memory_commit(reinterpret_cast<u8*>(block) + (pagea % c_max_size), psize, prot);
+#ifdef RPCS3_IOS
+			if (prot == utils::protection::wx)
+			{
+				ensure(rpcs3::ios::jit::commit(reinterpret_cast<u8*>(block) + (pagea % c_max_size), psize));
+			}
+			else
+#endif
+			{
+				utils::memory_commit(reinterpret_cast<u8*>(block) + (pagea % c_max_size), psize, prot);
+			}
 
 			// Advance
 			oldp = pagea + psize;
@@ -338,7 +373,16 @@ struct MemoryManager1 : llvm::RTDyldMemoryManager
 			// Allocate pages on demand
 			const u64 pagea = utils::align(oldp, c_page_size);
 			const u64 psize = utils::align(newp - pagea, c_page_size);
-			utils::memory_commit(reinterpret_cast<u8*>(block) + (pagea % c_max_size), psize, prot);
+#ifdef RPCS3_IOS
+			if (prot == utils::protection::wx)
+			{
+				ensure(rpcs3::ios::jit::commit(reinterpret_cast<u8*>(block) + (pagea % c_max_size), psize));
+			}
+			else
+#endif
+			{
+				utils::memory_commit(reinterpret_cast<u8*>(block) + (pagea % c_max_size), psize, prot);
+			}
 		}
 
 		return reinterpret_cast<u8*>(block) + (olda % c_max_size);
@@ -346,8 +390,27 @@ struct MemoryManager1 : llvm::RTDyldMemoryManager
 
 	u8* allocateCodeSection(uptr size, uint align, uint /*sec_id*/, llvm::StringRef /*sec_name*/) override
 	{
-		return allocate(code_ptr, m_code_mems, size, align, utils::protection::wx);
+		u8* const target = allocate(code_ptr, m_code_mems, size, align, utils::protection::wx);
+#ifdef RPCS3_IOS
+		u8* const local = ensure(static_cast<u8*>(rpcs3::ios::jit::writable(target, size)));
+		m_pending_code.push_back({local, target, size});
+		m_code.push_back({local, target, size});
+		return local;
+#else
+		return target;
+#endif
 	}
+
+#ifdef RPCS3_IOS
+	void notifyObjectLoaded(llvm::ExecutionEngine* engine, const llvm::object::ObjectFile&) override
+	{
+		for (const code_mapping& item : m_pending_code)
+		{
+			engine->mapSectionAddress(item.local, reinterpret_cast<u64>(item.target));
+		}
+		m_pending_code.clear();
+	}
+#endif
 
 	u8* allocateDataSection(uptr size, uint align, uint /*sec_id*/, llvm::StringRef /*sec_name*/, bool is_ro) override
 	{
@@ -362,6 +425,12 @@ struct MemoryManager1 : llvm::RTDyldMemoryManager
 
 	bool finalizeMemory(std::string* = nullptr) override
 	{
+#ifdef RPCS3_IOS
+		for (const code_mapping& item : m_code)
+		{
+			rpcs3::ios::jit::flush(item.target, item.size);
+		}
+#endif
 		return false;
 	}
 
@@ -380,6 +449,18 @@ struct MemoryManager2 : llvm::RTDyldMemoryManager
 	// First fallback for non-existing symbols
 	// May be a memory container internally
 	std::function<u64(const std::string&)> m_symbols_cement;
+
+#ifdef RPCS3_IOS
+	struct code_mapping
+	{
+		u8* local = nullptr;
+		u8* target = nullptr;
+		usz size = 0;
+	};
+
+	std::vector<code_mapping> m_pending_code;
+	std::vector<code_mapping> m_code;
+#endif
 
 	MemoryManager2(std::function<u64(const std::string&)> symbols_cement = {}) noexcept
 		: m_symbols_cement(std::move(symbols_cement))
@@ -414,8 +495,27 @@ struct MemoryManager2 : llvm::RTDyldMemoryManager
 
 	u8* allocateCodeSection(uptr size, uint align, uint /*sec_id*/, llvm::StringRef /*sec_name*/) override
 	{
-		return jit_runtime::alloc(size, align, true);
+		u8* const target = jit_runtime::alloc(size, align, true);
+#ifdef RPCS3_IOS
+		u8* const local = ensure(static_cast<u8*>(rpcs3::ios::jit::writable(target, size)));
+		m_pending_code.push_back({local, target, size});
+		m_code.push_back({local, target, size});
+		return local;
+#else
+		return target;
+#endif
 	}
+
+#ifdef RPCS3_IOS
+	void notifyObjectLoaded(llvm::ExecutionEngine* engine, const llvm::object::ObjectFile&) override
+	{
+		for (const code_mapping& item : m_pending_code)
+		{
+			engine->mapSectionAddress(item.local, reinterpret_cast<u64>(item.target));
+		}
+		m_pending_code.clear();
+	}
+#endif
 
 	u8* allocateDataSection(uptr size, uint align, uint /*sec_id*/, llvm::StringRef /*sec_name*/, bool /*is_ro*/) override
 	{
@@ -424,6 +524,12 @@ struct MemoryManager2 : llvm::RTDyldMemoryManager
 
 	bool finalizeMemory(std::string* = nullptr) override
 	{
+#ifdef RPCS3_IOS
+		for (const code_mapping& item : m_code)
+		{
+			rpcs3::ios::jit::flush(item.target, item.size);
+		}
+#endif
 		return false;
 	}
 
