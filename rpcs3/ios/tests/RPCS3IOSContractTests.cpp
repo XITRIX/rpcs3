@@ -19,6 +19,13 @@ int main()
 	config.abi_version++;
 	assert(validate_config_contract(&config) == RPCS3_IOS_INVALID_ARGUMENT);
 
+	error_store errors;
+	assert(errors.get().empty());
+	errors.set("first failure");
+	assert(errors.get() == "first failure");
+	errors.set("latest failure");
+	assert(errors.get() == "latest failure");
+
 	lifecycle state;
 	assert(state.state() == RPCS3_IOS_STATE_UNINITIALIZED);
 	assert(state.begin_initialize() == RPCS3_IOS_OK);
