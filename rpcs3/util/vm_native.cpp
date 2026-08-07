@@ -255,7 +255,11 @@ namespace utils
 		// (via shm::map), which is incompatible with MAP_JIT. Only use MAP_JIT for
 		// non-mapping regions that need JIT executable support.
 #ifdef __APPLE__
+#ifdef RPCS3_IOS
+		const int jit_flag = 0;
+#else
 		const int jit_flag = is_memory_mapping || !can_be_jit ? 0 : MAP_JIT;
+#endif
 #ifdef ARCH_ARM64
 		auto ptr = ::mmap(use_addr, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE | jit_flag | c_map_noreserve, -1, 0);
 #else
@@ -346,7 +350,9 @@ namespace utils
 		ensure(::VirtualFree(pointer, size, MEM_DECOMMIT));
 #else
 		const u64 ptr64 = reinterpret_cast<u64>(pointer);
-#if defined(__APPLE__) && defined(ARCH_ARM64)
+#if defined(RPCS3_IOS)
+		ensure(::mmap(pointer, size, PROT_NONE, MAP_FIXED | MAP_ANON | MAP_PRIVATE, -1, 0) == pointer);
+#elif defined(__APPLE__) && defined(ARCH_ARM64)
 		// Hack: on macOS, Apple explicitly fails mmap if you combine MAP_FIXED and MAP_JIT.
 		// So we unmap the space and just hope it maps to the same address we got before instead.
 		// The Xcode manpage says the pointer is a hint and the OS will try to map at the hint location
@@ -380,7 +386,9 @@ namespace utils
 		memory_commit(pointer, size, prot);
 #else
 		const u64 ptr64 = reinterpret_cast<u64>(pointer);
-#if defined(__APPLE__) && defined(ARCH_ARM64)
+#if defined(RPCS3_IOS)
+		ensure(::mmap(pointer, size, +prot, MAP_FIXED | MAP_ANON | MAP_PRIVATE, -1, 0) == pointer);
+#elif defined(__APPLE__) && defined(ARCH_ARM64)
 		ensure(::munmap(pointer, size) != -1);
 		ensure(::mmap(pointer, size, +prot,  MAP_ANON | MAP_PRIVATE | (can_be_jit ? MAP_JIT : 0), -1, 0) == pointer);
 #else
