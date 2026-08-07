@@ -53,6 +53,7 @@ std::string g_last_error;
 rpcs3_ios_config g_config{};
 std::string g_application_support_path;
 std::string g_cache_path;
+bool g_emu_started = false;
 
 void set_error(std::string message)
 {
@@ -308,6 +309,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		Emu.SetHasGui(false);
 		Emu.SetHeadless(true);
 		Emu.SetUsr("00000001");
+		g_emu_started = true;
 		Emu.Init();
 		g_lifecycle.finish_initialize(true);
 		emit_log(4, "RPCS3 Emu.Init completed with the iOS null frontend");
@@ -421,11 +423,15 @@ extern "C" rpcs3_ios_status rpcs3_ios_shutdown(void) noexcept
 	}
 	try
 	{
-		if (!Emu.IsStopped())
+		if (g_emu_started)
 		{
-			Emu.Kill(false);
+			if (!Emu.IsStopped())
+			{
+				Emu.Kill(false);
+			}
+			jit_runtime::finalize();
+			g_emu_started = false;
 		}
-		jit_runtime::finalize();
 		logs::listener::sync_all();
 		g_lifecycle.finish_shutdown(true);
 		emit_log(4, "RPCS3Core shutdown completed");
