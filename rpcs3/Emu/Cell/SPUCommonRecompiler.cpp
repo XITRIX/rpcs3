@@ -1484,15 +1484,22 @@ spu_function_t spu_runtime::rebuild_ubertrampoline(u32 id_inst)
 	{
 #if defined(ARCH_ARM64)
 		// Allocate some writable executable memory
-		u8* const wxptr = jit_runtime::alloc(size0 * 128 + 16, 16);
+		const usz allocation_size = size0 * 128 + 16;
+		u8* const wxptr = jit_runtime::alloc(allocation_size, 16);
 
 		if (!wxptr)
 		{
 			return nullptr;
 		}
 
-		// Raw assembly pointer
-		u8* raw = wxptr;
+		// Relocations and published function pointers use the stable RX address,
+		// while instruction bytes are emitted through the shared writable alias.
+		u8* const writable_base = ensure(jit_runtime::writable(wxptr, allocation_size));
+		u8* raw = writable_base;
+		const auto executable_at = [&](const u8* writable)
+		{
+			return wxptr + (writable - writable_base);
+		};
 
 		auto make_jump = [&](asmjit::arm::CondCode op, auto target)
 		{
@@ -1690,7 +1697,7 @@ spu_function_t spu_runtime::rebuild_ubertrampoline(u32 id_inst)
 #elif defined(ARCH_ARM64)
 				//	Rewrite jump address
 				{
-					u64 raw64 = reinterpret_cast<u64>(raw);
+					u64 raw64 = reinterpret_cast<u64>(executable_at(raw));
 					memcpy(w.rel32 - 8, &raw64, 8);
 				}
 #else
@@ -1756,7 +1763,7 @@ spu_function_t spu_runtime::rebuild_ubertrampoline(u32 id_inst)
 #if defined(ARCH_X64)
 			ensure(raw + 12 <= wxptr + size0 * 22 + 16); // "Asm overflow"
 #elif defined(ARCH_ARM64)
-			ensure(raw + (4 * 4) <= wxptr + size0 * 128 + 16);
+			ensure(raw + (4 * 4) <= writable_base + allocation_size);
 #else
 #error "Unimplemented"
 #endif
@@ -1854,7 +1861,7 @@ spu_function_t spu_runtime::rebuild_ubertrampoline(u32 id_inst)
 #if defined(ARCH_X64)
 				make_jump(0x82, raw); // jb rel32 (stub)
 #elif defined(ARCH_ARM64)
-				make_jump(asmjit::arm::CondCode::kUnsignedLT, raw);
+				make_jump(asmjit::arm::CondCode::kUnsignedLT, executable_at(raw));
 #else
 #error "Unimplemented"
 #endif
@@ -1907,7 +1914,7 @@ spu_function_t spu_runtime::rebuild_ubertrampoline(u32 id_inst)
 #if defined(ARCH_X64)
 						make_jump(0x87, raw); // ja rel32 (stub)
 #elif defined(ARCH_ARM64)
-						make_jump(asmjit::arm::CondCode::kUnsignedGT, raw);
+						make_jump(asmjit::arm::CondCode::kUnsignedGT, executable_at(raw));
 #else
 #error "Unimplemented"
 #endif
@@ -1936,7 +1943,7 @@ spu_function_t spu_runtime::rebuild_ubertrampoline(u32 id_inst)
 #if defined(ARCH_X64)
 						make_jump(0xe9, raw); // jmp rel32 (stub)
 #elif defined(ARCH_ARM64)
-						make_jump(asmjit::arm::CondCode::kAlways, raw);
+						make_jump(asmjit::arm::CondCode::kAlways, executable_at(raw));
 #else
 #error "Unimplemented"
 #endif
@@ -1953,7 +1960,7 @@ spu_function_t spu_runtime::rebuild_ubertrampoline(u32 id_inst)
 #if defined(ARCH_X64)
 					make_jump(0xe9, raw); // jmp rel32 (stub)
 #elif defined(ARCH_ARM64)
-					make_jump(asmjit::arm::CondCode::kAlways, raw);
+					make_jump(asmjit::arm::CondCode::kAlways, executable_at(raw));
 #else
 #error "Unimplemented"
 #endif
@@ -1969,9 +1976,17 @@ spu_function_t spu_runtime::rebuild_ubertrampoline(u32 id_inst)
 		workload.clear();
 		result = reinterpret_cast<spu_function_t>(reinterpret_cast<u64>(wxptr));
 
+#if defined(ARCH_ARM64)
+		jit_runtime::flush(wxptr, raw - writable_base);
+#endif
+
 		std::string fname;
 		fmt::append(fname, "__ub%u", m_flat_list.size());
+#if defined(ARCH_ARM64)
+		jit_announce(wxptr, raw - writable_base, fname);
+#else
 		jit_announce(wxptr, raw - wxptr, fname);
+#endif
 	}
 
 	if (auto _old = stuff_it->trampoline.compare_and_swap(nullptr, result))
@@ -2069,11 +2084,11 @@ spu_function_t spu_runtime::make_branch_patchpoint(u16 data) const
 	return reinterpret_cast<spu_function_t>(raw);
 #elif defined(ARCH_ARM64)
 #if defined(__APPLE__)
-	pthread_jit_write_protect_np(false);
+	jit_write_protect(false);
 #endif
 
 	u8* const patch_fn = ensure(jit_runtime::alloc(36, 16));
-	u8* raw = patch_fn;
+	u8* raw = ensure(jit_runtime::writable(patch_fn, 36));
 
 	// adr x21, #16
 	*raw++ = 0x95;
@@ -2109,13 +2124,11 @@ spu_function_t spu_runtime::make_branch_patchpoint(u16 data) const
 	*raw++ = static_cast<u8>(data >> 8);
 	*raw++ = static_cast<u8>(data & 0xff);
 
-#if defined(__APPLE__)
-	pthread_jit_write_protect_np(true);
+#if defined(__APPLE__) && !defined(RPCS3_IOS)
+	jit_write_protect(true);
 #endif
 
-	// Flush all cache lines after potentially writing executable code
-	asm("ISB");
-	asm("DSB ISH");
+	jit_runtime::flush(patch_fn, 36);
 
 	return reinterpret_cast<spu_function_t>(patch_fn);
 #else
@@ -2173,17 +2186,15 @@ void spu_recompiler_base::dispatch(spu_thread& spu, void*, u8* rip)
 
 		const u64 target = reinterpret_cast<u64>(spu_runtime::tr_all);
 		std::memcpy(bytes + 8, &target, 8);
-#if defined(__APPLE__)
-		pthread_jit_write_protect_np(false);
+#if defined(__APPLE__) && !defined(RPCS3_IOS)
+		jit_write_protect(false);
 #endif
-		atomic_storage<u128>::release(*reinterpret_cast<u128*>(rip), result);
-#if defined(__APPLE__)
-		pthread_jit_write_protect_np(true);
+		auto* const writable_rip = ensure(jit_runtime::writable(rip, sizeof(result)));
+		atomic_storage<u128>::release(*reinterpret_cast<u128*>(writable_rip), result);
+#if defined(__APPLE__) && !defined(RPCS3_IOS)
+		jit_write_protect(true);
 #endif
-
-		// Flush all cache lines after potentially writing executable code
-		asm("ISB");
-		asm("DSB ISH");
+		jit_runtime::flush(rip, sizeof(result));
 #else
 #error "Unimplemented"
 #endif
@@ -2206,7 +2217,7 @@ void spu_recompiler_base::dispatch(spu_thread& spu, void*, u8* rip)
 	}
 
 #if defined(__APPLE__)
-	pthread_jit_write_protect_np(false);
+	jit_write_protect(false);
 #endif
 	auto program = spu.jit->analyse(spu._ptr<u32>(0), spu.pc);
 #ifdef ARCH_ARM64
@@ -2232,7 +2243,7 @@ void spu_recompiler_base::dispatch(spu_thread& spu, void*, u8* rip)
 		}
 	}
 #if defined(__APPLE__)
-	pthread_jit_write_protect_np(true);
+	jit_write_protect(true);
 #endif
 
 #if defined(ARCH_ARM64)
@@ -2321,17 +2332,15 @@ void spu_recompiler_base::branch(spu_thread& spu, void*, u8* rip)
 
 	const u64 target = reinterpret_cast<u64>(func);
 	std::memcpy(bytes + 8, &target, 8);
-#if defined(__APPLE__)
-	pthread_jit_write_protect_np(false);
+#if defined(__APPLE__) && !defined(RPCS3_IOS)
+	jit_write_protect(false);
 #endif
-	atomic_storage<u128>::release(*reinterpret_cast<u128*>(rip), result);
-#if defined(__APPLE__)
-	pthread_jit_write_protect_np(true);
+	auto* const writable_rip = ensure(jit_runtime::writable(rip, sizeof(result)));
+	atomic_storage<u128>::release(*reinterpret_cast<u128*>(writable_rip), result);
+#if defined(__APPLE__) && !defined(RPCS3_IOS)
+	jit_write_protect(true);
 #endif
-
-	// Flush all cache lines after potentially writing executable code
-	asm("ISB");
-	asm("DSB ISH");
+	jit_runtime::flush(rip, sizeof(result));
 #else
 #error "Unimplemented"
 #endif

@@ -2730,7 +2730,7 @@ void ppu_thread::exec_task()
 {
 #ifdef __APPLE__
 	// Ensure correct state before executing JIT code
-	pthread_jit_write_protect_np(true);
+	jit_write_protect(true);
 #endif
 
 	if (g_cfg.core.ppu_decoder != ppu_decoder_type::_static)
@@ -5272,7 +5272,7 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 
 #ifdef __APPLE__
 		// Restore write-protection state (modified by build_function_asm)
-		pthread_jit_write_protect_np(false);
+		jit_write_protect(false);
 #endif
 
 		// Full sample may exist already, but is very far away
@@ -5820,7 +5820,7 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 
 	// Jit can be null if the loop doesn't ever enter.
 #ifdef __APPLE__
-	pthread_jit_write_protect_np(false);
+	jit_write_protect(false);
 #endif
 	// Try to patch all single and unregistered BLRs with the same function (TODO: Maybe generalize it into PIC code detection and patching)
 	ppu_intrp_func_t BLR_func = nullptr;
@@ -5853,7 +5853,7 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 		named_thread sym_worker("PPU Symbol Resolver", [&]()
 		{
 			// jit_compiler::get() may write to executable memory (relocations)
-			pthread_jit_write_protect_np(false);
+			jit_write_protect(false);
 #else
 		{
 #endif
@@ -5875,8 +5875,9 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 			ppu_log.notice("Executing %u symbol resolvers", jit_mod.symbol_resolvers.size());
 
 #ifdef __APPLE__
-			// Virtual memory mapped by MAP_JIT cannot be executed until pthread_jit_write_protect_np(true)
-			pthread_jit_write_protect_np(true);
+			// Restore the executable state on macOS. This is a no-op for the
+			// iOS mirror-mapped backend because RX addresses are always stable.
+			jit_write_protect(true);
 #endif
 
 			index = umax;

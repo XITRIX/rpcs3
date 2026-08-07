@@ -9,6 +9,10 @@
 #include "util/v128.hpp"
 #include "util/simd.hpp"
 
+#ifdef RPCS3_IOS
+#include "JITIOS.h"
+#endif
+
 #ifdef __linux__
 #include <unistd.h>
 #define CAN_OVERCOMMIT
@@ -122,12 +126,16 @@ static u8* get_jit_memory()
 	// Reserve 2G memory (magic static)
 	static void* const s_memory2 = []() -> void*
 	{
+#ifdef RPCS3_IOS
+		return ensure(rpcs3::ios::jit::reserve(0x80000000));
+#else
 		void* ptr = utils::memory_reserve(0x80000000, true);
 #ifdef CAN_OVERCOMMIT
 		utils::memory_commit(ptr, 0x80000000);
 		utils::memory_protect(ptr, 0x40000000, utils::protection::wx);
 #endif
 		return ptr;
+#endif
 	}();
 
 	return static_cast<u8*>(s_memory2);
@@ -196,7 +204,18 @@ static u8* add_jit_memory(usz size, usz align)
 	{
 #ifndef CAN_OVERCOMMIT
 		// Commit more memory.
+#ifdef RPCS3_IOS
+		if constexpr (Prot == utils::protection::wx)
+		{
+			ensure(rpcs3::ios::jit::commit(pointer + olda, newa - olda));
+		}
+		else
+		{
+			utils::memory_commit(pointer + olda, newa - olda, Prot);
+		}
+#else
 		utils::memory_commit(pointer + olda, newa - olda, Prot);
+#endif
 #endif
 		// Acknowledge committed memory
 		Ctr.atomic_op([&](u64& ctr)
@@ -239,6 +258,11 @@ void* jit_runtime_base::_add(asmjit::CodeHolder* code, usz align) noexcept
 		asmjit::VirtMem::ProtectJitReadWriteScope rwScope(p, codeSize);
 #endif
 
+		auto* writable = p;
+#ifdef RPCS3_IOS
+		writable = ensure(static_cast<uchar*>(rpcs3::ios::jit::writable(p, codeSize)));
+#endif
+
 		for (asmjit::Section* section : code->_sections)
 		{
 			if (section->offset() + section->bufferSize() > utils::align<usz>(codeSize, align))
@@ -246,9 +270,13 @@ void* jit_runtime_base::_add(asmjit::CodeHolder* code, usz align) noexcept
 				fmt::throw_exception("CodeHolder section exceeds range: Section->offset: 0x%x, Section->bufferSize: 0x%x, alloted-memory=0x%x", section->offset(), section->bufferSize(), utils::align<usz>(codeSize, align));
 			}
 
-			std::memcpy(p + section->offset(), section->data(), section->bufferSize());
+			std::memcpy(writable + section->offset(), section->data(), section->bufferSize());
 		}
 	}
+
+#ifdef RPCS3_IOS
+	rpcs3::ios::jit::flush(p, codeSize);
+#endif
 
 	return p;
 }
@@ -283,6 +311,25 @@ u8* jit_runtime::alloc(usz size, usz align, bool exec) noexcept
 	}
 }
 
+u8* jit_runtime::writable(void* executable, usz size) noexcept
+{
+#ifdef RPCS3_IOS
+	return static_cast<u8*>(rpcs3::ios::jit::writable(executable, size));
+#else
+	(void)size;
+	return static_cast<u8*>(executable);
+#endif
+}
+
+void jit_runtime::flush(const void* executable, usz size) noexcept
+{
+#ifdef RPCS3_IOS
+	rpcs3::ios::jit::flush(executable, size);
+#else
+	asmjit::VirtMem::flushInstructionCache(const_cast<void*>(executable), size);
+#endif
+}
+
 u8* jit_runtime::peek(bool exec) noexcept
 {
 	if (exec)
@@ -311,11 +358,14 @@ void jit_runtime::initialize()
 
 void jit_runtime::finalize() noexcept
 {
-#ifdef __APPLE__
-	pthread_jit_write_protect_np(false);
+#if defined(__APPLE__) && !defined(RPCS3_IOS)
+	jit_write_protect(false);
 #endif
 	// Reset JIT memory
-#ifdef CAN_OVERCOMMIT
+#ifdef RPCS3_IOS
+	// iOS executable mappings retain their debugger-prepared RX identity. Reuse
+	// them and restore the initialization snapshot through their RW aliases.
+#elif defined(CAN_OVERCOMMIT)
 	utils::memory_reset(get_jit_memory(), 0x80000000, true);
 	utils::memory_protect(get_jit_memory(), 0x40000000, utils::protection::wx);
 #else
@@ -326,11 +376,17 @@ void jit_runtime::finalize() noexcept
 	s_data_pos = 0;
 
 	// Restore code/data snapshot
-	std::memcpy(alloc(s_code_init.size(), 1, true), s_code_init.data(), s_code_init.size());
+	auto* const code = alloc(s_code_init.size(), 1, true);
+#ifdef RPCS3_IOS
+	std::memcpy(ensure(rpcs3::ios::jit::writable(code, s_code_init.size())), s_code_init.data(), s_code_init.size());
+	rpcs3::ios::jit::flush(code, s_code_init.size());
+#else
+	std::memcpy(code, s_code_init.data(), s_code_init.size());
+#endif
 	std::memcpy(alloc(s_data_init.size(), 1, false), s_data_init.data(), s_data_init.size());
 
-#ifdef __APPLE__
-	pthread_jit_write_protect_np(true);
+#if defined(__APPLE__) && !defined(RPCS3_IOS)
+	jit_write_protect(true);
 #endif
 #ifdef ARCH_ARM64
 	// Flush all cache lines after potentially writing executable code
@@ -348,13 +404,21 @@ jit_runtime_base& asmjit::get_global_runtime()
 	{
 		custom_runtime() noexcept
 		{
+#ifdef RPCS3_IOS
+			ensure(m_pos.raw() = static_cast<uchar*>(rpcs3::ios::jit::reserve(size)));
+#else
 			ensure(m_pos.raw() = static_cast<uchar*>(utils::memory_reserve(size, true)));
+#endif
 
 			// Initialize "end" pointer
 			m_max = m_pos + size;
 
 			// Make memory writable + executable
+#ifdef RPCS3_IOS
+			ensure(rpcs3::ios::jit::commit(m_pos, size));
+#else
 			utils::memory_commit(m_pos, size, utils::protection::wx);
+#endif
 		}
 
 		uchar* _alloc(usz size, usz align) noexcept override
@@ -399,7 +463,11 @@ uchar* asmjit::inline_runtime::_alloc(usz size, usz align) noexcept
 
 asmjit::inline_runtime::~inline_runtime()
 {
+#ifdef RPCS3_IOS
+	rpcs3::ios::jit::flush(m_data, m_size);
+#else
 	utils::memory_protect(m_data, m_size, utils::protection::rx);
+#endif
 }
 
 #if defined(ARCH_X64)

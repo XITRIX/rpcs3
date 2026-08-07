@@ -3910,13 +3910,13 @@ public:
 		// it with an RAII guard so execute mode is restored on every
 		// exit path (the early "return nullptr" below would otherwise
 		// leave the thread in write mode permanently).
-		pthread_jit_write_protect_np(false);
+		jit_write_protect(false);
 
 		struct jit_write_guard
 		{
 			~jit_write_guard()
 			{
-				pthread_jit_write_protect_np(true);
+				jit_write_protect(true);
 			}
 		} _jit_guard;
 #endif
@@ -4008,7 +4008,7 @@ public:
 		}
 
 #if defined(__APPLE__)
-		pthread_jit_write_protect_np(true);
+		jit_write_protect(true);
 #endif
 #if defined(ARCH_ARM64)
 		// Flush all cache lines after potentially writing executable code
