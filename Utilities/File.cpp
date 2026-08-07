@@ -20,6 +20,36 @@ std::string g_android_config_dir;
 std::string g_android_cache_dir;
 #endif
 
+#ifdef RPCS3_IOS
+namespace
+{
+std::string g_ios_config_dir;
+std::string g_ios_cache_dir;
+
+bool set_ios_directory(std::string& destination, std::string path)
+{
+	if (path.empty() || path.front() != '/')
+	{
+		return false;
+	}
+
+	while (path.size() > 1 && path.back() == fs::delim[0])
+	{
+		path.pop_back();
+	}
+
+	path += fs::delim;
+	if (!fs::create_path(path))
+	{
+		return false;
+	}
+
+	destination = std::move(path);
+	return true;
+}
+}
+#endif
+
 #ifdef _WIN32
 
 #include "Utilities/StrUtil.h"
@@ -2502,6 +2532,12 @@ const std::string& fs::get_config_dir([[maybe_unused]] bool get_config_subdirect
 #ifdef ANDROID
 	return g_android_config_dir;
 #else
+#ifdef RPCS3_IOS
+	if (!g_ios_config_dir.empty())
+	{
+		return g_ios_config_dir;
+	}
+#endif
 	// Use magic static
 	static const std::string s_dir = []
 	{
@@ -2599,6 +2635,12 @@ const std::string& fs::get_cache_dir()
 #ifdef ANDROID
 	return g_android_cache_dir;
 #else
+#ifdef RPCS3_IOS
+	if (!g_ios_cache_dir.empty())
+	{
+		return g_ios_cache_dir;
+	}
+#endif
 	static const std::string s_dir = []
 	{
 		std::string dir;
@@ -2635,6 +2677,18 @@ const std::string& fs::get_cache_dir()
 	return s_dir;
 #endif
 }
+
+#ifdef RPCS3_IOS
+bool fs::set_config_dir(std::string path)
+{
+	return g_ios_config_dir.empty() && set_ios_directory(g_ios_config_dir, std::move(path));
+}
+
+bool fs::set_cache_dir(std::string path)
+{
+	return g_ios_cache_dir.empty() && set_ios_directory(g_ios_cache_dir, std::move(path));
+}
+#endif
 
 const std::string& fs::get_log_dir()
 {
