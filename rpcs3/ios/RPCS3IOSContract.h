@@ -2,8 +2,28 @@
 
 #include "RPCS3IOS.h"
 
+#include <string>
+#include <utility>
+
 namespace rpcs3::ios
 {
+class error_store final
+{
+public:
+	void set(std::string message)
+	{
+		m_message = std::move(message);
+	}
+
+	const std::string& get() const noexcept
+	{
+		return m_message;
+	}
+
+private:
+	std::string m_message;
+};
+
 inline rpcs3_ios_status validate_config_contract(const rpcs3_ios_config* config) noexcept
 {
 	if (!config || config->abi_version != RPCS3_IOS_ABI_VERSION ||
