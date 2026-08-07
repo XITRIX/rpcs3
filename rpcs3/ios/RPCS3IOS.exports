@@ -1,0 +1,7 @@
+_rpcs3_ios_abi_version
+_rpcs3_ios_build_info
+_rpcs3_ios_initialize
+_rpcs3_ios_run_llvm_self_test
+_rpcs3_ios_get_state
+_rpcs3_ios_shutdown
+_rpcs3_ios_last_error
