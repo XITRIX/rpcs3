@@ -55,6 +55,15 @@ using native_args = std::array<asmjit::a64::Gp, 4>;
 
 void jit_announce(uptr func, usz size, std::string_view name);
 
+inline void jit_write_protect(bool executable) noexcept
+{
+#if defined(__APPLE__) && !defined(RPCS3_IOS)
+	pthread_jit_write_protect_np(executable);
+#else
+	(void)executable;
+#endif
+}
+
 void jit_announce(auto* func, usz size, std::string_view name)
 {
 	jit_announce(uptr(func), size, name);
@@ -92,6 +101,14 @@ struct jit_runtime final : jit_runtime_base
 
 	// Allocate memory
 	static u8* alloc(usz size, usz align, bool exec = true) noexcept;
+
+	// Return a writable view for an executable allocation. On iOS this is the
+	// shared RW alias; elsewhere the executable pointer is already writable at
+	// the call sites that use this helper.
+	static u8* writable(void* executable, usz size) noexcept;
+
+	// Publish modified instructions to the processor.
+	static void flush(const void* executable, usz size) noexcept;
 
 	// Allocate 0 bytes, observe memory location
 	// Same as alloc(0, 1, exec)
@@ -433,12 +450,12 @@ namespace asmjit
 #endif
 }
 
-#ifdef __APPLE__
+#if defined(__APPLE__) && !defined(RPCS3_IOS)
 struct jit_write_guard
 {
 	jit_write_guard() noexcept
 	{
-		pthread_jit_write_protect_np(false);
+		jit_write_protect(false);
 
 		// Ensure stores are not reordered by the compiler
 		atomic_fence_acq_rel();
@@ -449,18 +466,21 @@ struct jit_write_guard
 		// Ensure stores are not reordered by the compiler
 		atomic_fence_seq_cst();
 
-		pthread_jit_write_protect_np(true);
+		jit_write_protect(true);
 	}
 };
 #else
-#define jit_write_guard [[maybe_unused]] int
+struct jit_write_guard
+{
+	jit_write_guard() noexcept = default;
+};
 #endif
 
 // Build runtime function with asmjit::X86Assembler
 template <typename FT, typename Asm = native_asm, typename F>
 inline FT build_function_asm(std::string_view name, F&& builder, ::jit_runtime* custom_runtime = nullptr, bool reduced_size = false)
 {
-	jit_write_guard jit_guard;
+	[[maybe_unused]] jit_write_guard jit_guard;
 
 	using namespace asmjit;
 
