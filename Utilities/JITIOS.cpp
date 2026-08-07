@@ -278,7 +278,10 @@ void flush(const void* executable, usz size) noexcept
 		return;
 	}
 
-	::sys_dcache_flush(const_cast<void*>(executable), size);
+	// Clean through the address that received the writes, then invalidate the
+	// instruction view that will actually be executed.
+	void* const alias = writable(executable, size);
+	::sys_dcache_flush(alias ? alias : const_cast<void*>(executable), size);
 	::sys_icache_invalidate(const_cast<void*>(executable), size);
 }
 
