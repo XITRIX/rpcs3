@@ -3,8 +3,6 @@
 #include <unordered_map>
 
 #ifdef RPCS3_IOS
-struct IGDdatas {};
-struct UPNPUrls {};
 #else
 #include <miniupnpc.h>
 #endif
@@ -27,6 +25,7 @@ private:
 	void remove_port_redir_external(u16 external_port, std::string_view protocol, bool verbose = true);
 
 private:
+#ifndef RPCS3_IOS
 	atomic_t<bool> m_active = false;
 
 	shared_mutex m_mutex;
@@ -34,4 +33,5 @@ private:
 	IGDdatas m_igd_data{};
 	UPNPUrls m_igd_urls{};
 	std::unordered_map<std::string, std::unordered_map<u16, u16>> m_bindings;
+#endif
 };
