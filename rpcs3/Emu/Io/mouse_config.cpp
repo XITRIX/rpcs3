@@ -4,20 +4,26 @@
 #include "Utilities/File.h"
 
 mouse_config::mouse_config()
+#ifdef RPCS3_IOS
+	: cfg_name()
+#else
 	: cfg_name(fs::get_config_dir(true) + "config_mouse.yml")
+#endif
 {
 }
 
 bool mouse_config::exist() const
 {
-	return fs::is_file(cfg_name);
+	const std::string config_path = cfg_name.empty() ? fs::get_config_dir(true) + "config_mouse.yml" : cfg_name;
+	return fs::is_file(config_path);
 }
 
 bool mouse_config::load()
 {
 	g_cfg_mouse.from_default();
 
-	if (fs::file cfg_file{cfg_name, fs::read})
+	const std::string config_path = cfg_name.empty() ? fs::get_config_dir(true) + "config_mouse.yml" : cfg_name;
+	if (fs::file cfg_file{config_path, fs::read})
 	{
 		if (const std::string content = cfg_file.to_string(); !content.empty())
 		{
@@ -30,7 +36,8 @@ bool mouse_config::load()
 
 void mouse_config::save()
 {
-	fs::pending_file file(cfg_name);
+	const std::string config_path = cfg_name.empty() ? fs::get_config_dir(true) + "config_mouse.yml" : cfg_name;
+	fs::pending_file file(config_path);
 
 	if (file.file)
 	{
