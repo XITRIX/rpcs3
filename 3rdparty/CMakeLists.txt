@@ -15,6 +15,11 @@ endif()
 # Dummy target to use when lib isn't available
 add_library(3rdparty_dummy_lib INTERFACE)
 
+set(RPCS3_IOS_FRONTEND OFF)
+if(RPCS3_FRONTEND STREQUAL "IOS")
+	set(RPCS3_IOS_FRONTEND ON)
+endif()
+
 
 # ZLib
 add_subdirectory(zlib EXCLUDE_FROM_ALL)
@@ -51,6 +56,10 @@ else()
 endif()
 
 # libusb
+if(RPCS3_IOS_FRONTEND)
+	add_library(usb-1.0-static INTERFACE)
+	target_include_directories(usb-1.0-static SYSTEM INTERFACE libusb/libusb/libusb)
+else()
 if(CMAKE_SYSTEM_NAME MATCHES "DragonFly|FreeBSD")
 	pkg_check_modules(LIBUSB REQUIRED IMPORTED_TARGET libusb-1.0>=1.0 )
 	cmake_dependent_option(USE_SYSTEM_LIBUSB "Use system libusb-1.0 as shared library" ON
@@ -83,10 +92,16 @@ else()
 		endif()
 	endif()
 endif()
+endif()
 
 
 # hidapi
-add_subdirectory(hidapi)
+if(RPCS3_IOS_FRONTEND)
+	add_library(3rdparty_hidapi INTERFACE)
+	target_include_directories(3rdparty_hidapi SYSTEM INTERFACE hidapi/hidapi/hidapi)
+else()
+	add_subdirectory(hidapi)
+endif()
 
 # glslang
 add_subdirectory(glslang EXCLUDE_FROM_ALL)
@@ -124,7 +139,11 @@ add_subdirectory(stblib)
 add_subdirectory(discord-rpc)
 
 # Cubeb
-if(USE_SYSTEM_CUBEB)
+if(RPCS3_IOS_FRONTEND)
+	add_library(3rdparty_cubeb INTERFACE)
+	target_include_directories(3rdparty_cubeb SYSTEM INTERFACE cubeb/cubeb/include)
+	add_library(3rdparty::cubeb ALIAS 3rdparty_cubeb)
+elseif(USE_SYSTEM_CUBEB)
 	find_package(cubeb REQUIRED GLOBAL)
 	message(STATUS "Using system cubeb version '${cubeb_VERSION}'")
 	add_library(3rdparty::cubeb ALIAS cubeb::cubeb)
@@ -208,6 +227,15 @@ endif()
 # AsmJit
 add_subdirectory(asmjit EXCLUDE_FROM_ALL)
 
+# AsmJit only includes OSCacheControl on macOS, although the cache invalidation
+# API is also available in the iOS SDK and used by its arm64 implementation.
+# Inject the public header without carrying a private patch in the AsmJit
+# submodule.
+if(RPCS3_IOS_FRONTEND)
+    target_compile_options(asmjit PRIVATE
+        "SHELL:-include libkern/OSCacheControl.h")
+endif()
+
 # SDL3
 set(SDL3_TARGET 3rdparty_dummy_lib)
 if(USE_SDL)
@@ -232,11 +260,12 @@ if(USE_SDL)
 endif()
 
 # OpenAL
-if (NOT ANDROID)
+if (NOT ANDROID AND NOT RPCS3_IOS_FRONTEND)
 	add_subdirectory(OpenAL EXCLUDE_FROM_ALL)
 else()
 	add_library(3rdparty_openal INTERFACE)
 	target_compile_definitions(3rdparty_openal INTERFACE WITHOUT_OPENAL=1)
+	target_include_directories(3rdparty_openal SYSTEM INTERFACE OpenAL/openal-soft/include/AL)
 endif()
 
 # FAudio
@@ -278,7 +307,10 @@ set_property(TARGET ${FAUDIO_TARGET} PROPERTY FOLDER "3rdparty/")
 
 
 # FFMPEG
-if(NOT ANDROID)
+if(RPCS3_IOS_FRONTEND)
+	add_library(3rdparty_ffmpeg INTERFACE)
+	target_include_directories(3rdparty_ffmpeg SYSTEM INTERFACE ffmpeg/include)
+elseif(NOT ANDROID)
 	add_library(3rdparty_ffmpeg INTERFACE)
 
 	# Select the version of ffmpeg to use, default is builtin
@@ -332,26 +364,33 @@ endif()
 # LLVM
 add_subdirectory(llvm EXCLUDE_FROM_ALL)
 
-# WOLFSSL
-add_subdirectory(wolfssl EXCLUDE_FROM_ALL)
-
-# CURL
-add_subdirectory(curl EXCLUDE_FROM_ALL)
-
-# MINIUPNP
-add_subdirectory(miniupnp EXCLUDE_FROM_ALL)
-
-# RTMIDI
-add_subdirectory(rtmidi EXCLUDE_FROM_ALL)
-
-# OPENCV
-add_subdirectory(opencv EXCLUDE_FROM_ALL)
+# OpenCV is intentionally unavailable in the first iOS milestone. Networking
+# libraries still build statically because the HLE core shares their data
+# models even when raw sockets, UPnP discovery, and the online frontend are
+# disabled at runtime.
+if(RPCS3_IOS_FRONTEND)
+	add_subdirectory(wolfssl EXCLUDE_FROM_ALL)
+	add_subdirectory(curl EXCLUDE_FROM_ALL)
+	add_subdirectory(miniupnp EXCLUDE_FROM_ALL)
+	add_subdirectory(rtmidi EXCLUDE_FROM_ALL)
+	set(OPENCV_TARGET 3rdparty_dummy_lib)
+else()
+	add_subdirectory(wolfssl EXCLUDE_FROM_ALL)
+	add_subdirectory(curl EXCLUDE_FROM_ALL)
+	add_subdirectory(miniupnp EXCLUDE_FROM_ALL)
+	add_subdirectory(rtmidi EXCLUDE_FROM_ALL)
+	add_subdirectory(opencv EXCLUDE_FROM_ALL)
+endif()
 
 # FUSION
 add_subdirectory(fusion EXCLUDE_FROM_ALL)
 
 # FERAL INTERACTIVE
-add_subdirectory(feralinteractive EXCLUDE_FROM_ALL)
+if(RPCS3_IOS_FRONTEND)
+	add_library(3rdparty_feralinteractive INTERFACE)
+else()
+	add_subdirectory(feralinteractive EXCLUDE_FROM_ALL)
+endif()
 
 # add nice ALIAS targets for ease of use
 if(USE_SYSTEM_LIBUSB)

@@ -23,7 +23,7 @@ if(UNIX AND NOT APPLE AND NOT ANDROID)
     endif()
 endif()
 
-if (NOT ANDROID)
+if (NOT ANDROID AND NOT RPCS3_FRONTEND STREQUAL "IOS")
     # Qt
     # finds Qt libraries and setups custom commands for MOC and UIC
     # Must be done here because generated MOC and UIC targets cant
@@ -34,13 +34,13 @@ endif()
 # subdirectories
 add_subdirectory(Emu)
 
-if (NOT ANDROID)
+if (NOT ANDROID AND NOT RPCS3_FRONTEND STREQUAL "IOS")
     add_subdirectory(rpcs3qt)
 endif()
 
 gen_git_version(${CMAKE_CURRENT_SOURCE_DIR})
 
-if (NOT ANDROID)
+if (NOT ANDROID AND NOT RPCS3_FRONTEND STREQUAL "IOS")
     # Build rpcs3_lib
     add_library(rpcs3_lib STATIC)
 
@@ -169,6 +169,39 @@ if (NOT ANDROID)
         install(DIRECTORY ../bin/test
             DESTINATION ${CMAKE_INSTALL_DATADIR}/rpcs3)
     endif()
+endif()
+
+if(RPCS3_FRONTEND STREQUAL "IOS")
+    add_library(RPCS3Core SHARED
+        ios/RPCS3IOS.cpp
+        ios/RPCS3IOS.h
+        ios/RPCS3IOSCapabilities.h
+        ios/RPCS3IOS.exports
+    )
+
+    target_link_libraries(RPCS3Core PRIVATE rpcs3_emu)
+    target_include_directories(RPCS3Core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ios")
+    target_compile_definitions(RPCS3Core PRIVATE RPCS3_IOS_CORE_BUILD=1)
+    set_source_files_properties(ios/RPCS3IOS.cpp PROPERTIES COMPILE_OPTIONS -fexceptions)
+
+    set_target_properties(RPCS3Core PROPERTIES
+        OUTPUT_NAME RPCS3Core
+        FRAMEWORK FALSE
+        INSTALL_NAME_DIR "@rpath"
+        BUILD_WITH_INSTALL_RPATH TRUE
+        INSTALL_RPATH "@loader_path"
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN TRUE
+        XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO
+    )
+
+    target_link_options(RPCS3Core PRIVATE
+        "LINKER:-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/ios/RPCS3IOS.exports"
+        "LINKER:-dead_strip"
+    )
+
+    install(TARGETS RPCS3Core LIBRARY DESTINATION Frameworks)
 endif()
 
 # Unit tests
