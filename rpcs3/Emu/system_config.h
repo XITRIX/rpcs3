@@ -21,7 +21,7 @@ struct cfg_root : cfg::node
 	public:
 		node_core(cfg::node* _this) : cfg::node(_this, "Core") {}
 
-		cfg::_enum<ppu_decoder_type> ppu_decoder{this, "PPU Decoder", ppu_decoder_type::llvm};
+		cfg::_enum<ppu_decoder_type> ppu_decoder{this, "PPU Decoder", ppu_decoder_type::_static};
 		cfg::_int<1, 8> ppu_threads{this, "PPU Threads", 2}; // Amount of PPU threads running simultaneously (must be 2)
 		cfg::_bool ppu_debug{this, "PPU Debug"};
 		cfg::_bool ppu_call_history{this, "PPU Calling History"}; // Enable PPU calling history recording
@@ -32,7 +32,7 @@ struct cfg_root : cfg::node
 				return std::thread::hardware_concurrency() * 2;
 			}};
 		cfg::_bool ppu_llvm_greedy_mode{this, "PPU LLVM Greedy Mode", false, false};
-		cfg::_bool llvm_precompilation{this, "LLVM Precompilation", true};
+		cfg::_bool llvm_precompilation{this, "LLVM Precompilation", false};
 		cfg::_enum<thread_scheduler_mode> thread_scheduler{this, "Thread Scheduler Mode", thread_scheduler_mode::os};
 		cfg::_bool set_daz_and_ftz{this, "Set DAZ and FTZ", false};
 		cfg::_enum<spu_decoder_type> spu_decoder{this, "SPU Decoder", spu_decoder_type::llvm};

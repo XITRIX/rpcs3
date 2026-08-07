@@ -22,6 +22,12 @@
 #include <arm_neon.h>
 #endif
 
+#if defined(__APPLE__)
+#if defined(__arm__) || defined(__arm64__) || defined(__aarch64__)
+#define IOS_PLATFORM
+#endif
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <math.h>
@@ -1927,7 +1933,7 @@ inline v128 gv_muladdfs(const v128& a, const v128& b, const v128& c)
 inline v128 gv_rmuladds_hds16(const v128& a, const v128& b, const v128& c)
 {
 #if defined(ARCH_ARM64)
-#if defined(ANDROID)
+#if defined(ANDROID) || defined(IOS_PLATFORM)
 	// This function used in optimized PPU interpreter only, we do not use interperters in android
 	return a;
 #else

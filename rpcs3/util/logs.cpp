@@ -150,8 +150,57 @@ namespace logs
 		std::vector<stored_message> messages{};
 	};
 
+class test_listener
+{
+	// Next listener (linked list)
+//	atomic_t<listener*> m_next{};
+
+	friend struct message;
+
+public:
+	test_listener() = default;
+
+//	virtual ~test_listener() {}
+
+	// Process log message
+	virtual void log(u64 stamp, const message& msg, const std::string& prefix, const std::string& text) = 0;
+//
+//	// Flush contents (file writer)
+//	virtual void sync() {}
+//
+//	// Close file handle after flushing to disk (hazardous)
+//	virtual void close_prematurely() {}
+//
+//	// Add new listener
+//	static void add(listener*) {}
+//
+//	// Special purpose
+//	void broadcast(const stored_message&) const {}
+//
+//	// Flush log to disk
+//	static void sync_all() {}
+//
+//	// Close file handle after flushing to disk (hazardous)
+//	static void close_all_prematurely() {}
+};
+
+	struct Test final : public test_listener {
+		void log(u64, const message&, const std::string&, const std::string&) override
+		{
+			// Do nothing
+		}
+	};
+
+	static Test* test_function() {
+		static Test* test = new Test();
+//		static Test test{};
+		return test;
+	}
+
+//	static root_listener logger{};
 	static root_listener* get_logger()
 	{
+		auto test = test_function();
 		// Use magic static
 		static root_listener logger{};
 		return &logger;
@@ -385,7 +434,8 @@ logs::registerer::registerer(channel& _ch)
 {
 	std::lock_guard lock(g_mutex);
 
-	get_logger()->channels.emplace(_ch.name, &_ch);
+	auto log = get_logger();
+	log->channels.emplace(_ch.name, &_ch);
 }
 
 void logs::message::broadcast(const char* fmt, const fmt_type_info* sup, ...) const
