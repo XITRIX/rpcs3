@@ -18,6 +18,15 @@ int main()
 	config.cache_path = "/tmp/rpcs3-cache";
 	config.abi_version++;
 	assert(validate_config_contract(&config) == RPCS3_IOS_INVALID_ARGUMENT);
+	config.abi_version = RPCS3_IOS_ABI_VERSION;
+	config.struct_size = sizeof(config) - 1;
+	assert(validate_config_contract(&config) == RPCS3_IOS_INVALID_ARGUMENT);
+	config.struct_size = sizeof(config);
+	config.application_support_path = "";
+	assert(validate_config_contract(&config) == RPCS3_IOS_INVALID_ARGUMENT);
+	config.application_support_path = "/tmp/rpcs3-support";
+	config.cache_path = nullptr;
+	assert(validate_config_contract(&config) == RPCS3_IOS_INVALID_ARGUMENT);
 
 	error_store errors;
 	assert(errors.get().empty());
