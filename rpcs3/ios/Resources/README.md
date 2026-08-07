@@ -7,5 +7,5 @@ implementation.
 
 RPCS3 emits `brk #0x5250`, places `0x5253` in `x17`, the command in `x16`, and
 arguments in `x0`/`x1`. Command 1 is a readiness handshake. Command 2 asks the
-debugger to prepare an existing RX range. Only those exact traps are consumed;
+debugger to prepare an existing reserved range as RX. Only those exact traps are consumed;
 other signals and breakpoints are forwarded, and the debugger remains attached.

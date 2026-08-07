@@ -198,12 +198,8 @@ bool commit(void* executable, usz size) noexcept
 	}
 
 	void* const rx = reinterpret_cast<void*>(begin);
-	if (::mprotect(rx, length, PROT_READ | PROT_EXEC) != 0)
-	{
-		set_error("Unable to make the reserved JIT range executable: " + std::string{std::strerror(errno)});
-		return false;
-	}
-
+	// The debugger owns the transition from the stable reservation to RX on
+	// iOS 26. An in-process mprotect(PROT_EXEC) would fail before that step.
 	if (protocol_call(command_prepare, rx, length) != begin)
 	{
 		::mprotect(rx, length, PROT_NONE);
