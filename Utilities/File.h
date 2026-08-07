@@ -651,6 +651,12 @@ namespace fs
 	// Get common cache directory
 	const std::string& get_cache_dir();
 
+#ifdef RPCS3_IOS
+	// Configure sandbox-owned paths before the first directory query.
+	bool set_config_dir(std::string path);
+	bool set_cache_dir(std::string path);
+#endif
+
 	// Get common log directory
 	const std::string& get_log_dir();
 

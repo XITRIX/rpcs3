@@ -1,11 +1,13 @@
 #include "stdafx.h"
 #include "pad_thread.h"
 #include "product_info.h"
+#ifndef RPCS3_IOS
 #include "ds3_pad_handler.h"
 #include "ds4_pad_handler.h"
 #include "dualsense_pad_handler.h"
 #include "skateboard_pad_handler.h"
 #include "ps_move_handler.h"
+#endif
 #ifdef _WIN32
 #include "xinput_pad_handler.h"
 #include "mm_joystick_handler.h"
@@ -15,7 +17,7 @@
 #ifdef HAVE_SDL3
 #include "sdl_pad_handler.h"
 #endif
-#ifndef ANDROID
+#if !defined(ANDROID) && !defined(RPCS3_IOS)
 #include "keyboard_pad_handler.h"
 #endif
 #include "Emu/Io/Null/NullPadHandler.h"
@@ -154,7 +156,7 @@ void pad_thread::Init()
 
 	input_log.trace("Using pad config:\n%s", g_cfg_input);
 
-#ifndef ANDROID
+#if !defined(ANDROID) && !defined(RPCS3_IOS)
 	std::shared_ptr<keyboard_pad_handler> keyptr;
 #endif
 
@@ -177,7 +179,7 @@ void pad_thread::Init()
 		{
 			if (handler_type == pad_handler::keyboard)
 			{
-#ifndef ANDROID
+#if !defined(ANDROID) && !defined(RPCS3_IOS)
 				keyptr = std::make_shared<keyboard_pad_handler>();
 				keyptr->moveToThread(static_cast<QThread*>(m_curthread));
 				keyptr->SetTargetWindow(static_cast<QWindow*>(m_curwindow));
@@ -852,6 +854,10 @@ void pad_thread::UnregisterLddPad(u32 handle)
 
 std::shared_ptr<PadHandlerBase> pad_thread::GetHandler(pad_handler type)
 {
+#ifdef RPCS3_IOS
+	(void)type;
+	return std::make_shared<NullPadHandler>();
+#else
 	switch (type)
 	{
 	case pad_handler::null:
@@ -889,6 +895,7 @@ std::shared_ptr<PadHandlerBase> pad_thread::GetHandler(pad_handler type)
 	}
 
 	return nullptr;
+#endif
 }
 
 void pad_thread::InitPadConfig(cfg_pad& cfg, pad_handler type, std::shared_ptr<PadHandlerBase>& handler)
