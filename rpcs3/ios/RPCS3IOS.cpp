@@ -51,6 +51,8 @@ std::mutex g_api_mutex;
 rpcs3::ios::lifecycle g_lifecycle;
 std::string g_last_error;
 rpcs3_ios_config g_config{};
+std::string g_application_support_path;
+std::string g_cache_path;
 
 void set_error(std::string message)
 {
@@ -275,7 +277,6 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		return result;
 	}
 
-	g_config = *config;
 	if (!rpcs3::ios::jit::is_ready())
 	{
 		set_error(rpcs3::ios::jit::last_error());
@@ -283,15 +284,21 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		return RPCS3_IOS_JIT_UNAVAILABLE;
 	}
 
-	if (!fs::set_config_dir(config->application_support_path) || !fs::set_cache_dir(config->cache_path))
-	{
-		set_error("Unable to configure writable RPCS3 sandbox directories");
-		g_lifecycle.finish_initialize(false);
-		return RPCS3_IOS_INVALID_ARGUMENT;
-	}
-
 	try
 	{
+		g_application_support_path = config->application_support_path;
+		g_cache_path = config->cache_path;
+		g_config = *config;
+		g_config.application_support_path = g_application_support_path.c_str();
+		g_config.cache_path = g_cache_path.c_str();
+
+		if (!fs::set_config_dir(g_config.application_support_path) || !fs::set_cache_dir(g_config.cache_path))
+		{
+			set_error("Unable to configure writable RPCS3 sandbox directories");
+			g_lifecycle.finish_initialize(false);
+			return RPCS3_IOS_INVALID_ARGUMENT;
+		}
+
 		g_log_listener = std::make_unique<callback_log_listener>();
 		logs::listener::add(g_log_listener.get());
 		Emu.SetCallbacks(make_callbacks());
