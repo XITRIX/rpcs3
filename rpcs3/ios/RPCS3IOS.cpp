@@ -49,7 +49,7 @@ namespace
 {
 std::mutex g_api_mutex;
 rpcs3::ios::lifecycle g_lifecycle;
-std::string g_last_error;
+rpcs3::ios::error_store g_last_error;
 rpcs3_ios_config g_config{};
 std::string g_application_support_path;
 std::string g_cache_path;
@@ -57,7 +57,7 @@ bool g_emu_started = false;
 
 void set_error(std::string message)
 {
-	g_last_error = std::move(message);
+	g_last_error.set(std::move(message));
 }
 
 void emit_log(int32_t level, std::string_view message)
@@ -454,7 +454,7 @@ extern "C" const char* rpcs3_ios_last_error(void) noexcept
 {
 	thread_local std::string copy;
 	std::lock_guard lock(g_api_mutex);
-	copy = g_last_error;
+	copy = g_last_error.get();
 	return copy.c_str();
 }
 
