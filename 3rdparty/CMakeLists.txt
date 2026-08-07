@@ -364,17 +364,17 @@ endif()
 # LLVM
 add_subdirectory(llvm EXCLUDE_FROM_ALL)
 
-# WOLFSSL
-add_subdirectory(wolfssl EXCLUDE_FROM_ALL)
-
-# CURL
-add_subdirectory(curl EXCLUDE_FROM_ALL)
-
-# MINIUPNP
-add_subdirectory(miniupnp EXCLUDE_FROM_ALL)
-
-# RTMIDI
-add_subdirectory(rtmidi EXCLUDE_FROM_ALL)
+if(RPCS3_IOS_FRONTEND)
+	add_subdirectory(wolfssl EXCLUDE_FROM_ALL)
+	add_subdirectory(curl EXCLUDE_FROM_ALL)
+	add_library(3rdparty_miniupnpc INTERFACE)
+	add_subdirectory(rtmidi EXCLUDE_FROM_ALL)
+else()
+	add_subdirectory(wolfssl EXCLUDE_FROM_ALL)
+	add_subdirectory(curl EXCLUDE_FROM_ALL)
+	add_subdirectory(miniupnp EXCLUDE_FROM_ALL)
+	add_subdirectory(rtmidi EXCLUDE_FROM_ALL)
+endif()
 
 # FUSION
 add_subdirectory(fusion EXCLUDE_FROM_ALL)
