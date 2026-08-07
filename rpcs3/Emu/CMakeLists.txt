@@ -99,6 +99,24 @@ if(APPLE)
     )
 endif()
 
+if(RPCS3_FRONTEND STREQUAL "IOS")
+    target_sources(rpcs3_emu PRIVATE
+        ../../Utilities/JITIOS.cpp
+        ../../Utilities/JITIOS.h
+        ../ios/FFmpegStubs.c
+        ../ios/FrontendSupport.cpp
+        ../ios/USBStubs.c
+        ../Input/mouse_gyro_handler.cpp
+        ../Input/pad_thread.cpp
+        ../Input/product_info.cpp
+        ../Input/ps_move_config.cpp
+        ../Input/ps_move_tracker.cpp
+        ../rpcs3_version.cpp
+        CPU/Backends/AArch64/AArch64Common.cpp
+        CPU/Backends/AArch64/AArch64Signal.cpp
+    )
+endif()
+
 target_include_directories(rpcs3_emu PUBLIC "${CMAKE_SOURCE_DIR}")
 
 set_source_files_properties("../../Utilities/JITLLVM.cpp" "../../Utilities/JITASM.cpp" PROPERTIES
@@ -150,9 +168,14 @@ target_sources(rpcs3_emu PRIVATE
     Audio/audio_utils.cpp
     Audio/AudioDumper.cpp
     Audio/AudioBackend.cpp
-    Audio/Cubeb/CubebBackend.cpp
-    Audio/Cubeb/cubeb_enumerator.cpp
 )
+
+if(NOT RPCS3_FRONTEND STREQUAL "IOS")
+    target_sources(rpcs3_emu PRIVATE
+        Audio/Cubeb/CubebBackend.cpp
+        Audio/Cubeb/cubeb_enumerator.cpp
+    )
+endif()
 
 if(USE_FAUDIO)
     find_package(SDL3)
@@ -703,6 +726,7 @@ target_link_libraries(rpcs3_emu
         3rdparty::protobuf
         3rdparty::pugixml
         3rdparty::vulkanmemoryallocator
+        3rdparty::fusion
         Threads::Threads
     PRIVATE
         3rdparty::glslang
@@ -713,6 +737,13 @@ target_link_libraries(rpcs3_emu
         3rdparty::zstd
         3rdparty::libcurl
 )
+
+if(RPCS3_FRONTEND STREQUAL "IOS")
+    target_link_libraries(rpcs3_emu PUBLIC
+        "-framework Foundation"
+        iconv
+    )
+endif()
 
 if(APPLE)
     check_function_exists(clock_gettime HAVE_CLOCK_GETTIME)
