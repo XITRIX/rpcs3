@@ -113,7 +113,9 @@ if(RPCS3_FRONTEND STREQUAL "IOS")
         ../Input/ps_move_config.cpp
         ../Input/ps_move_tracker.cpp
         ../rpcs3_version.cpp
+        CPU/Backends/AArch64/AArch64ASM.cpp
         CPU/Backends/AArch64/AArch64Common.cpp
+        CPU/Backends/AArch64/AArch64JIT.cpp
         CPU/Backends/AArch64/AArch64Signal.cpp
     )
 endif()
