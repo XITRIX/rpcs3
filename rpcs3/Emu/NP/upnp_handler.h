@@ -2,7 +2,12 @@
 
 #include <unordered_map>
 
+#ifdef RPCS3_IOS
+struct IGDdatas {};
+struct UPNPUrls {};
+#else
 #include <miniupnpc.h>
+#endif
 
 #include "upnp_config.h"
 #include "Utilities/mutex.h"
