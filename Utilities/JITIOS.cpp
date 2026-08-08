@@ -22,8 +22,6 @@
 
 namespace
 {
-constexpr u64 command_ping = 1;
-constexpr u64 command_prepare = 2;
 constexpr u32 breakpoint_instruction = 0xd4200000u |
 	(static_cast<u32>(rpcs3::ios::jit::breakpoint_immediate) << 5);
 
@@ -78,8 +76,7 @@ void trap_fallback(int signal, siginfo_t* info, void* raw_context)
 
 	const u64 command = state.__x[16];
 	if (instruction != breakpoint_instruction ||
-		state.__x[17] != rpcs3::ios::jit::protocol_magic ||
-		(command != command_ping && command != command_prepare))
+		command != rpcs3::ios::jit::command_prepare_region)
 	{
 		forward_trap(signal, info, raw_context);
 		return;
@@ -94,11 +91,9 @@ u64 rpcs3_ios_jit26_protocol_call(u64, const void*, usz)
 {
 	__asm__ volatile(
 		"mov x16, x0\n"
-		"movk x16, #0x5253, lsl #16\n"
 		"mov x0, x1\n"
 		"mov x1, x2\n"
-		"mov x17, #0x5253\n"
-		"brk #0x5250\n"
+		"brk #0xf00d\n"
 		"ret\n");
 }
 
@@ -154,10 +149,20 @@ namespace rpcs3::ios::jit
 {
 bool is_ready() noexcept
 {
-	const u64 response = protocol_call(command_ping, nullptr, 0);
-	if (response != protocol_response)
+	const usz length = page_size();
+	void* const probe = ::mmap(nullptr, length, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+	if (probe == MAP_FAILED)
 	{
-		set_error("RPCS3UniversalJIT26.js is not attached or did not answer the RPCS3 handshake");
+		set_error("Unable to reserve the Universal JIT readiness page: " + std::string{std::strerror(errno)});
+		return false;
+	}
+
+	const uptr expected = reinterpret_cast<uptr>(probe);
+	const u64 response = protocol_call(command_prepare_region, probe, length);
+	::munmap(probe, length);
+	if (response != expected)
+	{
+		set_error("StikDebug's Universal JIT script is not attached or did not prepare the readiness page");
 		return false;
 	}
 
@@ -201,7 +206,7 @@ bool commit(void* executable, usz size) noexcept
 	void* const rx = reinterpret_cast<void*>(begin);
 	// The debugger owns the transition from the stable reservation to RX on
 	// iOS 26. An in-process mprotect(PROT_EXEC) would fail before that step.
-	if (protocol_call(command_prepare, rx, length) != begin)
+	if (protocol_call(command_prepare_region, rx, length) != begin)
 	{
 		::mprotect(rx, length, PROT_NONE);
 		set_error("The debugger did not prepare the requested executable range");
