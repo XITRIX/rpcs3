@@ -94,6 +94,7 @@ u64 rpcs3_ios_jit26_protocol_call(u64, const void*, usz)
 {
 	__asm__ volatile(
 		"mov x16, x0\n"
+		"movk x16, #0x5253, lsl #16\n"
 		"mov x0, x1\n"
 		"mov x1, x2\n"
 		"mov x17, #0x5253\n"
