@@ -4,9 +4,10 @@
 
 namespace rpcs3::ios::jit
 {
-inline constexpr u64 protocol_response = 0x52504353334a4954ull;
-inline constexpr u16 breakpoint_immediate = 0x5250;
-inline constexpr u16 protocol_magic = 0x5253;
+// StikDebug Universal JIT ABI: brk #0xf00d dispatches the command in x16.
+// Command 1 prepares the x0/x1 address range for executable mappings.
+inline constexpr u16 breakpoint_immediate = 0xf00d;
+inline constexpr u64 command_prepare_region = 1;
 
 bool is_ready() noexcept;
 void* reserve(usz size) noexcept;
