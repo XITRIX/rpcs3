@@ -10,6 +10,8 @@
 const RPCS3_BRK_IMMEDIATE = 0x5250;
 const RPCS3_BRK_INSTRUCTION = (0xd4200000 | (RPCS3_BRK_IMMEDIATE << 5)) >>> 0;
 const RPCS3_PROTOCOL_MAGIC = 0x5253n;
+const RPCS3_PROTOCOL_MAGIC_SHIFT = 16n;
+const RPCS3_PROTOCOL_COMMAND_MASK = 0xffffn;
 const RPCS3_PROTOCOL_RESPONSE = 0x52504353334a4954n;
 const RPCS3_COMMAND_PING = 1n;
 const RPCS3_COMMAND_PREPARE = 2n;
@@ -91,6 +93,23 @@ function forwardStop(stop, info) {
     return send_command(`vCont;S${info.signal}:${info.thread}`);
 }
 
+function protocolCommand(stop, info) {
+    const encoded = readRegister(stop, info.thread, 0x10);
+    if (encoded === null) {
+        return null;
+    }
+
+    // Protocol v2 carries both the discriminator and command in x16. Apple
+    // debugserver expedites x16 in stop replies, unlike arbitrary registers.
+    if ((encoded >> RPCS3_PROTOCOL_MAGIC_SHIFT) === RPCS3_PROTOCOL_MAGIC) {
+        return encoded & RPCS3_PROTOCOL_COMMAND_MASK;
+    }
+
+    // Continue accepting the original layout for already-installed builds.
+    const legacyMagic = readRegister(stop, info.thread, 0x11);
+    return legacyMagic === RPCS3_PROTOCOL_MAGIC ? encoded : null;
+}
+
 function handleRPCS3Stop(stop, info) {
     const pc = readRegister(stop, info.thread, 0x20);
     if (pc === null) {
@@ -102,9 +121,8 @@ function handleRPCS3Stop(stop, info) {
         return false;
     }
 
-    const command = readRegister(stop, info.thread, 0x10);
-    const magic = readRegister(stop, info.thread, 0x11);
-    if (command === null || magic !== RPCS3_PROTOCOL_MAGIC) {
+    const command = protocolCommand(stop, info);
+    if (command === null) {
         return false;
     }
 
