@@ -19,6 +19,8 @@ mkdir -p "${OUTPUT_ROOT}"
     -o "${OUTPUT_ROOT}/JITAliasRegistryTests"
 "${OUTPUT_ROOT}/JITAliasRegistryTests"
 
-if command -v node >/dev/null 2>&1; then
-    node "${SCRIPT_DIR}/RPCS3UniversalJIT26Tests.js"
-fi
+"${CXX_COMPILER}" -std=c++20 -Wall -Wextra -Werror \
+    -I "${SOURCE_ROOT}" -I "${SOURCE_ROOT}/rpcs3" \
+    "${SCRIPT_DIR}/JITUniversalProtocolTests.cpp" \
+    -o "${OUTPUT_ROOT}/JITUniversalProtocolTests"
+"${OUTPUT_ROOT}/JITUniversalProtocolTests"
