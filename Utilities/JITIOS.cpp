@@ -150,7 +150,11 @@ namespace rpcs3::ios::jit
 bool is_ready() noexcept
 {
 	const usz length = page_size();
-	void* const probe = ::mmap(nullptr, length, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+	// Universal JIT prepares pages from an executable mapping request. Starting
+	// from PROT_NONE lets debugserver report a successful byte write while the
+	// reservation remains inaccessible, which only fails later when the first
+	// instruction-cache operation touches the RX view.
+	void* const probe = ::mmap(nullptr, length, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANON, -1, 0);
 	if (probe == MAP_FAILED)
 	{
 		set_error("Unable to reserve the Universal JIT readiness page: " + std::string{std::strerror(errno)});
@@ -177,7 +181,11 @@ void* reserve(usz size) noexcept
 		return nullptr;
 	}
 
-	void* result = ::mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+	// Request the final protection up front. On iOS 26 the mapping may not become
+	// usable for execution until the attached debugger prepares every page, but
+	// the request must still be RX; a PROT_NONE reservation cannot be promoted by
+	// Universal JIT's debugserver page writes.
+	void* result = ::mmap(nullptr, size, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANON, -1, 0);
 	if (result == MAP_FAILED)
 	{
 		set_error("Unable to reserve the executable address range: " + std::string{std::strerror(errno)});
