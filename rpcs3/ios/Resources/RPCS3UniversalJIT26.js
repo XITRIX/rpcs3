@@ -21,7 +21,7 @@ function hexRegister(stop, registerName) {
 }
 
 function decodeLE64(value) {
-    if (!value || value.length !== 16) {
+    if (!/^[0-9a-fA-F]{16}$/.test(value || '')) {
         return null;
     }
 
@@ -67,31 +67,58 @@ function writeRegister(thread, registerNumber, value) {
     return send_command(`P${registerNumber.toString(16)}=${encodeLE64(value)};thread:${thread};`);
 }
 
+function readRegister(stop, thread, registerNumber) {
+    const registerName = registerNumber.toString(16).padStart(2, '0');
+    let encoded = hexRegister(stop, registerName);
+
+    // Apple's stop reply contains only its current expedited-register set.
+    // In particular, x17 is not guaranteed to be present even though RPCS3
+    // uses it as the protocol discriminator. Read any omitted register from
+    // the stopped thread instead of treating the stop as unrelated.
+    if (encoded === null) {
+        encoded = send_command(`p${registerNumber.toString(16)};thread:${thread};`);
+    }
+
+    const value = decodeLE64(encoded);
+    if (value === null) {
+        log(`RPCS3 JIT: could not read register ${registerName} on thread ${thread}`);
+    }
+    return value;
+}
+
 function forwardStop(stop, info) {
     log(`RPCS3 JIT: forwarding signal 0x${info.signal} on thread ${info.thread}`);
     return send_command(`vCont;S${info.signal}:${info.thread}`);
 }
 
 function handleRPCS3Stop(stop, info) {
-    const pc = decodeLE64(hexRegister(stop, '20'));
-    const command = decodeLE64(hexRegister(stop, '10'));
-    const magic = decodeLE64(hexRegister(stop, '11'));
-    const address = decodeLE64(hexRegister(stop, '00'));
-    const length = decodeLE64(hexRegister(stop, '01'));
-
-    if (pc === null || command === null || magic === null || address === null || length === null) {
+    const pc = readRegister(stop, info.thread, 0x20);
+    if (pc === null) {
         return false;
     }
 
     const instruction = decodeLE32(send_command(`m${pc.toString(16)},4`));
-    if (instruction !== RPCS3_BRK_INSTRUCTION || magic !== RPCS3_PROTOCOL_MAGIC) {
+    if (instruction !== RPCS3_BRK_INSTRUCTION) {
+        return false;
+    }
+
+    const command = readRegister(stop, info.thread, 0x10);
+    const magic = readRegister(stop, info.thread, 0x11);
+    if (command === null || magic !== RPCS3_PROTOCOL_MAGIC) {
         return false;
     }
 
     let result;
     if (command === RPCS3_COMMAND_PING) {
         result = RPCS3_PROTOCOL_RESPONSE;
+        log('RPCS3 JIT: handshake accepted');
     } else if (command === RPCS3_COMMAND_PREPARE) {
+        const address = readRegister(stop, info.thread, 0x00);
+        const length = readRegister(stop, info.thread, 0x01);
+        if (address === null || length === null) {
+            return false;
+        }
+
         if (address === 0n || length === 0n) {
             result = 0n;
         } else {
@@ -117,6 +144,7 @@ function handleRPCS3Stop(stop, info) {
 const rpcPid = get_pid();
 log(`RPCS3 JIT: attaching to pid ${rpcPid}`);
 let stop = send_command(`vAttach;${rpcPid.toString(16)}`);
+log(`RPCS3 JIT: attach response = ${stop}`);
 
 // vAttach stops the process before any RPCS3 command is pending.
 stop = send_command('c');
