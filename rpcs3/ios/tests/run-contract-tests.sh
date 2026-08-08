@@ -18,3 +18,7 @@ mkdir -p "${OUTPUT_ROOT}"
     "${SCRIPT_DIR}/JITAliasRegistryTests.cpp" \
     -o "${OUTPUT_ROOT}/JITAliasRegistryTests"
 "${OUTPUT_ROOT}/JITAliasRegistryTests"
+
+if command -v node >/dev/null 2>&1; then
+    node "${SCRIPT_DIR}/RPCS3UniversalJIT26Tests.js"
+fi
