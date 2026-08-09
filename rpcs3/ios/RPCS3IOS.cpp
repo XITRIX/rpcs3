@@ -376,7 +376,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":8,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"audio\":\"remoteio\",\"input\":\"gamecontroller\",\"games\":\"pkg-iso-library\",\"media_codecs\":false}";
+	return "{\"abi\":9,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"audio\":\"remoteio\",\"input\":\"gamecontroller\",\"games\":\"pkg-iso-zip-library\",\"media_codecs\":false}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -757,6 +757,70 @@ extern "C" rpcs3_ios_status rpcs3_ios_install_iso(
 
 	g_lifecycle.finish_content_install();
 	return RPCS3_IOS_ISO_INSTALL_FAILED;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_install_zip(
+	const char* zip_path,
+	rpcs3_ios_zip_progress_callback progress_callback,
+	void* user_context) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!zip_path || !zip_path[0] || zip_path[0] != '/')
+	{
+		set_error("The ZIP path must be an absolute sandbox path");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("Stop emulation before installing a ZIP");
+		return result;
+	}
+	if (const auto result = g_lifecycle.begin_content_install(); result != RPCS3_IOS_OK)
+	{
+		set_error("RPCS3Core must be ready before installing a ZIP");
+		return result;
+	}
+
+	try
+	{
+		auto progress = [progress_callback, user_context](u32 completed, u32 total, std::string_view stage)
+		{
+			if (!progress_callback)
+			{
+				return;
+			}
+			const std::string terminated{stage};
+			progress_callback(user_context, completed, total, terminated.c_str());
+		};
+
+		emit_log(4, "Starting PlayStation 3 ZIP installation");
+		const auto install_result = rpcs3::ios::install_game_zip(zip_path, progress);
+		g_lifecycle.finish_content_install();
+		if (install_result.error != rpcs3::ios::game_zip_install_error::none)
+		{
+			set_error(install_result.detail);
+			emit_log(2, install_result.detail);
+			return install_result.error == rpcs3::ios::game_zip_install_error::invalid_zip
+				? RPCS3_IOS_ZIP_INVALID
+				: RPCS3_IOS_ZIP_INSTALL_FAILED;
+		}
+
+		emit_log(4, fmt::format("Successfully installed PlayStation 3 ZIP: %s (%s)",
+			install_result.title, install_result.title_id));
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception during ZIP installation");
+	}
+
+	g_lifecycle.finish_content_install();
+	return RPCS3_IOS_ZIP_INSTALL_FAILED;
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_enumerate_games(
