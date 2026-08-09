@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 6u
+#define RPCS3_IOS_ABI_VERSION 7u
 
 typedef enum rpcs3_ios_status
 {
@@ -32,7 +32,10 @@ typedef enum rpcs3_ios_status
     RPCS3_IOS_FIRMWARE_INVALID = 8,
     RPCS3_IOS_FIRMWARE_INSTALL_FAILED = 9,
     RPCS3_IOS_BOOT_FAILED = 10,
-    RPCS3_IOS_STOP_FAILED = 11
+    RPCS3_IOS_STOP_FAILED = 11,
+    RPCS3_IOS_PACKAGE_INVALID = 12,
+    RPCS3_IOS_PACKAGE_INSTALL_FAILED = 13,
+    RPCS3_IOS_GAME_NOT_FOUND = 14
 } rpcs3_ios_status;
 
 typedef enum rpcs3_ios_state
@@ -59,6 +62,11 @@ typedef enum rpcs3_ios_emulation_state
 
 typedef void (*rpcs3_ios_log_callback)(void* user_context, int32_t level, const char* message);
 typedef void (*rpcs3_ios_firmware_progress_callback)(
+    void* user_context,
+    uint32_t completed,
+    uint32_t total,
+    const char* stage);
+typedef void (*rpcs3_ios_package_progress_callback)(
     void* user_context,
     uint32_t completed,
     uint32_t total,
@@ -128,6 +136,22 @@ typedef struct rpcs3_ios_pad_state
     float right_trigger;
 } rpcs3_ios_pad_state;
 
+// Strings are UTF-8 and remain valid only for the duration of the synchronous
+// enumeration callback. icon_path is empty when the title has no ICON0.PNG.
+typedef struct rpcs3_ios_game_info
+{
+    uint32_t struct_size;
+    const char* title_id;
+    const char* title;
+    const char* version;
+    const char* category;
+    const char* icon_path;
+} rpcs3_ios_game_info;
+
+typedef void (*rpcs3_ios_game_callback)(
+    void* user_context,
+    const rpcs3_ios_game_info* game);
+
 RPCS3_IOS_EXPORT uint32_t rpcs3_ios_abi_version(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT const char* rpcs3_ios_build_info(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) RPCS3_IOS_NOEXCEPT;
@@ -136,6 +160,13 @@ RPCS3_IOS_EXPORT const char* rpcs3_ios_firmware_version(void) RPCS3_IOS_NOEXCEPT
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_firmware(
     const char* pup_path,
     rpcs3_ios_firmware_progress_callback progress_callback,
+    void* user_context) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_package(
+    const char* package_path,
+    rpcs3_ios_package_progress_callback progress_callback,
+    void* user_context) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_games(
+    rpcs3_ios_game_callback callback,
     void* user_context) RPCS3_IOS_NOEXCEPT;
 // Pass NULL to detach. Detach and layer replacement require stopped
 // emulation; dimensions for the currently attached layer may change live.
@@ -146,6 +177,8 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_display_surface(
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_pad_state(
     const rpcs3_ios_pad_state* state) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_boot_vsh(void) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_boot_game(
+    const char* title_id) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_emulation_state rpcs3_ios_get_emulation_state(void) RPCS3_IOS_NOEXCEPT;
 // Observational and safe to poll while boot is running. A zero total means
 // RPCS3 knows the current stage but cannot calculate a percentage yet.
