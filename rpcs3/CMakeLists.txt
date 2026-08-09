@@ -173,6 +173,8 @@ endif()
 
 if(RPCS3_FRONTEND STREQUAL "IOS")
     add_library(RPCS3Core SHARED
+        ios/FirmwareInstaller.cpp
+        ios/FirmwareInstaller.h
         ios/RPCS3IOS.cpp
         ios/RPCS3IOS.h
         ios/RPCS3IOSCapabilities.h
@@ -182,7 +184,7 @@ if(RPCS3_FRONTEND STREQUAL "IOS")
     target_link_libraries(RPCS3Core PRIVATE rpcs3_emu)
     target_include_directories(RPCS3Core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ios")
     target_compile_definitions(RPCS3Core PRIVATE RPCS3_IOS_CORE_BUILD=1)
-    set_source_files_properties(ios/RPCS3IOS.cpp PROPERTIES COMPILE_OPTIONS -fexceptions)
+    set_source_files_properties(ios/FirmwareInstaller.cpp ios/RPCS3IOS.cpp PROPERTIES COMPILE_OPTIONS -fexceptions)
 
     set_target_properties(RPCS3Core PROPERTIES
         OUTPUT_NAME RPCS3Core
