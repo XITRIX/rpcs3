@@ -5,6 +5,7 @@
 int main()
 {
 	using namespace rpcs3::ios;
+	static_assert(RPCS3_IOS_ABI_VERSION == 2);
 
 	assert(validate_config_contract(nullptr) == RPCS3_IOS_INVALID_ARGUMENT);
 	rpcs3_ios_config config{};
@@ -53,6 +54,17 @@ int main()
 	assert(state.begin_shutdown(should_shutdown) == RPCS3_IOS_OK);
 	assert(!should_shutdown);
 	assert(state.begin_initialize() == RPCS3_IOS_INVALID_STATE);
+
+	lifecycle firmware_state;
+	assert(firmware_state.begin_initialize() == RPCS3_IOS_OK);
+	firmware_state.finish_initialize(true);
+	assert(firmware_state.begin_firmware_install() == RPCS3_IOS_OK);
+	assert(firmware_state.begin_firmware_install() == RPCS3_IOS_INVALID_STATE);
+	assert(firmware_state.begin_shutdown(should_shutdown) == RPCS3_IOS_INVALID_STATE);
+	firmware_state.finish_firmware_install();
+	assert(firmware_state.state() == RPCS3_IOS_STATE_READY);
+	assert(firmware_state.begin_shutdown(should_shutdown) == RPCS3_IOS_OK);
+	assert(should_shutdown);
 
 	return 0;
 }
