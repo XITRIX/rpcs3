@@ -61,9 +61,29 @@ public:
 		m_state = success ? RPCS3_IOS_STATE_READY : RPCS3_IOS_STATE_FAILED;
 	}
 
+	rpcs3_ios_status begin_firmware_install() noexcept
+	{
+		if (m_state != RPCS3_IOS_STATE_READY || m_firmware_installing)
+		{
+			return RPCS3_IOS_INVALID_STATE;
+		}
+
+		m_firmware_installing = true;
+		return RPCS3_IOS_OK;
+	}
+
+	void finish_firmware_install() noexcept
+	{
+		m_firmware_installing = false;
+	}
+
 	rpcs3_ios_status begin_shutdown(bool& should_run) noexcept
 	{
 		should_run = false;
+		if (m_firmware_installing)
+		{
+			return RPCS3_IOS_INVALID_STATE;
+		}
 		if (m_state == RPCS3_IOS_STATE_UNINITIALIZED || m_state == RPCS3_IOS_STATE_STOPPED)
 		{
 			return RPCS3_IOS_OK;
@@ -85,5 +105,6 @@ public:
 
 private:
 	rpcs3_ios_state m_state = RPCS3_IOS_STATE_UNINITIALIZED;
+	bool m_firmware_installing = false;
 };
 }
