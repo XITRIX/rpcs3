@@ -18,12 +18,15 @@
 #include "Emu/Io/Null/null_music_handler.h"
 #include "Emu/RSX/Null/NullGSRender.h"
 #include "Emu/system_config.h"
+#include "Emu/system_progress.hpp"
+#include "Emu/vfs_config.h"
 #include "Input/pad_thread.h"
 #include "Utilities/File.h"
 #include "Utilities/JIT.h"
 #include "Utilities/JITIOS.h"
 #include "Utilities/StrFmt.h"
 #include "util/logs.hpp"
+#include "util/asm.hpp"
 #include "util/video_source.h"
 
 #ifdef LLVM_AVAILABLE
@@ -40,21 +43,105 @@
 #pragma GCC diagnostic pop
 #endif
 
+#include <algorithm>
+#include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 
 namespace
 {
 std::mutex g_api_mutex;
+std::mutex g_progress_mutex;
 rpcs3::ios::lifecycle g_lifecycle;
 rpcs3::ios::error_store g_last_error;
 rpcs3_ios_config g_config{};
 std::string g_application_support_path;
 std::string g_cache_path;
 bool g_emu_started = false;
+
+struct boot_progress_snapshot
+{
+	std::string text;
+	u32 files_total = 0;
+	u32 files_done = 0;
+	u64 file_bits_total = 0;
+	u64 file_bits_known = 0;
+	u32 modules_total = 0;
+	u32 modules_done = 0;
+
+	bool operator==(const boot_progress_snapshot&) const = default;
+};
+
+boot_progress_snapshot capture_boot_progress()
+{
+	auto read = []()
+	{
+		return boot_progress_snapshot{
+			g_progr_text.operator std::string(),
+			+g_progr_ftotal,
+			+g_progr_fdone,
+			+g_progr_ftotal_bits,
+			+g_progr_fknown_bits,
+			+g_progr_ptotal,
+			+g_progr_pdone,
+		};
+	};
+
+	boot_progress_snapshot snapshot = read();
+	for (;;)
+	{
+		boot_progress_snapshot next = read();
+		if (next == snapshot)
+		{
+			return snapshot;
+		}
+		snapshot = std::move(next);
+	}
+}
+
+rpcs3_ios_emulation_state current_emulation_state() noexcept
+{
+	switch (Emu.GetStatus(false))
+	{
+	case system_state::stopped:
+		return RPCS3_IOS_EMULATION_STATE_STOPPED;
+	case system_state::loading:
+		return RPCS3_IOS_EMULATION_STATE_LOADING;
+	case system_state::ready:
+		return RPCS3_IOS_EMULATION_STATE_READY;
+	case system_state::starting:
+		return RPCS3_IOS_EMULATION_STATE_STARTING;
+	case system_state::running:
+		return RPCS3_IOS_EMULATION_STATE_RUNNING;
+	case system_state::paused:
+	case system_state::frozen:
+		return RPCS3_IOS_EMULATION_STATE_PAUSED;
+	case system_state::stopping:
+		return RPCS3_IOS_EMULATION_STATE_STOPPING;
+	}
+
+	return RPCS3_IOS_EMULATION_STATE_UNKNOWN;
+}
+
+bool wait_for_emulation_stop() noexcept
+{
+	constexpr auto interval = std::chrono::milliseconds(5);
+	constexpr u32 attempts = 2'000;
+	for (u32 attempt = 0; attempt < attempts; attempt++)
+	{
+		if (Emu.GetStatus(false) == system_state::stopped)
+		{
+			return true;
+		}
+		std::this_thread::sleep_for(interval);
+	}
+	return Emu.GetStatus(false) == system_state::stopped;
+}
 
 void set_error(std::string message)
 {
@@ -257,7 +344,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":2,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"renderer\":\"null\",\"audio\":\"null\",\"input\":\"null\",\"media_codecs\":false}";
+	return "{\"abi\":4,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"renderer\":\"null\",\"audio\":\"null\",\"input\":\"null\",\"media_codecs\":false}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -340,6 +427,11 @@ extern "C" rpcs3_ios_status rpcs3_ios_run_llvm_self_test(uint64_t input, uint64_
 	if (g_lifecycle.state() != RPCS3_IOS_STATE_READY)
 	{
 		set_error("RPCS3Core must be ready before running the LLVM self-test");
+		return RPCS3_IOS_INVALID_STATE;
+	}
+	if (current_emulation_state() != RPCS3_IOS_EMULATION_STATE_STOPPED)
+	{
+		set_error("Stop emulation before running the LLVM self-test");
 		return RPCS3_IOS_INVALID_STATE;
 	}
 
@@ -434,6 +526,12 @@ extern "C" rpcs3_ios_status rpcs3_ios_install_firmware(
 		set_error("The firmware path must be an absolute sandbox path");
 		return RPCS3_IOS_INVALID_ARGUMENT;
 	}
+	if (g_lifecycle.state() != RPCS3_IOS_STATE_READY ||
+		current_emulation_state() != RPCS3_IOS_EMULATION_STATE_STOPPED)
+	{
+		set_error("Stop emulation before installing firmware");
+		return RPCS3_IOS_INVALID_STATE;
+	}
 	if (const auto result = g_lifecycle.begin_firmware_install(); result != RPCS3_IOS_OK)
 	{
 		set_error("RPCS3Core must be ready before installing firmware");
@@ -480,6 +578,167 @@ extern "C" rpcs3_ios_status rpcs3_ios_install_firmware(
 	return RPCS3_IOS_FIRMWARE_INSTALL_FAILED;
 }
 
+extern "C" rpcs3_ios_status rpcs3_ios_boot_vsh(void) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("RPCS3Core must be ready and emulation stopped before booting XMB");
+		return result;
+	}
+
+	try
+	{
+		const std::string vsh_path = g_cfg_vfs.get_dev_flash() + "vsh/module/vsh.self";
+		if (!fs::is_file(vsh_path))
+		{
+			set_error("PlayStation 3 firmware is missing vsh/module/vsh.self");
+			return RPCS3_IOS_BOOT_FAILED;
+		}
+
+		emit_log(4, "Booting the PlayStation 3 XMB from installed firmware");
+		Emu.SetForceBoot(true);
+		const game_boot_result result = Emu.BootGame(vsh_path);
+		if (result != game_boot_result::no_errors)
+		{
+			Emu.SetForceBoot(false);
+			set_error(fmt::format("XMB boot failed: %s", result));
+			return RPCS3_IOS_BOOT_FAILED;
+		}
+
+		emit_log(4, "PlayStation 3 XMB boot request completed");
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while booting the PlayStation 3 XMB");
+	}
+
+	Emu.SetForceBoot(false);
+	return RPCS3_IOS_BOOT_FAILED;
+}
+
+extern "C" rpcs3_ios_emulation_state rpcs3_ios_get_emulation_state(void) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (g_lifecycle.state() != RPCS3_IOS_STATE_READY)
+	{
+		return RPCS3_IOS_EMULATION_STATE_UNKNOWN;
+	}
+	return current_emulation_state();
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_get_boot_progress(
+	uint32_t* completed,
+	uint32_t* total,
+	char* stage,
+	size_t stage_capacity) noexcept
+{
+	std::lock_guard lock(g_progress_mutex);
+	if (!completed || !total || !stage || stage_capacity == 0)
+	{
+		set_error("Boot progress requires output counters and a non-empty stage buffer");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+
+	*completed = 0;
+	*total = 0;
+	stage[0] = '\0';
+
+	try
+	{
+		const boot_progress_snapshot snapshot = capture_boot_progress();
+		const bool has_counters = snapshot.files_total || snapshot.files_done ||
+			snapshot.modules_total || snapshot.modules_done;
+		std::string detail = snapshot.text;
+		if (detail.empty() && has_counters)
+		{
+			detail = "Preparing firmware modules";
+		}
+
+		if (snapshot.files_total)
+		{
+			fmt::append(detail, "%sFiles %u of %u", detail.empty() ? "" : " | ",
+				snapshot.files_done, snapshot.files_total);
+		}
+		if (snapshot.modules_total)
+		{
+			fmt::append(detail, "%sModules %u of %u", detail.empty() ? "" : " | ",
+				snapshot.modules_done, snapshot.modules_total);
+
+			const bool use_bits = snapshot.file_bits_known && snapshot.file_bits_total;
+			const u64 known_files = use_bits ? snapshot.file_bits_known : snapshot.files_total;
+			const u64 total_units = utils::rational_mul<u64>(
+				std::max<u64>(snapshot.modules_total, 1),
+				std::max<u64>(use_bits ? snapshot.file_bits_total : snapshot.files_total, 1),
+				std::max<u64>(known_files, 1));
+			*total = 1000;
+			*completed = static_cast<u32>(snapshot.modules_done >= total_units
+				? 1000
+				: utils::rational_mul<u64>(snapshot.modules_done, 1000, total_units));
+		}
+
+		const size_t copy_size = std::min(detail.size(), stage_capacity - 1);
+		std::memcpy(stage, detail.data(), copy_size);
+		stage[copy_size] = '\0';
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while reading boot progress");
+	}
+
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_stop_emulation(void) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (g_lifecycle.state() != RPCS3_IOS_STATE_READY)
+	{
+		set_error("RPCS3Core must be ready before stopping emulation");
+		return RPCS3_IOS_INVALID_STATE;
+	}
+
+	try
+	{
+		if (Emu.GetStatus(false) == system_state::stopped)
+		{
+			return RPCS3_IOS_OK;
+		}
+
+		emit_log(4, "Stopping the current PlayStation 3 emulation session");
+		Emu.GracefulShutdown(false, false);
+		if (!wait_for_emulation_stop())
+		{
+			set_error("RPCS3 did not reach the stopped state");
+			return RPCS3_IOS_STOP_FAILED;
+		}
+
+		emit_log(4, "PlayStation 3 emulation stopped; RPCS3Core remains initialized");
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while stopping PlayStation 3 emulation");
+	}
+
+	return RPCS3_IOS_STOP_FAILED;
+}
+
 extern "C" rpcs3_ios_state rpcs3_ios_get_state(void) noexcept
 {
 	std::lock_guard lock(g_api_mutex);
@@ -503,9 +762,15 @@ extern "C" rpcs3_ios_status rpcs3_ios_shutdown(void) noexcept
 	{
 		if (g_emu_started)
 		{
-			if (!Emu.IsStopped())
+			if (Emu.GetStatus(false) != system_state::stopped)
 			{
-				Emu.Kill(false);
+				Emu.GracefulShutdown(false, false);
+				if (!wait_for_emulation_stop())
+				{
+					set_error("RPCS3 did not finish stopping emulation during core shutdown");
+					g_lifecycle.finish_shutdown(false);
+					return RPCS3_IOS_STOP_FAILED;
+				}
 			}
 			jit_runtime::finalize();
 			g_emu_started = false;
