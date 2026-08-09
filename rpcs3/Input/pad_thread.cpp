@@ -1,6 +1,9 @@
 #include "stdafx.h"
 #include "pad_thread.h"
 #include "product_info.h"
+#ifdef RPCS3_IOS
+#include "Emu/Io/IOS/IOSPadHandler.h"
+#endif
 #ifndef RPCS3_IOS
 #include "ds3_pad_handler.h"
 #include "ds4_pad_handler.h"
@@ -153,6 +156,23 @@ void pad_thread::Init()
 	{
 		input_log.notice("Reloaded empty pad config");
 	}
+
+#ifdef RPCS3_IOS
+	// The native wrapper owns player-one input selection for this frontend.
+	// Discard desktop profiles that may have been created before the iOS pad
+	// backend existed, and keep all other ports disconnected for now.
+	g_cfg_input.player[0]->handler.from_string(fmt::format("%s", pad_handler::ios));
+	g_cfg_input.player[0]->device.from_string(ios_pad_handler::device_name);
+	{
+		std::shared_ptr<PadHandlerBase> ios_handler;
+		pad_thread::InitPadConfig(g_cfg_input.player[0]->config, pad_handler::ios, ios_handler);
+	}
+	for (usz i = 1; i < g_cfg_input.player.size(); i++)
+	{
+		g_cfg_input.player[i]->handler.from_string(fmt::format("%s", pad_handler::null));
+		g_cfg_input.player[i]->device.from_string("Null");
+	}
+#endif
 
 	input_log.trace("Using pad config:\n%s", g_cfg_input);
 
@@ -855,7 +875,20 @@ void pad_thread::UnregisterLddPad(u32 handle)
 std::shared_ptr<PadHandlerBase> pad_thread::GetHandler(pad_handler type)
 {
 #ifdef RPCS3_IOS
-	(void)type;
+	switch (type)
+	{
+	case pad_handler::ios:
+		return std::make_shared<ios_pad_handler>();
+	case pad_handler::null:
+	case pad_handler::keyboard:
+	case pad_handler::ds3:
+	case pad_handler::ds4:
+	case pad_handler::dualsense:
+	case pad_handler::skateboard:
+	case pad_handler::move:
+		return std::make_shared<NullPadHandler>();
+	}
+
 	return std::make_shared<NullPadHandler>();
 #else
 	switch (type)

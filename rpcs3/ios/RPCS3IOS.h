@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 5u
+#define RPCS3_IOS_ABI_VERSION 6u
 
 typedef enum rpcs3_ios_status
 {
@@ -91,6 +91,43 @@ typedef struct rpcs3_ios_display_surface
     void* metal_layer;
 } rpcs3_ios_display_surface;
 
+typedef enum rpcs3_ios_pad_button
+{
+    RPCS3_IOS_PAD_BUTTON_DPAD_UP = UINT64_C(1) << 0,
+    RPCS3_IOS_PAD_BUTTON_DPAD_DOWN = UINT64_C(1) << 1,
+    RPCS3_IOS_PAD_BUTTON_DPAD_LEFT = UINT64_C(1) << 2,
+    RPCS3_IOS_PAD_BUTTON_DPAD_RIGHT = UINT64_C(1) << 3,
+    RPCS3_IOS_PAD_BUTTON_CROSS = UINT64_C(1) << 4,
+    RPCS3_IOS_PAD_BUTTON_CIRCLE = UINT64_C(1) << 5,
+    RPCS3_IOS_PAD_BUTTON_SQUARE = UINT64_C(1) << 6,
+    RPCS3_IOS_PAD_BUTTON_TRIANGLE = UINT64_C(1) << 7,
+    RPCS3_IOS_PAD_BUTTON_L1 = UINT64_C(1) << 8,
+    RPCS3_IOS_PAD_BUTTON_R1 = UINT64_C(1) << 9,
+    RPCS3_IOS_PAD_BUTTON_L2 = UINT64_C(1) << 10,
+    RPCS3_IOS_PAD_BUTTON_R2 = UINT64_C(1) << 11,
+    RPCS3_IOS_PAD_BUTTON_L3 = UINT64_C(1) << 12,
+    RPCS3_IOS_PAD_BUTTON_R3 = UINT64_C(1) << 13,
+    RPCS3_IOS_PAD_BUTTON_START = UINT64_C(1) << 14,
+    RPCS3_IOS_PAD_BUTTON_SELECT = UINT64_C(1) << 15,
+    RPCS3_IOS_PAD_BUTTON_PS = UINT64_C(1) << 16
+} rpcs3_ios_pad_button;
+
+// A replaceable host-input snapshot for player one. Axes use [-1, 1], with
+// positive Y pointing up; triggers use [0, 1]. The core copies this structure
+// synchronously, so the caller may release it as soon as the function returns.
+typedef struct rpcs3_ios_pad_state
+{
+    uint32_t struct_size;
+    uint32_t connected;
+    uint64_t buttons;
+    float left_stick_x;
+    float left_stick_y;
+    float right_stick_x;
+    float right_stick_y;
+    float left_trigger;
+    float right_trigger;
+} rpcs3_ios_pad_state;
+
 RPCS3_IOS_EXPORT uint32_t rpcs3_ios_abi_version(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT const char* rpcs3_ios_build_info(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) RPCS3_IOS_NOEXCEPT;
@@ -104,6 +141,10 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_firmware(
 // emulation; dimensions for the currently attached layer may change live.
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_display_surface(
     const rpcs3_ios_display_surface* surface) RPCS3_IOS_NOEXCEPT;
+// This setter is safe while boot/compilation owns the serialized lifecycle
+// lock. Pass connected=0 to release every input and disconnect player one.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_pad_state(
+    const rpcs3_ios_pad_state* state) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_boot_vsh(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_emulation_state rpcs3_ios_get_emulation_state(void) RPCS3_IOS_NOEXCEPT;
 // Observational and safe to poll while boot is running. A zero total means
