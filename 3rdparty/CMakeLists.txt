@@ -338,8 +338,40 @@ set_property(TARGET ${FAUDIO_TARGET} PROPERTY FOLDER "3rdparty/")
 
 # FFMPEG
 if(RPCS3_IOS_FRONTEND)
+	if(NOT RPCS3_FFMPEG_ROOT)
+		message(FATAL_ERROR "RPCS3_FFMPEG_ROOT is required for the iOS frontend")
+	endif()
+
+	set(FFMPEG_INCLUDE_DIR "${RPCS3_FFMPEG_ROOT}/include")
+	set(FFMPEG_LIB_DIR "${RPCS3_FFMPEG_ROOT}/lib")
+	set(FFMPEG_IOS_LIBRARIES
+		"${FFMPEG_LIB_DIR}/libavformat.a"
+		"${FFMPEG_LIB_DIR}/libavcodec.a"
+		"${FFMPEG_LIB_DIR}/libswscale.a"
+		"${FFMPEG_LIB_DIR}/libswresample.a"
+		"${FFMPEG_LIB_DIR}/libavutil.a"
+	)
+
+	if(NOT EXISTS "${FFMPEG_INCLUDE_DIR}/libavcodec/avcodec.h" OR
+		NOT EXISTS "${FFMPEG_INCLUDE_DIR}/libavutil/ffversion.h")
+		message(FATAL_ERROR "The pinned iOS FFmpeg headers are incomplete: ${RPCS3_FFMPEG_ROOT}")
+	endif()
+	foreach(FFMPEG_IOS_LIBRARY IN LISTS FFMPEG_IOS_LIBRARIES)
+		if(NOT EXISTS "${FFMPEG_IOS_LIBRARY}")
+			message(FATAL_ERROR "The pinned iOS FFmpeg libraries are incomplete: ${RPCS3_FFMPEG_ROOT}")
+		endif()
+	endforeach()
+
+	file(STRINGS "${FFMPEG_INCLUDE_DIR}/libavutil/ffversion.h" FFMPEG_IOS_VERSION_LINE
+		REGEX "^#define FFMPEG_VERSION \"8\\.1\\.1\"$")
+	if(NOT FFMPEG_IOS_VERSION_LINE)
+		message(FATAL_ERROR "RPCS3 requires the verified FFmpeg 8.1.1 iOS build")
+	endif()
+
+	message(STATUS "RPCS3: Using pinned iOS FFmpeg 8.1.1 at ${RPCS3_FFMPEG_ROOT}")
 	add_library(3rdparty_ffmpeg INTERFACE)
-	target_include_directories(3rdparty_ffmpeg SYSTEM INTERFACE ffmpeg/include)
+	target_include_directories(3rdparty_ffmpeg SYSTEM INTERFACE "${FFMPEG_INCLUDE_DIR}")
+	target_link_libraries(3rdparty_ffmpeg INTERFACE ${FFMPEG_IOS_LIBRARIES})
 elseif(NOT ANDROID)
 	add_library(3rdparty_ffmpeg INTERFACE)
 
