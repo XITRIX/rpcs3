@@ -455,7 +455,7 @@ void VKGSRender::flip(const rsx::display_flip_info_t& info)
 
 			if (Emu.IsStopped())
 			{
-				m_frame->flip(m_context);
+				m_frame->flip(m_context, true);
 				rsx::thread::flip(info);
 				return;
 			}
@@ -505,7 +505,7 @@ void VKGSRender::flip(const rsx::display_flip_info_t& info)
 			frame_context_cleanup(m_current_frame);
 		}
 
-		m_frame->flip(m_context);
+		m_frame->flip(m_context, true);
 		rsx::thread::flip(info);
 		return;
 	}
