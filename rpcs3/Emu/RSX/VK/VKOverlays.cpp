@@ -321,14 +321,21 @@ namespace vk
 	void ui_overlay_renderer::upload_simple_texture(vk::image* tex, vk::command_buffer& cmd,
 		vk::data_heap& upload_heap, u32 w, u32 h, u32 layers, bool font, const void* pixel_src)
 	{
-		const u32 pitch = (font) ? w : w * 4;
-		const u32 data_size = pitch * h * layers;
+		// The image allocation uses the same one-texel fallback below. Keep the
+		// upload extent valid as well when an optional overlay resource is empty.
+		// Vulkan forbids zero-sized copy extents, and MoltenVK validates deferred
+		// buffer-to-image copies when the command buffer is submitted.
+		const bool has_source_extent = w && h;
+		const u32 upload_width = std::max(w, 1u);
+		const u32 upload_height = std::max(h, 1u);
+		const u32 pitch = (font) ? upload_width : upload_width * 4;
+		const u32 data_size = pitch * upload_height * layers;
 		const auto offset = upload_heap.alloc<512>(data_size);
 		const auto addr = upload_heap.map(offset, data_size);
 
-		if (pixel_src && data_size)
+		if (pixel_src && has_source_extent)
 			std::memcpy(addr, pixel_src, data_size);
-		else if (data_size)
+		else
 			std::memset(addr, 0, data_size);
 
 		upload_heap.unmap();
@@ -337,11 +344,11 @@ namespace vk
 		VkBufferImageCopy region
 		{
 			.bufferOffset = offset,
-			.bufferRowLength = w,
-			.bufferImageHeight = h,
+			.bufferRowLength = upload_width,
+			.bufferImageHeight = upload_height,
 			.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, layers },
 			.imageOffset = {},
-			.imageExtent = { static_cast<u32>(w), static_cast<u32>(h), 1u }
+			.imageExtent = { upload_width, upload_height, 1u }
 		};
 		change_image_layout(cmd, tex, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, range);
 		vkCmdCopyBufferToImage(cmd, upload_heap.heap->value, tex->value, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);

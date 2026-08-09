@@ -1,7 +1,9 @@
 #include "RPCS3IOS.h"
 #include "RPCS3IOSCapabilities.h"
 #include "RPCS3IOSContract.h"
+#include "RPCS3IOSDisplay.h"
 #include "FirmwareInstaller.h"
+#include "IOSGSFrame.h"
 
 #include "Emu/System.h"
 #include "Emu/IdManager.h"
@@ -16,7 +18,9 @@
 #include "Emu/Io/Null/NullMouseHandler.h"
 #include "Emu/Io/Null/null_camera_handler.h"
 #include "Emu/Io/Null/null_music_handler.h"
-#include "Emu/RSX/Null/NullGSRender.h"
+#ifdef HAVE_VULKAN
+#include "Emu/RSX/VK/VKGSRender.h"
+#endif
 #include "Emu/system_config.h"
 #include "Emu/system_progress.hpp"
 #include "Emu/vfs_config.h"
@@ -44,6 +48,7 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -63,6 +68,8 @@ rpcs3_ios_config g_config{};
 std::string g_application_support_path;
 std::string g_cache_path;
 bool g_emu_started = false;
+std::atomic_bool g_accept_display_surfaces = false;
+rpcs3::ios::display_surface_registry g_display_surface;
 
 struct boot_progress_snapshot
 {
@@ -269,7 +276,15 @@ EmuCallbacks make_callbacks()
 		Emulator::SaveSettings(g_cfg.to_string(), Emu.GetTitleID());
 	};
 	callbacks.close_gs_frame = []() {};
-	callbacks.get_gs_frame = []() -> std::unique_ptr<GSFrameBase> { return {}; };
+	callbacks.get_gs_frame = []() -> std::unique_ptr<GSFrameBase>
+	{
+		if (!g_display_surface.snapshot().valid())
+		{
+			emit_log(1, "RPCS3 requested a graphics frame without an attached iOS display surface");
+			return {};
+		}
+		return std::make_unique<rpcs3::ios::gs_frame>(g_display_surface);
+	};
 	callbacks.get_camera_handler = []() -> std::shared_ptr<camera_handler_base>
 	{
 		return std::make_shared<null_camera_handler>();
@@ -280,7 +295,20 @@ EmuCallbacks make_callbacks()
 	};
 	callbacks.init_gs_render = [](utils::serial* archive)
 	{
-		g_fxo->init<rsx::thread, named_thread<NullGSRender>>(archive);
+		switch (g_cfg.video.renderer.get())
+		{
+		case video_renderer::vulkan:
+#ifdef HAVE_VULKAN
+			g_fxo->init<rsx::thread, named_thread<VKGSRender>>(archive);
+			break;
+#else
+			fmt::throw_exception("The iOS core was built without Vulkan support");
+#endif
+		case video_renderer::null:
+			fmt::throw_exception("The iOS video frontend requires the Vulkan renderer");
+		default:
+			fmt::throw_exception("Unsupported iOS video renderer: %s", g_cfg.video.renderer.get());
+		}
 	};
 	callbacks.get_audio = []() -> std::shared_ptr<AudioBackend>
 	{
@@ -344,7 +372,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":4,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"renderer\":\"null\",\"audio\":\"null\",\"input\":\"null\",\"media_codecs\":false}";
+	return "{\"abi\":5,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"audio\":\"null\",\"input\":\"null\",\"media_codecs\":false}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -391,16 +419,19 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		g_log_listener = std::make_unique<callback_log_listener>();
 		logs::listener::add(g_log_listener.get());
 		Emu.SetCallbacks(make_callbacks());
-		Emu.SetSupportedRenderers({video_renderer::null});
-		Emu.SetDefaultRenderer(video_renderer::null);
-		Emu.SetDefaultGraphicsAdapter({});
+		Emu.SetSupportedRenderers({video_renderer::vulkan});
+		Emu.SetDefaultRenderer(video_renderer::vulkan);
+		// The configured name only satisfies RPCS3's pre-init invariant. The
+		// renderer falls back to MoltenVK's first enumerated physical device.
+		Emu.SetDefaultGraphicsAdapter("iOS Metal GPU");
 		Emu.SetHasGui(false);
-		Emu.SetHeadless(true);
+		Emu.SetHeadless(false);
 		Emu.SetUsr("00000001");
 		g_emu_started = true;
 		Emu.Init();
 		g_lifecycle.finish_initialize(true);
-		emit_log(4, "RPCS3 Emu.Init completed with the iOS null frontend");
+		g_accept_display_surfaces = true;
+		emit_log(4, "RPCS3 Emu.Init completed with the iOS Vulkan/MoltenVK frontend");
 		return RPCS3_IOS_OK;
 	}
 	catch (const std::exception& error)
@@ -412,6 +443,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		set_error("Unknown exception during Emu.Init");
 	}
 
+	g_accept_display_surfaces = false;
 	g_lifecycle.finish_initialize(false);
 	return RPCS3_IOS_CORE_INIT_FAILED;
 }
@@ -578,6 +610,32 @@ extern "C" rpcs3_ios_status rpcs3_ios_install_firmware(
 	return RPCS3_IOS_FIRMWARE_INSTALL_FAILED;
 }
 
+extern "C" rpcs3_ios_status rpcs3_ios_set_display_surface(
+	const rpcs3_ios_display_surface* surface) noexcept
+{
+	// This operation deliberately does not take g_api_mutex: boot owns that
+	// mutex while RPCS3 compiles, but the existing layer must still resize.
+	if (!g_accept_display_surfaces)
+	{
+		set_error("RPCS3Core must be ready before updating the display surface");
+		return RPCS3_IOS_INVALID_STATE;
+	}
+
+	const bool emulation_stopped =
+		Emu.GetStatus(false) == system_state::stopped;
+	const rpcs3_ios_status result =
+		g_display_surface.update(surface, emulation_stopped);
+	if (result == RPCS3_IOS_INVALID_ARGUMENT)
+	{
+		set_error("The iOS display surface contract is invalid");
+	}
+	else if (result == RPCS3_IOS_INVALID_STATE)
+	{
+		set_error("Stop emulation before replacing or detaching the iOS display surface");
+	}
+	return result;
+}
+
 extern "C" rpcs3_ios_status rpcs3_ios_boot_vsh(void) noexcept
 {
 	std::lock_guard lock(g_api_mutex);
@@ -586,6 +644,11 @@ extern "C" rpcs3_ios_status rpcs3_ios_boot_vsh(void) noexcept
 	{
 		set_error("RPCS3Core must be ready and emulation stopped before booting XMB");
 		return result;
+	}
+	if (!g_display_surface.snapshot().valid())
+	{
+		set_error("Attach a valid iOS Metal display surface before booting XMB");
+		return RPCS3_IOS_INVALID_STATE;
 	}
 
 	try
@@ -758,6 +821,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_shutdown(void) noexcept
 	{
 		return RPCS3_IOS_OK;
 	}
+	g_accept_display_surfaces = false;
 	try
 	{
 		if (g_emu_started)
@@ -775,6 +839,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_shutdown(void) noexcept
 			jit_runtime::finalize();
 			g_emu_started = false;
 		}
+		g_display_surface.clear();
 		logs::listener::sync_all();
 		g_lifecycle.finish_shutdown(true);
 		emit_log(4, "RPCS3Core shutdown completed");
@@ -796,7 +861,6 @@ extern "C" rpcs3_ios_status rpcs3_ios_shutdown(void) noexcept
 extern "C" const char* rpcs3_ios_last_error(void) noexcept
 {
 	thread_local std::string copy;
-	std::lock_guard lock(g_api_mutex);
 	copy = g_last_error.get();
 	return copy.c_str();
 }

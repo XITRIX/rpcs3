@@ -174,52 +174,82 @@ endif()
 # Vulkan
 set(VULKAN_TARGET 3rdparty_dummy_lib)
 if(USE_VULKAN)
-	if(APPLE)
-		if(USE_SYSTEM_MVK)
-			message(STATUS "RPCS3: Using system MoltenVK")
-		else()
-			message(STATUS "RPCS3: MoltenVK submodule")
-
-			execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" .
-				WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK"
-			)
-			execute_process(COMMAND "${CMAKE_COMMAND}" --build .
-				WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK"
-			)
-
-			add_library(moltenvk_lib SHARED IMPORTED)
-			add_dependencies(moltenvk_lib moltenvk)
-			set_target_properties(moltenvk_lib
-				PROPERTIES IMPORTED_LOCATION "{Vulkan_LIBRARY}"
-			)
-
-			set(VULKAN_SDK "${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/MoltenVK/MoltenVK")
-			set(VK_ICD_FILENAMES "${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/MoltenVK/MoltenVK/icd/MoltenVK_icd.json")
-			set(Vulkan_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/MoltenVK/MoltenVK/include")
-			set(Vulkan_LIBRARY "${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/MoltenVK/Build/Products/Release/dynamic/libMoltenVK.dylib")
-			set(Vulkan_TOOLS "${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/MoltenVK/Build/Products/Release")
+	if(RPCS3_IOS_FRONTEND)
+		if(NOT RPCS3_MOLTENVK_ROOT)
+			message(FATAL_ERROR "RPCS3_MOLTENVK_ROOT is required for the iOS Vulkan frontend")
 		endif()
-	endif()
 
-	find_package(Vulkan)
-	if(VULKAN_FOUND)
+		set(MOLTENVK_INCLUDE_DIR "${RPCS3_MOLTENVK_ROOT}/MoltenVK/include")
+		set(MOLTENVK_LIBRARY "${RPCS3_MOLTENVK_ROOT}/MoltenVK/static/MoltenVK.xcframework/ios-arm64/libMoltenVK.a")
+		if(NOT EXISTS "${MOLTENVK_INCLUDE_DIR}/vulkan/vulkan.h" OR NOT EXISTS "${MOLTENVK_LIBRARY}")
+			message(FATAL_ERROR "The pinned iOS MoltenVK package is incomplete: ${RPCS3_MOLTENVK_ROOT}")
+		endif()
+
+		message(STATUS "RPCS3: Using pinned iOS MoltenVK at ${RPCS3_MOLTENVK_ROOT}")
+		add_library(moltenvk_ios STATIC IMPORTED GLOBAL)
+		set_target_properties(moltenvk_ios PROPERTIES IMPORTED_LOCATION "${MOLTENVK_LIBRARY}")
+		target_include_directories(moltenvk_ios SYSTEM INTERFACE "${MOLTENVK_INCLUDE_DIR}")
+		target_link_libraries(moltenvk_ios INTERFACE
+			"-framework Metal"
+			"-framework Foundation"
+			"-framework QuartzCore"
+			"-framework CoreGraphics"
+			"-framework IOSurface"
+			"-framework UIKit"
+		)
+
 		add_library(3rdparty_vulkan INTERFACE)
 		target_compile_definitions(3rdparty_vulkan INTERFACE -DHAVE_VULKAN)
-		target_link_libraries(3rdparty_vulkan INTERFACE Vulkan::Vulkan)
+		target_link_libraries(3rdparty_vulkan INTERFACE moltenvk_ios)
+		set(VULKAN_TARGET 3rdparty_vulkan)
+	else()
+		if(APPLE)
+			if(USE_SYSTEM_MVK)
+				message(STATUS "RPCS3: Using system MoltenVK")
+			else()
+				message(STATUS "RPCS3: MoltenVK submodule")
 
-		if(UNIX AND NOT APPLE AND NOT ANDROID)
-			find_package(Wayland)
-			if (WAYLAND_FOUND)
-				target_include_directories(3rdparty_vulkan
-					SYSTEM INTERFACE ${WAYLAND_INCLUDE_DIR})
+				execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" .
+					WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK"
+				)
+				execute_process(COMMAND "${CMAKE_COMMAND}" --build .
+					WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK"
+				)
+
+				add_library(moltenvk_lib SHARED IMPORTED)
+				add_dependencies(moltenvk_lib moltenvk)
+				set_target_properties(moltenvk_lib
+					PROPERTIES IMPORTED_LOCATION "{Vulkan_LIBRARY}"
+				)
+
+				set(VULKAN_SDK "${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/MoltenVK/MoltenVK")
+				set(VK_ICD_FILENAMES "${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/MoltenVK/MoltenVK/icd/MoltenVK_icd.json")
+				set(Vulkan_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/MoltenVK/MoltenVK/include")
+				set(Vulkan_LIBRARY "${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/MoltenVK/Build/Products/Release/dynamic/libMoltenVK.dylib")
+				set(Vulkan_TOOLS "${CMAKE_CURRENT_SOURCE_DIR}/MoltenVK/MoltenVK/Build/Products/Release")
 			endif()
 		endif()
 
-		set(VULKAN_TARGET 3rdparty_vulkan)
-	else()
-		message(WARNING "USE_VULKAN was enabled, but libvulkan was not found. RPCS3 will be compiled without Vulkan support.")
-		if(APPLE)
-			message(FATAL_ERROR "To build without Vulkan support on macOS, please disable USE_VULKAN.")
+		find_package(Vulkan)
+		if(VULKAN_FOUND)
+			add_library(3rdparty_vulkan INTERFACE)
+			target_compile_definitions(3rdparty_vulkan INTERFACE -DHAVE_VULKAN)
+			target_link_libraries(3rdparty_vulkan INTERFACE Vulkan::Vulkan)
+
+			if(UNIX AND NOT APPLE AND NOT ANDROID)
+				find_package(Wayland)
+				if (WAYLAND_FOUND)
+					target_include_directories(3rdparty_vulkan
+						SYSTEM INTERFACE ${WAYLAND_INCLUDE_DIR})
+				endif()
+			endif()
+
+			set(VULKAN_TARGET 3rdparty_vulkan)
+		else()
+			message(WARNING "USE_VULKAN was enabled, but libvulkan was not found. RPCS3 will be compiled without Vulkan support.")
+			if(APPLE)
+				message(FATAL_ERROR "To build without Vulkan support on macOS, please disable USE_VULKAN.")
+			endif()
 		endif()
 	endif()
 endif()
