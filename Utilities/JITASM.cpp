@@ -146,6 +146,7 @@ static atomic_t<u64> s_code_pos{0}, s_data_pos{0};
 
 // Snapshot of code generated before main()
 static std::vector<u8> s_code_init, s_data_init;
+static bool s_snapshot_initialized = false;
 
 template <atomic_t<u64>& Ctr, uint Off, utils::protection Prot>
 static u8* add_jit_memory(usz size, usz align)
@@ -344,16 +345,23 @@ u8* jit_runtime::peek(bool exec) noexcept
 
 void jit_runtime::initialize()
 {
-	if (!s_code_init.empty() || !s_data_init.empty())
+	if (s_snapshot_initialized)
 	{
 		return;
 	}
 
 	// Create code/data snapshot
 	s_code_init.resize(s_code_pos & 0xffff'ffff);
-	std::memcpy(s_code_init.data(), alloc(0, 0, true), s_code_init.size());
+	if (!s_code_init.empty())
+	{
+		std::memcpy(s_code_init.data(), alloc(0, 0, true), s_code_init.size());
+	}
 	s_data_init.resize(s_data_pos & 0xffff'ffff);
-	std::memcpy(s_data_init.data(), alloc(0, 0, false), s_data_init.size());
+	if (!s_data_init.empty())
+	{
+		std::memcpy(s_data_init.data(), alloc(0, 0, false), s_data_init.size());
+	}
+	s_snapshot_initialized = true;
 }
 
 void jit_runtime::finalize() noexcept
@@ -375,15 +383,25 @@ void jit_runtime::finalize() noexcept
 	s_code_pos = 0;
 	s_data_pos = 0;
 
-	// Restore code/data snapshot
-	auto* const code = alloc(s_code_init.size(), 1, true);
+	// Restore code/data snapshots. An empty initial snapshot is valid when no
+	// global code or data used this runtime before Emulator::Init(). In
+	// particular, the iOS writable-alias API intentionally rejects zero-length
+	// ranges, so do not turn an empty restore into a fatal ensure failure.
+	if (!s_code_init.empty())
+	{
+		auto* const code = ensure(alloc(s_code_init.size(), 1, true));
 #ifdef RPCS3_IOS
-	std::memcpy(ensure(rpcs3::ios::jit::writable(code, s_code_init.size())), s_code_init.data(), s_code_init.size());
-	rpcs3::ios::jit::flush(code, s_code_init.size());
+		std::memcpy(ensure(rpcs3::ios::jit::writable(code, s_code_init.size())), s_code_init.data(), s_code_init.size());
+		rpcs3::ios::jit::flush(code, s_code_init.size());
 #else
-	std::memcpy(code, s_code_init.data(), s_code_init.size());
+		std::memcpy(code, s_code_init.data(), s_code_init.size());
 #endif
-	std::memcpy(alloc(s_data_init.size(), 1, false), s_data_init.data(), s_data_init.size());
+	}
+
+	if (!s_data_init.empty())
+	{
+		std::memcpy(ensure(alloc(s_data_init.size(), 1, false)), s_data_init.data(), s_data_init.size());
+	}
 
 #if defined(__APPLE__) && !defined(RPCS3_IOS)
 	jit_write_protect(true);
