@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 9u
+#define RPCS3_IOS_ABI_VERSION 10u
 
 typedef enum rpcs3_ios_status
 {
@@ -39,7 +39,10 @@ typedef enum rpcs3_ios_status
     RPCS3_IOS_ISO_INVALID = 15,
     RPCS3_IOS_ISO_INSTALL_FAILED = 16,
     RPCS3_IOS_ZIP_INVALID = 17,
-    RPCS3_IOS_ZIP_INSTALL_FAILED = 18
+    RPCS3_IOS_ZIP_INSTALL_FAILED = 18,
+    RPCS3_IOS_SETTING_NOT_FOUND = 19,
+    RPCS3_IOS_SETTING_INVALID = 20,
+    RPCS3_IOS_SETTINGS_SAVE_FAILED = 21
 } rpcs3_ios_status;
 
 typedef enum rpcs3_ios_state
@@ -166,6 +169,52 @@ typedef void (*rpcs3_ios_game_callback)(
     void* user_context,
     const rpcs3_ios_game_info* game);
 
+typedef enum rpcs3_ios_setting_kind
+{
+    RPCS3_IOS_SETTING_BOOLEAN = 0,
+    RPCS3_IOS_SETTING_INTEGER = 1,
+    RPCS3_IOS_SETTING_DECIMAL = 2,
+    RPCS3_IOS_SETTING_CHOICE = 3,
+    RPCS3_IOS_SETTING_TEXT = 4
+} rpcs3_ios_setting_kind;
+
+// Strings and option arrays remain valid only for the duration of the
+// synchronous enumeration callbacks. Every catalog entry is an allow-listed
+// scalar from RPCS3's cfg_root; platform-fixed backends are never exposed.
+typedef struct rpcs3_ios_setting_info
+{
+    uint32_t struct_size;
+    uint32_t kind;
+    const char* key;
+    const char* category;
+    const char* section;
+    const char* name;
+    const char* description;
+    const char* value;
+    const char* default_value;
+    double minimum;
+    double maximum;
+    double step;
+    uint32_t option_count;
+    uint32_t flags;
+} rpcs3_ios_setting_info;
+
+typedef struct rpcs3_ios_setting_option
+{
+    uint32_t struct_size;
+    uint32_t reserved;
+    const char* setting_key;
+    const char* value;
+    const char* label;
+} rpcs3_ios_setting_option;
+
+typedef void (*rpcs3_ios_setting_callback)(
+    void* user_context,
+    const rpcs3_ios_setting_info* setting);
+typedef void (*rpcs3_ios_setting_option_callback)(
+    void* user_context,
+    const rpcs3_ios_setting_option* option);
+
 RPCS3_IOS_EXPORT uint32_t rpcs3_ios_abi_version(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT const char* rpcs3_ios_build_info(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) RPCS3_IOS_NOEXCEPT;
@@ -195,6 +244,16 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_zip(
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_games(
     rpcs3_ios_game_callback callback,
     void* user_context) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_settings(
+    rpcs3_ios_setting_callback setting_callback,
+    rpcs3_ios_setting_option_callback option_callback,
+    void* user_context) RPCS3_IOS_NOEXCEPT;
+// Settings are persisted to RPCS3's global config.yml. Mutations require an
+// initialized core with emulation stopped and take effect on the next boot.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_setting(
+    const char* key,
+    const char* value) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_reset_settings(void) RPCS3_IOS_NOEXCEPT;
 // Pass NULL to detach. Detach and layer replacement require stopped
 // emulation; dimensions for the currently attached layer may change live.
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_display_surface(
