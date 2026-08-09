@@ -11,6 +11,9 @@ enum class pad_handler
 	dualsense,
 	skateboard,
 	move,
+#ifdef RPCS3_IOS
+	ios,
+#endif
 #ifdef _WIN32
 	xinput,
 	mm,
