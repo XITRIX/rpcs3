@@ -6,9 +6,10 @@
 int main()
 {
 	using namespace rpcs3::ios;
-	static_assert(RPCS3_IOS_ABI_VERSION == 6);
+	static_assert(RPCS3_IOS_ABI_VERSION == 7);
 	static_assert(sizeof(rpcs3_ios_display_surface) == 24);
 	static_assert(sizeof(rpcs3_ios_pad_state) == 40);
+	static_assert(sizeof(rpcs3_ios_game_info) == 48);
 	static_assert(RPCS3_IOS_EMULATION_STATE_UNKNOWN == 0);
 	static_assert(RPCS3_IOS_EMULATION_STATE_STOPPED == 1);
 	static_assert(RPCS3_IOS_EMULATION_STATE_STOPPING == 7);
@@ -103,10 +104,10 @@ int main()
 	lifecycle firmware_state;
 	assert(firmware_state.begin_initialize() == RPCS3_IOS_OK);
 	firmware_state.finish_initialize(true);
-	assert(firmware_state.begin_firmware_install() == RPCS3_IOS_OK);
-	assert(firmware_state.begin_firmware_install() == RPCS3_IOS_INVALID_STATE);
+	assert(firmware_state.begin_content_install() == RPCS3_IOS_OK);
+	assert(firmware_state.begin_content_install() == RPCS3_IOS_INVALID_STATE);
 	assert(firmware_state.begin_shutdown(should_shutdown) == RPCS3_IOS_INVALID_STATE);
-	firmware_state.finish_firmware_install();
+	firmware_state.finish_content_install();
 	assert(firmware_state.state() == RPCS3_IOS_STATE_READY);
 	assert(firmware_state.begin_shutdown(should_shutdown) == RPCS3_IOS_OK);
 	assert(should_shutdown);
