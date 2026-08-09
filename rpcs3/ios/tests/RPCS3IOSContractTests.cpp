@@ -5,7 +5,10 @@
 int main()
 {
 	using namespace rpcs3::ios;
-	static_assert(RPCS3_IOS_ABI_VERSION == 2);
+	static_assert(RPCS3_IOS_ABI_VERSION == 4);
+	static_assert(RPCS3_IOS_EMULATION_STATE_UNKNOWN == 0);
+	static_assert(RPCS3_IOS_EMULATION_STATE_STOPPED == 1);
+	static_assert(RPCS3_IOS_EMULATION_STATE_STOPPING == 7);
 
 	assert(validate_config_contract(nullptr) == RPCS3_IOS_INVALID_ARGUMENT);
 	rpcs3_ios_config config{};
@@ -16,6 +19,16 @@ int main()
 	assert(validate_config_contract(&config) == RPCS3_IOS_OK);
 	config.cache_path = "relative";
 	assert(validate_config_contract(&config) == RPCS3_IOS_INVALID_ARGUMENT);
+
+	assert(validate_idle_operation_contract(
+		RPCS3_IOS_STATE_READY,
+		RPCS3_IOS_EMULATION_STATE_STOPPED) == RPCS3_IOS_OK);
+	assert(validate_idle_operation_contract(
+		RPCS3_IOS_STATE_UNINITIALIZED,
+		RPCS3_IOS_EMULATION_STATE_STOPPED) == RPCS3_IOS_INVALID_STATE);
+	assert(validate_idle_operation_contract(
+		RPCS3_IOS_STATE_READY,
+		RPCS3_IOS_EMULATION_STATE_RUNNING) == RPCS3_IOS_INVALID_STATE);
 	config.cache_path = "/tmp/rpcs3-cache";
 	config.abi_version++;
 	assert(validate_config_contract(&config) == RPCS3_IOS_INVALID_ARGUMENT);
