@@ -3,6 +3,7 @@
 #include "RPCS3IOSContract.h"
 #include "RPCS3IOSDisplay.h"
 #include "RPCS3IOSPlatform.h"
+#include "RPCS3IOSPerformance.h"
 #include "RPCS3IOSSettings.h"
 #include "FirmwareInstaller.h"
 #include "GameLibrary.h"
@@ -379,7 +380,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":10,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller\",\"games\":\"pkg-iso-zip-library\",\"settings\":\"cfg-root-catalog\",\"media_codecs\":true}";
+	return "{\"abi\":11,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller\",\"games\":\"pkg-iso-zip-library\",\"settings\":\"cfg-root-catalog\",\"performance\":\"fps-cpu-rsx-memory\",\"media_codecs\":true}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -1351,6 +1352,30 @@ extern "C" rpcs3_ios_status rpcs3_ios_get_boot_progress(
 	catch (...)
 	{
 		set_error("Unknown exception while reading boot progress");
+	}
+
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_get_performance_metrics(
+	rpcs3_ios_performance_metrics* metrics) noexcept
+{
+	try
+	{
+		const rpcs3_ios_status result = rpcs3::ios::capture_performance_metrics(metrics);
+		if (result != RPCS3_IOS_OK)
+		{
+			set_error("Performance metrics require a compatible output structure");
+		}
+		return result;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while sampling performance metrics");
 	}
 
 	return RPCS3_IOS_INTERNAL_ERROR;

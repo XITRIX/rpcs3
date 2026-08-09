@@ -6,12 +6,15 @@
 int main()
 {
 	using namespace rpcs3::ios;
-	static_assert(RPCS3_IOS_ABI_VERSION == 10);
+	static_assert(RPCS3_IOS_ABI_VERSION == 11);
 	static_assert(sizeof(rpcs3_ios_display_surface) == 24);
 	static_assert(sizeof(rpcs3_ios_pad_state) == 40);
 	static_assert(sizeof(rpcs3_ios_game_info) == 48);
 	static_assert(sizeof(rpcs3_ios_setting_info) == 96);
 	static_assert(sizeof(rpcs3_ios_setting_option) == 32);
+	static_assert(sizeof(rpcs3_ios_performance_metrics) == 48);
+	static_assert(RPCS3_IOS_PERFORMANCE_FPS_VALID == 1);
+	static_assert(RPCS3_IOS_PERFORMANCE_MEMORY_VALID == 8);
 	static_assert(RPCS3_IOS_SETTING_BOOLEAN == 0);
 	static_assert(RPCS3_IOS_SETTING_TEXT == 4);
 	static_assert(RPCS3_IOS_EMULATION_STATE_UNKNOWN == 0);
