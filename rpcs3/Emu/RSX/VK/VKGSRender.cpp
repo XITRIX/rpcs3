@@ -412,7 +412,8 @@ VKGSRender::VKGSRender(utils::serial* ar) noexcept : GSRender(ar)
 
 	if (!m_instance.create("RPCS3"))
 	{
-		rsx_log.fatal("Could not find a Vulkan compatible GPU driver. Your GPU(s) may not support Vulkan, or you need to install the Vulkan runtime and drivers");
+		m_initialization_error = "Vulkan instance creation failed; see the preceding vkCreateInstance result";
+		rsx_log.fatal("%s", m_initialization_error);
 		m_device = VK_NULL_HANDLE;
 		return;
 	}
@@ -426,7 +427,8 @@ VKGSRender::VKGSRender(utils::serial* ar) noexcept : GSRender(ar)
 	if (gpus.empty())
 	{
 		//We can't throw in Emulator::Load, so we show error and return
-		rsx_log.fatal("No compatible GPU devices found");
+		m_initialization_error = "MoltenVK did not enumerate a compatible Metal GPU";
+		rsx_log.fatal("%s", m_initialization_error);
 		m_device = VK_NULL_HANDLE;
 		return;
 	}
@@ -464,7 +466,8 @@ VKGSRender::VKGSRender(utils::serial* ar) noexcept : GSRender(ar)
 	if (!m_swapchain)
 	{
 		m_device = VK_NULL_HANDLE;
-		rsx_log.fatal("Could not successfully initialize a swapchain");
+		m_initialization_error = "Vulkan surface or swapchain initialization failed";
+		rsx_log.fatal("%s", m_initialization_error);
 		return;
 	}
 
@@ -1235,7 +1238,9 @@ void VKGSRender::on_init_thread()
 {
 	if (m_device == VK_NULL_HANDLE)
 	{
-		fmt::throw_exception("No Vulkan device was created");
+		fmt::throw_exception("%s", m_initialization_error.empty()
+			? "No Vulkan device was created"
+			: m_initialization_error);
 	}
 
 	GSRender::on_init_thread();

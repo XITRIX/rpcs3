@@ -10,10 +10,7 @@
 
 namespace rsx
 {
-	constexpr u32 min_lockable_data_size = 4096; // Increasing this value has worse results even on systems with pages > 4k
-
 	namespace helpers = rsx::texture_cache_helpers;
-
 	void buffered_section::init_lockable_range(const address_range32& range)
 	{
 		locked_range = range.to_page_range();
@@ -31,14 +28,13 @@ namespace rsx
 		locked_range.invalidate();
 
 		protection = utils::protection::rw;
-		protection_strat = section_protection_strategy::lock;
+		protection_strat = default_texture_protection_strategy(memory_range.length());
 		locked = false;
 
 		init_lockable_range(cpu_range);
 
-		if (memory_range.length() < min_lockable_data_size)
+		if (protection_strat == section_protection_strategy::hash)
 		{
-			protection_strat = section_protection_strategy::hash;
 			mem_hash = 0;
 		}
 	}
@@ -69,11 +65,9 @@ namespace rsx
 		}
 #endif // TEXTURE_CACHE_DEBUG
 
-		if (new_prot == utils::protection::no)
-		{
-			// Override
-			protection_strat = section_protection_strategy::lock;
-		}
+		protection_strat = texture_protection_strategy_for_access(
+			protection_strat,
+			new_prot == utils::protection::no);
 
 		if (protection_strat == section_protection_strategy::lock)
 		{

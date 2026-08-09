@@ -107,6 +107,7 @@ namespace vk
 		// Declare MVK variables here to ensure the lifetime within the entire scope
 		const VkBool32 setting_true = VK_TRUE;
 		const int32_t setting_fast_math = g_cfg.video.disable_msl_fast_math.get() ? MVK_CONFIG_FAST_MATH_NEVER : MVK_CONFIG_FAST_MATH_ON_DEMAND;
+		bool portability_enumeration_enabled = false;
 
 		std::vector<VkLayerSettingEXT> mvk_settings;
 		VkLayerSettingsCreateInfoEXT mvk_layer_settings_create_info{};
@@ -124,7 +125,13 @@ namespace vk
 			}
 
 #ifdef __APPLE__
-			extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+			// VK_KHR_portability_enumeration is implemented by the Vulkan loader. A
+			// directly linked MoltenVK build, as used on iOS, does not advertise it.
+			if (support.is_supported(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME))
+			{
+				extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+				portability_enumeration_enabled = true;
+			}
 			extensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
 			if (support.is_supported(VK_EXT_LAYER_SETTINGS_EXTENSION_NAME))
 			{
@@ -193,7 +200,12 @@ namespace vk
 		else
 		{
 			extensions_loaded = true;
-			extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+			supported_extensions support(supported_extensions::instance);
+			if (support.is_supported(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME))
+			{
+				extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+				portability_enumeration_enabled = true;
+			}
 			extensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
 		}
 #endif
@@ -212,7 +224,10 @@ namespace vk
 #endif
 		instance_info.pNext = next_info;
 #ifdef __APPLE__
-		instance_info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+		if (portability_enumeration_enabled)
+		{
+			instance_info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+		}
 #endif
 
 		if (VkResult result = vkCreateInstance(&instance_info, nullptr, &m_instance); result != VK_SUCCESS)
@@ -220,6 +235,10 @@ namespace vk
 			if (result == VK_ERROR_LAYER_NOT_PRESENT)
 			{
 				rsx_log.fatal("Could not initialize layer VK_LAYER_KHRONOS_validation");
+			}
+			else
+			{
+				rsx_log.fatal("vkCreateInstance failed with VkResult %d", static_cast<s32>(result));
 			}
 
 			return false;
@@ -244,10 +263,15 @@ namespace vk
 
 	std::vector<physical_device>& instance::enumerate_devices()
 	{
-		u32 num_gpus;
+		u32 num_gpus = 0;
 		// This may fail on unsupported drivers, so just assume no devices
-		if (vkEnumeratePhysicalDevices(m_instance, &num_gpus, nullptr) != VK_SUCCESS)
+		if (const VkResult result = vkEnumeratePhysicalDevices(m_instance, &num_gpus, nullptr); result != VK_SUCCESS)
+		{
+			rsx_log.fatal("vkEnumeratePhysicalDevices failed with VkResult %d", static_cast<s32>(result));
 			return gpus;
+		}
+
+		rsx_log.notice("Vulkan enumerated %u physical device(s)", num_gpus);
 
 		if (gpus.size() != num_gpus)
 		{
