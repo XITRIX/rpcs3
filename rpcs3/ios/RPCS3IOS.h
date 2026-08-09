@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 4u
+#define RPCS3_IOS_ABI_VERSION 5u
 
 typedef enum rpcs3_ios_status
 {
@@ -80,6 +80,17 @@ typedef struct rpcs3_ios_config
     void* user_context;
 } rpcs3_ios_config;
 
+// The wrapper owns metal_layer for the complete attached lifetime. Width and
+// height are the CAMetalLayer drawable size in physical pixels.
+typedef struct rpcs3_ios_display_surface
+{
+    uint32_t struct_size;
+    uint32_t width;
+    uint32_t height;
+    float refresh_rate;
+    void* metal_layer;
+} rpcs3_ios_display_surface;
+
 RPCS3_IOS_EXPORT uint32_t rpcs3_ios_abi_version(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT const char* rpcs3_ios_build_info(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) RPCS3_IOS_NOEXCEPT;
@@ -89,6 +100,10 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_firmware(
     const char* pup_path,
     rpcs3_ios_firmware_progress_callback progress_callback,
     void* user_context) RPCS3_IOS_NOEXCEPT;
+// Pass NULL to detach. Detach and layer replacement require stopped
+// emulation; dimensions for the currently attached layer may change live.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_display_surface(
+    const rpcs3_ios_display_surface* surface) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_boot_vsh(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_emulation_state rpcs3_ios_get_emulation_state(void) RPCS3_IOS_NOEXCEPT;
 // Observational and safe to poll while boot is running. A zero total means

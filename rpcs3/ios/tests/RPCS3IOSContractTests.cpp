@@ -1,11 +1,13 @@
 #include "../RPCS3IOSContract.h"
+#include "../RPCS3IOSDisplay.h"
 
 #include <cassert>
 
 int main()
 {
 	using namespace rpcs3::ios;
-	static_assert(RPCS3_IOS_ABI_VERSION == 4);
+	static_assert(RPCS3_IOS_ABI_VERSION == 5);
+	static_assert(sizeof(rpcs3_ios_display_surface) == 24);
 	static_assert(RPCS3_IOS_EMULATION_STATE_UNKNOWN == 0);
 	static_assert(RPCS3_IOS_EMULATION_STATE_STOPPED == 1);
 	static_assert(RPCS3_IOS_EMULATION_STATE_STOPPING == 7);
@@ -41,6 +43,35 @@ int main()
 	config.application_support_path = "/tmp/rpcs3-support";
 	config.cache_path = nullptr;
 	assert(validate_config_contract(&config) == RPCS3_IOS_INVALID_ARGUMENT);
+
+	display_surface_registry surfaces;
+	assert(!surfaces.snapshot().valid());
+	assert(surfaces.update(nullptr, true) == RPCS3_IOS_OK);
+	rpcs3_ios_display_surface surface{};
+	surface.struct_size = sizeof(surface);
+	surface.width = 2796;
+	surface.height = 1290;
+	surface.refresh_rate = 120;
+	surface.metal_layer = reinterpret_cast<void*>(0x1000);
+	assert(validate_display_surface_contract(&surface) == RPCS3_IOS_OK);
+	assert(surfaces.update(&surface, true) == RPCS3_IOS_OK);
+	assert(surfaces.snapshot().metal_layer == surface.metal_layer);
+	assert(surfaces.snapshot().width == 2796);
+	surface.width = 2556;
+	assert(surfaces.update(&surface, false) == RPCS3_IOS_OK);
+	assert(surfaces.snapshot().width == 2556);
+	rpcs3_ios_display_surface replacement = surface;
+	replacement.metal_layer = reinterpret_cast<void*>(0x2000);
+	assert(surfaces.update(&replacement, false) == RPCS3_IOS_INVALID_STATE);
+	assert(surfaces.update(nullptr, false) == RPCS3_IOS_INVALID_STATE);
+	assert(surfaces.update(&replacement, true) == RPCS3_IOS_OK);
+	assert(surfaces.update(nullptr, true) == RPCS3_IOS_OK);
+	assert(!surfaces.snapshot().valid());
+	surface.width = 0;
+	assert(validate_display_surface_contract(&surface) == RPCS3_IOS_INVALID_ARGUMENT);
+	surface.width = 2556;
+	surface.struct_size = sizeof(surface) - 1;
+	assert(validate_display_surface_contract(&surface) == RPCS3_IOS_INVALID_ARGUMENT);
 
 	error_store errors;
 	assert(errors.get().empty());
