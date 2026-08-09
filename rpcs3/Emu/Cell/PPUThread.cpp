@@ -1,5 +1,8 @@
 #include "stdafx.h"
 #include "Utilities/JIT.h"
+#ifdef RPCS3_IOS
+#include "Utilities/JITIOSLayoutPolicy.h"
+#endif
 #include "Utilities/StrUtil.h"
 #include "util/serialization.hpp"
 #include "Crypto/sha1.h"
@@ -5051,7 +5054,11 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 	// each additional split of JIT instance results in a downgraded version of around (100% / N-1th) - (100% / Nth) percent of instructions
 	// where N is the total amount of JIT instances
 	// Subject to change
+#ifdef RPCS3_IOS
+	constexpr u32 c_modules_per_jit = rpcs3::ios::jit::ppu_modules_per_jit;
+#else
 	constexpr u32 c_modules_per_jit = 100;
+#endif
 
 	std::shared_ptr<std::pair<u32, u32>> local_jit_bounds = std::make_shared<std::pair<u32, u32>>(u32{umax}, 0);
 
