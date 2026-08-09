@@ -12,8 +12,6 @@
 
 #ifdef RPCS3_IOS
 #include "JITIOS.h"
-#include "JITIOSLayoutPolicy.h"
-#include "JITIOSMemoryPlan.h"
 #endif
 
 #include <charconv>
@@ -225,39 +223,35 @@ struct JITAnnouncer : llvm::JITEventListener
 // Simple memory manager
 struct MemoryManager1 : llvm::RTDyldMemoryManager
 {
-	// Desktop reserves 256 MiB for code or data. iOS uses smaller retained
-	// layouts because PPU work is already split across multiple JIT instances.
-#ifdef RPCS3_IOS
-	static constexpr u64 c_max_size = rpcs3::ios::jit::llvm_region_capacity;
-#else
+	// Desktop reserves 256 MiB for code or data. iOS draws exact-sized
+	// allocations from the already prepared process-lifetime arenas.
+#ifndef RPCS3_IOS
 	static constexpr u64 c_max_size = 0x1000'0000;
-#endif
-
 	// Allocation unit (2M)
 	static constexpr u64 c_page_size = 2 * 1024 * 1024;
 
-	// Lazily committed code/data blocks inside the platform-sized layout.
 	void* m_code_mems = nullptr;
 	void* m_data_ro_mems = nullptr;
 	void* m_data_rw_mems = nullptr;
-
 	u64 code_ptr = 0;
 	u64 data_ro_ptr = 0;
 	u64 data_rw_ptr = 0;
-
-#ifdef RPCS3_IOS
+#else
 	struct code_mapping
 	{
 		u8* local = nullptr;
 		u8* target = nullptr;
 		usz size = 0;
 	};
+	struct arena_allocation
+	{
+		u8* target = nullptr;
+		usz size = 0;
+	};
 
 	std::vector<code_mapping> m_pending_code;
 	std::vector<code_mapping> m_code;
-	// Preserve the existing 512 KiB initial commit size without allowing an
-	// LLVM section to straddle two independently remapped writable aliases.
-	rpcs3::ios::jit::code_allocation_plan m_code_plan{c_max_size, c_page_size / 4};
+	std::vector<arena_allocation> m_data;
 #endif
 
 	// First fallback for non-existing symbols
@@ -281,24 +275,6 @@ struct MemoryManager1 : llvm::RTDyldMemoryManager
 
 	MemoryManager1& operator=(const MemoryManager1&) = delete;
 
-#ifdef RPCS3_IOS
-	void ensure_layout()
-	{
-		if (m_code_mems)
-		{
-			return;
-		}
-
-		// Object-cache-only worker compilers normally never allocate runtime
-		// sections, so defer their address-space cost until LLVM actually asks for
-		// one. AArch64's small code model addresses module-local data with ADRP;
-		// retain one adjacent code/data layout when runtime storage is required.
-		auto* const layout = ensure(static_cast<u8*>(rpcs3::ios::jit::reserve_address_space(c_max_size * 2, c_max_size)));
-		m_code_mems = layout;
-		m_data_rw_mems = layout + c_max_size;
-	}
-#endif
-
 	~MemoryManager1() override
 	{
 		// Hack: don't release to prevent reuse of address space, see jit_announce
@@ -307,9 +283,13 @@ struct MemoryManager1 : llvm::RTDyldMemoryManager
 		// utils::memory_decommit(m_data_ro_mems, how_much(data_ro_ptr));
 		// utils::memory_decommit(m_data_rw_mems, how_much(data_rw_ptr));
 #ifdef RPCS3_IOS
-		if (m_code_mems)
+		for (const code_mapping& item : m_code)
 		{
-			rpcs3::ios::jit::release(m_code_mems, c_max_size * 2);
+			rpcs3::ios::jit::release_allocation(true, item.target, item.size);
+		}
+		for (const arena_allocation& item : m_data)
+		{
+			rpcs3::ios::jit::release_allocation(false, item.target, item.size);
 		}
 #else
 		utils::memory_decommit(m_code_mems, c_max_size * 3, true);
@@ -338,6 +318,7 @@ struct MemoryManager1 : llvm::RTDyldMemoryManager
 		return {addr, llvm::JITSymbolFlags::Exported};
 	}
 
+#ifndef RPCS3_IOS
 	u8* allocate(u64& alloc_pos, void* block, uptr size, u64 align, utils::protection prot)
 	{
 		align = align ? align : 16;
@@ -380,16 +361,7 @@ struct MemoryManager1 : llvm::RTDyldMemoryManager
 		{
 			const u64 pagea = utils::align(oldp, page_quarter);
 			const u64 psize = utils::align(std::min(newp, c_page_size) - pagea, page_quarter);
-#ifdef RPCS3_IOS
-			if (prot == utils::protection::wx)
-			{
-				ensure(rpcs3::ios::jit::commit(reinterpret_cast<u8*>(block) + (pagea % c_max_size), psize));
-			}
-			else
-#endif
-			{
-				utils::memory_commit(reinterpret_cast<u8*>(block) + (pagea % c_max_size), psize, prot);
-			}
+			utils::memory_commit(reinterpret_cast<u8*>(block) + (pagea % c_max_size), psize, prot);
 
 			// Advance
 			oldp = pagea + psize;
@@ -400,41 +372,25 @@ struct MemoryManager1 : llvm::RTDyldMemoryManager
 			// Allocate pages on demand
 			const u64 pagea = utils::align(oldp, c_page_size);
 			const u64 psize = utils::align(newp - pagea, c_page_size);
-#ifdef RPCS3_IOS
-			if (prot == utils::protection::wx)
-			{
-				ensure(rpcs3::ios::jit::commit(reinterpret_cast<u8*>(block) + (pagea % c_max_size), psize));
-			}
-			else
-#endif
-			{
-				utils::memory_commit(reinterpret_cast<u8*>(block) + (pagea % c_max_size), psize, prot);
-			}
+			utils::memory_commit(reinterpret_cast<u8*>(block) + (pagea % c_max_size), psize, prot);
 		}
 
 		return reinterpret_cast<u8*>(block) + (olda % c_max_size);
 	}
+#endif
 
 	u8* allocateCodeSection(uptr size, uint align, uint /*sec_id*/, llvm::StringRef /*sec_name*/) override
 	{
 #ifdef RPCS3_IOS
-		ensure_layout();
 		align = align ? align : 16;
-		rpcs3::ios::jit::code_allocation allocation;
-		if (!m_code_plan.allocate(size, align, allocation))
+		u8* const target = static_cast<u8*>(rpcs3::ios::jit::allocate(true, size, align));
+		if (!target)
 		{
-			jit_log.fatal("Unsupported iOS code size/alignment (size=0x%x, align=0x%x)", size, align);
+			jit_log.fatal("Unable to allocate iOS LLVM code (size=0x%x, align=0x%x): %s",
+				size, align, rpcs3::ios::jit::last_error());
 			return nullptr;
 		}
 
-		if (allocation.needs_commit())
-		{
-			ensure(rpcs3::ios::jit::commit_reserved(
-				static_cast<u8*>(m_code_mems) + allocation.committed_offset,
-				allocation.committed_size));
-		}
-
-		u8* const target = static_cast<u8*>(m_code_mems) + allocation.offset;
 		u8* const local = ensure(static_cast<u8*>(rpcs3::ios::jit::writable(target, size)));
 		m_pending_code.push_back({local, target, size});
 		m_code.push_back({local, target, size});
@@ -459,15 +415,25 @@ struct MemoryManager1 : llvm::RTDyldMemoryManager
 	u8* allocateDataSection(uptr size, uint align, uint /*sec_id*/, llvm::StringRef /*sec_name*/, bool is_ro) override
 	{
 #ifdef RPCS3_IOS
-		ensure_layout();
-#endif
+		(void)is_ro;
+		align = align ? align : 16;
+		u8* const target = static_cast<u8*>(rpcs3::ios::jit::allocate(false, size, align));
+		if (!target)
+		{
+			jit_log.fatal("Unable to allocate iOS LLVM data (size=0x%x, align=0x%x): %s",
+				size, align, rpcs3::ios::jit::last_error());
+			return nullptr;
+		}
+		m_data.push_back({target, size});
+		return target;
+#else
 		if (is_ro)
 		{
 			// Disabled
 			//return allocate(data_ro_ptr, m_data_ro_mems, size, align, utils::protection::rw);
 		}
-
 		return allocate(data_rw_ptr, m_data_rw_mems, size, align, utils::protection::rw);
+#endif
 	}
 
 	bool finalizeMemory(std::string* = nullptr) override
