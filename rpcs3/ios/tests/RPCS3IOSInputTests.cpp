@@ -8,7 +8,7 @@ int main()
 {
 	using namespace rpcs3::ios;
 
-	static_assert(RPCS3_IOS_ABI_VERSION == 6);
+	static_assert(RPCS3_IOS_ABI_VERSION == 7);
 	static_assert(sizeof(rpcs3_ios_pad_state) == 40);
 	static_assert(pad_button_mask == (UINT64_C(1) << 17) - 1);
 

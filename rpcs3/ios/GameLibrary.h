@@ -1,0 +1,46 @@
+#pragma once
+
+#include "util/types.hpp"
+
+#include <functional>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace rpcs3::ios
+{
+enum class game_package_install_error
+{
+	none,
+	invalid_package,
+	installation_failed,
+};
+
+struct game_package_install_result
+{
+	game_package_install_error error = game_package_install_error::none;
+	std::string title_id;
+	std::string title;
+	std::string detail;
+};
+
+struct installed_game
+{
+	std::string title_id;
+	std::string title;
+	std::string version;
+	std::string category;
+	std::string path;
+	std::string icon_path;
+};
+
+using game_package_progress_callback =
+	std::function<void(u32 completed, u32 total, std::string_view stage)>;
+
+game_package_install_result install_game_package(
+	const std::string& path,
+	const game_package_progress_callback& progress);
+std::vector<installed_game> installed_games();
+std::optional<installed_game> find_installed_game(std::string_view title_id);
+}

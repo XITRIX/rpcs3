@@ -3,6 +3,7 @@
 #include "RPCS3IOSContract.h"
 #include "RPCS3IOSDisplay.h"
 #include "FirmwareInstaller.h"
+#include "GameLibrary.h"
 #include "IOSGSFrame.h"
 #include "Emu/Io/IOS/IOSPadHandler.h"
 
@@ -51,6 +52,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -374,7 +376,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":6,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"audio\":\"remoteio\",\"input\":\"gamecontroller\",\"media_codecs\":false}";
+	return "{\"abi\":7,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"audio\":\"remoteio\",\"input\":\"gamecontroller\",\"games\":\"pkg-library\",\"media_codecs\":false}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -580,7 +582,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_install_firmware(
 		set_error("Stop emulation before installing firmware");
 		return RPCS3_IOS_INVALID_STATE;
 	}
-	if (const auto result = g_lifecycle.begin_firmware_install(); result != RPCS3_IOS_OK)
+	if (const auto result = g_lifecycle.begin_content_install(); result != RPCS3_IOS_OK)
 	{
 		set_error("RPCS3Core must be ready before installing firmware");
 		return result;
@@ -600,7 +602,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_install_firmware(
 
 		emit_log(4, "Starting PlayStation 3 firmware installation");
 		const auto install_result = rpcs3::ios::install_firmware(pup_path, progress);
-		g_lifecycle.finish_firmware_install();
+		g_lifecycle.finish_content_install();
 		if (install_result.error != rpcs3::ios::firmware_install_error::none)
 		{
 			set_error(install_result.detail);
@@ -622,8 +624,115 @@ extern "C" rpcs3_ios_status rpcs3_ios_install_firmware(
 		set_error("Unknown exception during firmware installation");
 	}
 
-	g_lifecycle.finish_firmware_install();
+	g_lifecycle.finish_content_install();
 	return RPCS3_IOS_FIRMWARE_INSTALL_FAILED;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_install_package(
+	const char* package_path,
+	rpcs3_ios_package_progress_callback progress_callback,
+	void* user_context) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!package_path || !package_path[0] || package_path[0] != '/')
+	{
+		set_error("The package path must be an absolute sandbox path");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("Stop emulation before installing a package");
+		return result;
+	}
+	if (const auto result = g_lifecycle.begin_content_install(); result != RPCS3_IOS_OK)
+	{
+		set_error("RPCS3Core must be ready before installing a package");
+		return result;
+	}
+
+	try
+	{
+		auto progress = [progress_callback, user_context](u32 completed, u32 total, std::string_view stage)
+		{
+			if (!progress_callback)
+			{
+				return;
+			}
+			const std::string terminated{stage};
+			progress_callback(user_context, completed, total, terminated.c_str());
+		};
+
+		emit_log(4, "Starting PlayStation 3 package installation");
+		const auto install_result = rpcs3::ios::install_game_package(package_path, progress);
+		g_lifecycle.finish_content_install();
+		if (install_result.error != rpcs3::ios::game_package_install_error::none)
+		{
+			set_error(install_result.detail);
+			emit_log(2, install_result.detail);
+			return install_result.error == rpcs3::ios::game_package_install_error::invalid_package
+				? RPCS3_IOS_PACKAGE_INVALID
+				: RPCS3_IOS_PACKAGE_INSTALL_FAILED;
+		}
+
+		emit_log(4, fmt::format("Successfully installed PlayStation 3 package: %s (%s)",
+			install_result.title, install_result.title_id));
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception during package installation");
+	}
+
+	g_lifecycle.finish_content_install();
+	return RPCS3_IOS_PACKAGE_INSTALL_FAILED;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_enumerate_games(
+	rpcs3_ios_game_callback callback,
+	void* user_context) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!callback)
+	{
+		set_error("Installed-game enumeration requires a callback");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (g_lifecycle.state() != RPCS3_IOS_STATE_READY)
+	{
+		set_error("RPCS3Core must be ready before enumerating installed games");
+		return RPCS3_IOS_INVALID_STATE;
+	}
+
+	try
+	{
+		for (const auto& game : rpcs3::ios::installed_games())
+		{
+			const rpcs3_ios_game_info info{
+				sizeof(rpcs3_ios_game_info),
+				game.title_id.c_str(),
+				game.title.c_str(),
+				game.version.c_str(),
+				game.category.c_str(),
+				game.icon_path.c_str(),
+			};
+			callback(user_context, &info);
+		}
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while enumerating installed games");
+	}
+	return RPCS3_IOS_INTERNAL_ERROR;
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_set_display_surface(
@@ -721,6 +830,71 @@ extern "C" rpcs3_ios_status rpcs3_ios_boot_vsh(void) noexcept
 	return RPCS3_IOS_BOOT_FAILED;
 }
 
+extern "C" rpcs3_ios_status rpcs3_ios_boot_game(const char* title_id) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!title_id || !title_id[0])
+	{
+		set_error("An installed title ID is required");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	const std::string requested_title_id{title_id};
+	if (requested_title_id.size() > 32 ||
+		!std::all_of(requested_title_id.begin(), requested_title_id.end(), [](unsigned char character)
+		{
+			return std::isalnum(character) || character == '_' || character == '-';
+		}))
+	{
+		set_error("The installed title ID contains invalid characters");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("RPCS3Core must be ready and emulation stopped before booting a game");
+		return result;
+	}
+	if (!g_display_surface.snapshot().valid())
+	{
+		set_error("Attach a valid iOS Metal display surface before booting a game");
+		return RPCS3_IOS_INVALID_STATE;
+	}
+
+	try
+	{
+		const auto game = rpcs3::ios::find_installed_game(requested_title_id);
+		if (!game)
+		{
+			set_error(fmt::format("Installed game not found: %s", requested_title_id));
+			return RPCS3_IOS_GAME_NOT_FOUND;
+		}
+
+		emit_log(4, fmt::format("Booting installed game %s (%s)", game->title, game->title_id));
+		Emu.SetForceBoot(true);
+		const game_boot_result result = Emu.BootGame(game->path, game->title_id);
+		if (result != game_boot_result::no_errors)
+		{
+			Emu.SetForceBoot(false);
+			set_error(fmt::format("Game boot failed: %s", result));
+			return RPCS3_IOS_BOOT_FAILED;
+		}
+
+		emit_log(4, fmt::format("Installed game boot request completed: %s", game->title_id));
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while booting the installed game");
+	}
+
+	Emu.SetForceBoot(false);
+	return RPCS3_IOS_BOOT_FAILED;
+}
+
 extern "C" rpcs3_ios_emulation_state rpcs3_ios_get_emulation_state(void) noexcept
 {
 	std::lock_guard lock(g_api_mutex);
@@ -756,7 +930,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_get_boot_progress(
 		std::string detail = snapshot.text;
 		if (detail.empty() && has_counters)
 		{
-			detail = "Preparing firmware modules";
+			detail = "Preparing title modules";
 		}
 
 		if (snapshot.files_total)
