@@ -11,7 +11,12 @@ inline constexpr u64 command_prepare_region = 1;
 
 bool is_ready() noexcept;
 void* reserve(usz size) noexcept;
+// Reserve address space without consuming iOS executable-map capacity. Before
+// debugger preparation, commit_reserved() replaces each requested subrange
+// with a stable RX mapping and creates its shared RW alias.
+void* reserve_address_space(usz size, usz executable_size) noexcept;
 bool commit(void* executable, usz size) noexcept;
+bool commit_reserved(void* executable, usz size) noexcept;
 void* writable(const void* executable, usz size = 1) noexcept;
 void flush(const void* executable, usz size) noexcept;
 void release(void* executable, usz size) noexcept;
