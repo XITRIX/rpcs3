@@ -11,7 +11,7 @@ struct capabilities final
 	static constexpr bool camera = false;
 	static constexpr bool microphone = false;
 	static constexpr bool music = false;
-	static constexpr bool media_codecs = false;
+	static constexpr bool media_codecs = true;
 	static constexpr bool usb_passthrough = false;
 	static constexpr bool hid_passthrough = false;
 	static constexpr bool ps_move = false;
