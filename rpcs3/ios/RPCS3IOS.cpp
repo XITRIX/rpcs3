@@ -4,6 +4,7 @@
 #include "RPCS3IOSDisplay.h"
 #include "FirmwareInstaller.h"
 #include "IOSGSFrame.h"
+#include "Emu/Io/IOS/IOSPadHandler.h"
 
 #include "Emu/System.h"
 #include "Emu/IdManager.h"
@@ -69,6 +70,7 @@ std::string g_application_support_path;
 std::string g_cache_path;
 bool g_emu_started = false;
 std::atomic_bool g_accept_display_surfaces = false;
+std::atomic_bool g_accept_pad_state = false;
 rpcs3::ios::display_surface_registry g_display_surface;
 
 struct boot_progress_snapshot
@@ -372,7 +374,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":5,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"audio\":\"null\",\"input\":\"null\",\"media_codecs\":false}";
+	return "{\"abi\":6,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"audio\":\"null\",\"input\":\"gamecontroller\",\"media_codecs\":false}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -424,6 +426,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 
 		g_log_listener = std::make_unique<callback_log_listener>();
 		logs::listener::add(g_log_listener.get());
+		rpcs3::ios::shared_pad_state().clear();
 		const auto jit_stats = rpcs3::ios::jit::get_statistics();
 		emit_log(4, fmt::format(
 			"Prepared and sealed a %u MiB Universal JIT arena; StikDebug may now disconnect",
@@ -441,6 +444,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		Emu.Init();
 		g_lifecycle.finish_initialize(true);
 		g_accept_display_surfaces = true;
+		g_accept_pad_state = true;
 		emit_log(4, "RPCS3 Emu.Init completed with the iOS Vulkan/MoltenVK frontend");
 		return RPCS3_IOS_OK;
 	}
@@ -454,6 +458,8 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 	}
 
 	g_accept_display_surfaces = false;
+	g_accept_pad_state = false;
+	rpcs3::ios::shared_pad_state().clear();
 	g_lifecycle.finish_initialize(false);
 	return RPCS3_IOS_CORE_INIT_FAILED;
 }
@@ -646,6 +652,25 @@ extern "C" rpcs3_ios_status rpcs3_ios_set_display_surface(
 	return result;
 }
 
+extern "C" rpcs3_ios_status rpcs3_ios_set_pad_state(
+	const rpcs3_ios_pad_state* state) noexcept
+{
+	// Boot owns g_api_mutex during lengthy firmware compilation. Input must
+	// remain independently writable so controller events never wait for boot.
+	if (!g_accept_pad_state)
+	{
+		set_error("RPCS3Core must be ready before updating iOS pad input");
+		return RPCS3_IOS_INVALID_STATE;
+	}
+
+	const auto result = rpcs3::ios::shared_pad_state().update(state);
+	if (result != RPCS3_IOS_OK)
+	{
+		set_error("The iOS pad-state contract is invalid");
+	}
+	return result;
+}
+
 extern "C" rpcs3_ios_status rpcs3_ios_boot_vsh(void) noexcept
 {
 	std::lock_guard lock(g_api_mutex);
@@ -832,6 +857,8 @@ extern "C" rpcs3_ios_status rpcs3_ios_shutdown(void) noexcept
 		return RPCS3_IOS_OK;
 	}
 	g_accept_display_surfaces = false;
+	g_accept_pad_state = false;
+	rpcs3::ios::shared_pad_state().clear();
 	try
 	{
 		if (g_emu_started)
