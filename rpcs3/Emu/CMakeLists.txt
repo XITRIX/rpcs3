@@ -101,6 +101,8 @@ endif()
 
 if(RPCS3_FRONTEND STREQUAL "IOS")
     target_sources(rpcs3_emu PRIVATE
+        Io/IOS/IOSPadHandler.cpp
+        Io/IOS/IOSPadHandler.h
         ../../Utilities/JITArenaAllocator.h
         ../../Utilities/JITIOS.cpp
         ../../Utilities/JITIOS.h
