@@ -34,4 +34,17 @@ void enable_display_sleep(bool enable) noexcept
 
 	dispatch_async_f(dispatch_get_main_queue(), context, &apply_display_sleep);
 }
+
+std::string preferred_language_identifier()
+{
+	@autoreleasepool
+	{
+		NSString* language = NSLocale.preferredLanguages.firstObject;
+		if (!language.length)
+		{
+			return "en";
+		}
+		return language.UTF8String ?: "en";
+	}
+}
 }
