@@ -101,8 +101,10 @@ endif()
 
 if(RPCS3_FRONTEND STREQUAL "IOS")
     target_sources(rpcs3_emu PRIVATE
+        ../../Utilities/JITArenaAllocator.h
         ../../Utilities/JITIOS.cpp
         ../../Utilities/JITIOS.h
+        ../../Utilities/JITIOSLayoutPolicy.h
         ../ios/FFmpegStubs.c
         ../ios/FrontendSupport.cpp
         ../ios/UPnPStubs.cpp
