@@ -372,7 +372,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":5,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"audio\":\"null\",\"input\":\"null\",\"media_codecs\":false}";
+	return "{\"abi\":5,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"audio\":\"null\",\"input\":\"null\",\"media_codecs\":false}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -400,6 +400,12 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		g_lifecycle.finish_initialize(false);
 		return RPCS3_IOS_JIT_UNAVAILABLE;
 	}
+	if (!rpcs3::ios::jit::prepare_arena() || !rpcs3::ios::jit::seal_arena())
+	{
+		set_error(rpcs3::ios::jit::last_error());
+		g_lifecycle.finish_initialize(false);
+		return RPCS3_IOS_JIT_MAPPING_FAILED;
+	}
 
 	try
 	{
@@ -418,6 +424,10 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 
 		g_log_listener = std::make_unique<callback_log_listener>();
 		logs::listener::add(g_log_listener.get());
+		const auto jit_stats = rpcs3::ios::jit::get_statistics();
+		emit_log(4, fmt::format(
+			"Prepared and sealed a %u MiB Universal JIT arena; StikDebug may now disconnect",
+			jit_stats.capacity / (1024 * 1024)));
 		Emu.SetCallbacks(make_callbacks());
 		Emu.SetSupportedRenderers({video_renderer::vulkan});
 		Emu.SetDefaultRenderer(video_renderer::vulkan);
@@ -840,6 +850,12 @@ extern "C" rpcs3_ios_status rpcs3_ios_shutdown(void) noexcept
 			g_emu_started = false;
 		}
 		g_display_surface.clear();
+		const auto jit_stats = rpcs3::ios::jit::get_statistics();
+		emit_log(4, fmt::format(
+			"Universal JIT arena peak usage: code %u MiB, data %u MiB of %u MiB each",
+			jit_stats.peak_code_bytes / (1024 * 1024),
+			jit_stats.peak_data_bytes / (1024 * 1024),
+			jit_stats.capacity / (1024 * 1024)));
 		logs::listener::sync_all();
 		g_lifecycle.finish_shutdown(true);
 		emit_log(4, "RPCS3Core shutdown completed");
