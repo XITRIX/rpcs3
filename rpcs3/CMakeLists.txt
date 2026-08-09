@@ -175,9 +175,12 @@ if(RPCS3_FRONTEND STREQUAL "IOS")
     add_library(RPCS3Core SHARED
         ios/FirmwareInstaller.cpp
         ios/FirmwareInstaller.h
+        ios/IOSGSFrame.cpp
+        ios/IOSGSFrame.h
         ios/RPCS3IOS.cpp
         ios/RPCS3IOS.h
         ios/RPCS3IOSCapabilities.h
+        ios/RPCS3IOSDisplay.h
         ios/RPCS3IOS.exports
     )
 
