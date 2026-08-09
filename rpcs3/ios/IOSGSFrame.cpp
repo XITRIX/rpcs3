@@ -1,5 +1,8 @@
 #include "stdafx.h"
 #include "IOSGSFrame.h"
+#include "RPCS3IOSPerformance.h"
+
+#include "Emu/RSX/RSXThread.h"
 
 #include <algorithm>
 #include <limits>
@@ -11,6 +14,7 @@ gs_frame::gs_frame(display_surface_registry& surface)
 	, m_initial_surface(surface.snapshot())
 {
 	ensure(m_initial_surface.valid());
+	reset_performance_metrics();
 }
 
 void gs_frame::close()
@@ -54,8 +58,17 @@ void gs_frame::set_current(draw_context_t)
 {
 }
 
-void gs_frame::flip(draw_context_t, bool)
+void gs_frame::flip(draw_context_t, bool skip_frame)
 {
+	if (skip_frame)
+	{
+		return;
+	}
+
+	if (auto* renderer = rsx::get_current_renderer(); renderer && renderer->is_current_thread())
+	{
+		record_presented_frame(renderer->get_load());
+	}
 }
 
 display_surface_snapshot gs_frame::current_surface() const noexcept

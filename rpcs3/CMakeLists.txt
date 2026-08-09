@@ -187,6 +187,8 @@ if(RPCS3_FRONTEND STREQUAL "IOS")
         ios/RPCS3IOSInput.h
         ios/RPCS3IOSPlatform.h
         ios/RPCS3IOSPlatform.mm
+        ios/RPCS3IOSPerformance.cpp
+        ios/RPCS3IOSPerformance.h
         ios/RPCS3IOSSettings.cpp
         ios/RPCS3IOSSettings.h
         ios/RPCS3IOS.exports
@@ -206,7 +208,7 @@ if(RPCS3_FRONTEND STREQUAL "IOS")
         RPCS3_IOS_CORE_BUILD=1
         "$<TARGET_PROPERTY:3rdparty_zlib,INTERFACE_COMPILE_DEFINITIONS>"
     )
-    set_source_files_properties(ios/FirmwareInstaller.cpp ios/GameLibrary.cpp ios/RPCS3IOS.cpp ios/RPCS3IOSSettings.cpp PROPERTIES COMPILE_OPTIONS -fexceptions)
+    set_source_files_properties(ios/FirmwareInstaller.cpp ios/GameLibrary.cpp ios/RPCS3IOS.cpp ios/RPCS3IOSPerformance.cpp ios/RPCS3IOSSettings.cpp PROPERTIES COMPILE_OPTIONS -fexceptions)
 
     set_target_properties(RPCS3Core PROPERTIES
         OUTPUT_NAME RPCS3Core
