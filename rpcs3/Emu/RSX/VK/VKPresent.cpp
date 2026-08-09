@@ -476,7 +476,7 @@ bool VKGSRender::present_frame(const rsx::display_flip_info_t& info)
 
 			if (Emu.IsStopped())
 			{
-				m_frame->flip(m_context);
+				m_frame->flip(m_context, true);
 				return false;
 			}
 
@@ -525,7 +525,7 @@ bool VKGSRender::present_frame(const rsx::display_flip_info_t& info)
 			frame_context_cleanup(m_current_frame);
 		}
 
-		m_frame->flip(m_context);
+		m_frame->flip(m_context, true);
 		return false;
 	}
 
