@@ -107,7 +107,6 @@ if(RPCS3_FRONTEND STREQUAL "IOS")
         ../../Utilities/JITIOS.cpp
         ../../Utilities/JITIOS.h
         ../../Utilities/JITIOSLayoutPolicy.h
-        ../ios/FFmpegStubs.c
         ../ios/FrontendSupport.cpp
         ../ios/UPnPStubs.cpp
         ../ios/USBStubs.c
