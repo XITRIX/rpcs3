@@ -19,6 +19,12 @@ mkdir -p "${OUTPUT_ROOT}"
 "${OUTPUT_ROOT}/RPCS3IOSInputTests"
 
 "${CXX_COMPILER}" -std=c++20 -Wall -Wextra -Werror \
+    -I "${SOURCE_ROOT}" -I "${SOURCE_ROOT}/rpcs3" \
+    "${SCRIPT_DIR}/IOSAudioBufferContractTests.cpp" \
+    -o "${OUTPUT_ROOT}/IOSAudioBufferContractTests"
+"${OUTPUT_ROOT}/IOSAudioBufferContractTests"
+
+"${CXX_COMPILER}" -std=c++20 -Wall -Wextra -Werror \
     "${SCRIPT_DIR}/SharedMemoryBackingTests.cpp" \
     -o "${OUTPUT_ROOT}/SharedMemoryBackingTests"
 "${OUTPUT_ROOT}/SharedMemoryBackingTests"
