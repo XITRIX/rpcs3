@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 8u
+#define RPCS3_IOS_ABI_VERSION 9u
 
 typedef enum rpcs3_ios_status
 {
@@ -37,7 +37,9 @@ typedef enum rpcs3_ios_status
     RPCS3_IOS_PACKAGE_INSTALL_FAILED = 13,
     RPCS3_IOS_GAME_NOT_FOUND = 14,
     RPCS3_IOS_ISO_INVALID = 15,
-    RPCS3_IOS_ISO_INSTALL_FAILED = 16
+    RPCS3_IOS_ISO_INSTALL_FAILED = 16,
+    RPCS3_IOS_ZIP_INVALID = 17,
+    RPCS3_IOS_ZIP_INSTALL_FAILED = 18
 } rpcs3_ios_status;
 
 typedef enum rpcs3_ios_state
@@ -74,6 +76,11 @@ typedef void (*rpcs3_ios_package_progress_callback)(
     uint32_t total,
     const char* stage);
 typedef void (*rpcs3_ios_iso_progress_callback)(
+    void* user_context,
+    uint32_t completed,
+    uint32_t total,
+    const char* stage);
+typedef void (*rpcs3_ios_zip_progress_callback)(
     void* user_context,
     uint32_t completed,
     uint32_t total,
@@ -178,6 +185,12 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_iso(
     const char* iso_path,
     const char* key_path,
     rpcs3_ios_iso_progress_callback progress_callback,
+    void* user_context) RPCS3_IOS_NOEXCEPT;
+// Installs exactly one extracted PS3 game folder from a non-encrypted ZIP.
+// The game may be at the archive root or inside a wrapper directory.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_zip(
+    const char* zip_path,
+    rpcs3_ios_zip_progress_callback progress_callback,
     void* user_context) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_games(
     rpcs3_ios_game_callback callback,
