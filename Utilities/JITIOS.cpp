@@ -1,6 +1,6 @@
 #include "JITIOS.h"
-#include "JITAliasRegistry.h"
-#include "JITReservationRegistry.h"
+#include "JITArenaAllocator.h"
+#include "JITIOSLayoutPolicy.h"
 
 #if !defined(RPCS3_IOS)
 #error "JITIOS.cpp is only available in the iOS frontend"
@@ -19,6 +19,7 @@
 #include <mach/vm_map.h>
 #include <mach/vm_statistics.h>
 #include <sys/mman.h>
+#include <sys/sysctl.h>
 #include <sys/ucontext.h>
 #include <unistd.h>
 
@@ -27,21 +28,38 @@ namespace
 constexpr u32 breakpoint_instruction = 0xd4200000u |
 	(static_cast<u32>(rpcs3::ios::jit::breakpoint_immediate) << 5);
 
+struct arena_state
+{
+	u8* code = nullptr;
+	u8* writable_code = nullptr;
+	u8* data = nullptr;
+	usz capacity = 0;
+	rpcs3::ios::jit::arena_allocator code_allocator;
+	rpcs3::ios::jit::arena_allocator data_allocator;
+	usz runtime_code_bytes = 0;
+	usz runtime_data_bytes = 0;
+	usz live_code_bytes = 0;
+	usz live_data_bytes = 0;
+	usz peak_code_bytes = 0;
+	usz peak_data_bytes = 0;
+	bool prepared = false;
+	bool sealed = false;
+};
+
 std::mutex g_protocol_mutex;
-std::mutex g_mapping_mutex;
-std::mutex g_commit_mutex;
-rpcs3::ios::jit::alias_registry g_mappings;
-rpcs3::ios::jit::reservation_registry g_address_space_reservations;
+std::mutex g_arena_mutex;
+std::mutex g_error_mutex;
+arena_state g_arena;
 std::string g_last_error;
 struct sigaction g_previous_trap_action{};
 
-// Keep RPCS3's large, sparse JIT reservations out of the anonymous heap VM
-// range. XNU reserves tags 240-255 for application-specific mappings.
+// Keep the stable code/data layout out of the anonymous heap VM range. XNU
+// reserves tags 240-255 for application-specific mappings.
 constexpr int jit_vm_tag = VM_MAKE_TAG(VM_MEMORY_APPLICATION_SPECIFIC_1);
 
 void set_error(std::string message) noexcept
 {
-	std::lock_guard lock(g_mapping_mutex);
+	std::lock_guard lock(g_error_mutex);
 	g_last_error = std::move(message);
 }
 
@@ -80,15 +98,17 @@ void trap_fallback(int signal, siginfo_t* info, void* raw_context)
 	auto& state = context->uc_mcontext->__ss;
 	const uptr pc = static_cast<uptr>(__darwin_arm_thread_state64_get_pc(state));
 	const u32 instruction = pc ? *reinterpret_cast<const u32*>(pc) : 0;
-
 	const u64 command = state.__x[16];
 	if (instruction != breakpoint_instruction ||
-		command != rpcs3::ios::jit::command_prepare_region)
+		(command != rpcs3::ios::jit::command_detach &&
+			command != rpcs3::ios::jit::command_prepare_region))
 	{
 		forward_trap(signal, info, raw_context);
 		return;
 	}
 
+	// A missing debugger is reported by command 1 returning zero. Command 0 is
+	// intentionally a no-op in the fallback because there is nothing to detach.
 	state.__x[0] = 0;
 	__darwin_arm_thread_state64_set_pc_fptr(state, reinterpret_cast<void*>(pc + sizeof(u32)));
 }
@@ -104,9 +124,13 @@ u64 rpcs3_ios_jit26_protocol_call(u64, const void*, usz)
 		"ret\n");
 }
 
-u64 protocol_call(u64 command, const void* address, usz size) noexcept
+u64 protocol_call(u64 command, const void* address, usz size, bool* issued = nullptr) noexcept
 {
 	std::lock_guard lock(g_protocol_mutex);
+	if (issued)
+	{
+		*issued = false;
+	}
 
 	struct sigaction fallback{};
 	sigemptyset(&fallback.sa_mask);
@@ -115,10 +139,14 @@ u64 protocol_call(u64 command, const void* address, usz size) noexcept
 
 	if (::sigaction(SIGTRAP, &fallback, &g_previous_trap_action) != 0)
 	{
-		set_error("Unable to install the scoped JIT readiness trap handler");
+		set_error("Unable to install the scoped Universal JIT trap handler");
 		return 0;
 	}
 
+	if (issued)
+	{
+		*issued = true;
+	}
 	const u64 result = rpcs3_ios_jit26_protocol_call(command, address, size);
 	::sigaction(SIGTRAP, &g_previous_trap_action, nullptr);
 	return result;
@@ -130,128 +158,49 @@ usz page_size() noexcept
 	return value;
 }
 
-bool checked_range(const void* address, usz size, uptr& begin, usz& length) noexcept
+bool contains(const u8* base, usz capacity, const void* address, usz size, usz& offset) noexcept
 {
-	if (!address || !size)
+	if (!base || !address || !size)
 	{
 		return false;
 	}
 
-	const uptr page_mask = page_size() - 1;
-	const uptr raw = reinterpret_cast<uptr>(address);
-	const uptr maximum = std::numeric_limits<uptr>::max();
-	if (size > maximum - page_mask || raw > maximum - size - page_mask)
+	const uptr begin = reinterpret_cast<uptr>(base);
+	const uptr value = reinterpret_cast<uptr>(address);
+	if (value < begin || value - begin > capacity || size > capacity - (value - begin))
 	{
 		return false;
 	}
 
-	begin = raw & ~page_mask;
-	const uptr end = (raw + size + page_mask) & ~page_mask;
-	length = end - begin;
-	return length != 0;
+	offset = static_cast<usz>(value - begin);
+	return true;
 }
 
-bool commit_impl(void* executable, usz size, bool activate_reserved_range) noexcept
+u64 physical_memory_size() noexcept
 {
-	uptr begin = 0;
-	usz length = 0;
-	if (!checked_range(executable, size, begin, length))
+	u64 value = 0;
+	size_t size = sizeof(value);
+	return ::sysctlbyname("hw.memsize", &value, &size, nullptr, 0) == 0 ? value : 0;
+}
+
+void discard_layout(u8* layout, usz total_size, vm_address_t writable_alias, usz capacity) noexcept
+{
+	if (writable_alias)
 	{
-		set_error("Invalid executable commit range");
-		return false;
+		::vm_deallocate(mach_task_self(), writable_alias, static_cast<vm_size_t>(capacity));
 	}
-
-	std::lock_guard commit_lock(g_commit_mutex);
+	if (layout)
 	{
-		std::lock_guard mapping_lock(g_mapping_mutex);
-		if (g_mappings.contains(begin, length)) return true;
+		::munmap(layout, total_size);
 	}
+}
 
-	void* const rx = reinterpret_cast<void*>(begin);
-	if (activate_reserved_range)
-	{
-		bool is_reserved = false;
-		{
-			std::lock_guard mapping_lock(g_mapping_mutex);
-			is_reserved = g_address_space_reservations.contains(begin, length);
-		}
-		if (!is_reserved)
-		{
-			set_error("Executable activation range is not inside a registered JIT layout");
-			return false;
-		}
-
-		// The surrounding layout is only an address-space placeholder. Install a
-		// fresh RX mapping at the final address before asking the debugger to
-		// prepare it; preparing PROT_NONE directly produces an unusable mapping.
-		void* const mapped = ::mmap(
-			rx,
-			length,
-			PROT_READ | PROT_EXEC,
-			MAP_FIXED | MAP_PRIVATE | MAP_ANON,
-			jit_vm_tag,
-			0);
-		if (mapped != rx)
-		{
-			set_error("Unable to activate the reserved executable range: " + std::string{std::strerror(errno)});
-			return false;
-		}
-	}
-
-	// The debugger owns the transition from the stable reservation to RX on
-	// iOS 26. An in-process mprotect(PROT_EXEC) would fail before that step.
-	if (protocol_call(rpcs3::ios::jit::command_prepare_region, rx, length) != begin)
-	{
-		::mprotect(rx, length, PROT_NONE);
-		set_error("The debugger did not prepare the requested executable range");
-		return false;
-	}
-
-	vm_address_t alias = 0;
-	vm_prot_t current_protection = VM_PROT_NONE;
-	vm_prot_t maximum_protection = VM_PROT_NONE;
-	const kern_return_t remap_result = ::vm_remap(
-		mach_task_self(),
-		&alias,
-		static_cast<vm_size_t>(length),
-		0,
-		VM_FLAGS_ANYWHERE,
-		mach_task_self(),
-		static_cast<vm_address_t>(begin),
-		false,
-		&current_protection,
-		&maximum_protection,
-		VM_INHERIT_SHARE);
-
-	if (remap_result != KERN_SUCCESS)
-	{
-		::mprotect(rx, length, PROT_NONE);
-		set_error("mach_vm_remap failed while creating the writable JIT alias");
-		return false;
-	}
-
-	if (::vm_protect(mach_task_self(), alias, static_cast<vm_size_t>(length), false, VM_PROT_READ | VM_PROT_WRITE) != KERN_SUCCESS)
-	{
-		::vm_deallocate(mach_task_self(), alias, static_cast<vm_size_t>(length));
-		::mprotect(rx, length, PROT_NONE);
-		set_error("mach_vm_protect failed for the writable JIT alias");
-		return false;
-	}
-
-	bool registered = false;
-	{
-		std::lock_guard mapping_lock(g_mapping_mutex);
-		registered = g_mappings.insert(begin, static_cast<uptr>(alias), length);
-	}
-	if (!registered)
-	{
-		::vm_deallocate(mach_task_self(), alias, static_cast<vm_size_t>(length));
-		::mprotect(rx, length, PROT_NONE);
-		set_error("Unable to register the writable JIT alias");
-		return false;
-	}
-
-	return true;
+void update_live_bytes(bool executable, usz amount) noexcept
+{
+	usz& live = executable ? g_arena.live_code_bytes : g_arena.live_data_bytes;
+	usz& peak = executable ? g_arena.peak_code_bytes : g_arena.peak_data_bytes;
+	live += amount;
+	peak = std::max(peak, live);
 }
 }
 
@@ -259,11 +208,15 @@ namespace rpcs3::ios::jit
 {
 bool is_ready() noexcept
 {
+	{
+		std::lock_guard lock(g_arena_mutex);
+		if (g_arena.prepared)
+		{
+			return true;
+		}
+	}
+
 	const usz length = page_size();
-	// Universal JIT prepares pages from an executable mapping request. Starting
-	// from PROT_NONE lets debugserver report a successful byte write while the
-	// reservation remains inaccessible, which only fails later when the first
-	// instruction-cache operation touches the RX view.
 	void* const probe = ::mmap(nullptr, length, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANON, jit_vm_tag, 0);
 	if (probe == MAP_FAILED)
 	{
@@ -283,83 +236,261 @@ bool is_ready() noexcept
 	return true;
 }
 
-void* reserve(usz size) noexcept
+bool prepare_arena() noexcept
+{
+	std::lock_guard lock(g_arena_mutex);
+	if (g_arena.prepared)
+	{
+		return true;
+	}
+
+	const usz capacity = choose_arena_capacity(physical_memory_size());
+	if (!capacity || capacity > std::numeric_limits<usz>::max() / 2)
+	{
+		set_error("Invalid Universal JIT arena capacity");
+		return false;
+	}
+
+	const usz total_size = capacity * 2;
+	auto* const layout = static_cast<u8*>(::mmap(nullptr, total_size, PROT_NONE,
+		MAP_PRIVATE | MAP_ANON, jit_vm_tag, 0));
+	if (layout == MAP_FAILED)
+	{
+		set_error("Unable to reserve the Universal JIT arena layout: " + std::string{std::strerror(errno)});
+		return false;
+	}
+
+	void* const code = ::mmap(layout, capacity, PROT_READ | PROT_EXEC,
+		MAP_FIXED | MAP_PRIVATE | MAP_ANON, jit_vm_tag, 0);
+	if (code != layout)
+	{
+		const std::string detail = std::strerror(errno);
+		discard_layout(layout, total_size, 0, capacity);
+		set_error("Unable to map the Universal JIT executable arena: " + detail);
+		return false;
+	}
+
+	void* const data = ::mmap(layout + capacity, capacity, PROT_READ | PROT_WRITE,
+		MAP_FIXED | MAP_PRIVATE | MAP_ANON, jit_vm_tag, 0);
+	if (data != layout + capacity)
+	{
+		const std::string detail = std::strerror(errno);
+		discard_layout(layout, total_size, 0, capacity);
+		set_error("Unable to map the Universal JIT data arena: " + detail);
+		return false;
+	}
+
+	if (protocol_call(command_prepare_region, layout, capacity) != reinterpret_cast<uptr>(layout))
+	{
+		discard_layout(layout, total_size, 0, capacity);
+		set_error("The debugger did not prepare the complete Universal JIT arena");
+		return false;
+	}
+
+	vm_address_t alias = 0;
+	vm_prot_t current_protection = VM_PROT_NONE;
+	vm_prot_t maximum_protection = VM_PROT_NONE;
+	const kern_return_t remap_result = ::vm_remap(
+		mach_task_self(),
+		&alias,
+		static_cast<vm_size_t>(capacity),
+		0,
+		VM_FLAGS_ANYWHERE,
+		mach_task_self(),
+		static_cast<vm_address_t>(reinterpret_cast<uptr>(layout)),
+		false,
+		&current_protection,
+		&maximum_protection,
+		VM_INHERIT_SHARE);
+	if (remap_result != KERN_SUCCESS)
+	{
+		discard_layout(layout, total_size, 0, capacity);
+		set_error("mach_vm_remap failed while creating the arena's writable alias");
+		return false;
+	}
+
+	if (::vm_protect(mach_task_self(), alias, static_cast<vm_size_t>(capacity), false,
+		VM_PROT_READ | VM_PROT_WRITE) != KERN_SUCCESS)
+	{
+		discard_layout(layout, total_size, alias, capacity);
+		set_error("mach_vm_protect failed for the arena's writable alias");
+		return false;
+	}
+
+	g_arena.code_allocator.reset(capacity);
+	g_arena.data_allocator.reset(capacity);
+
+	g_arena.code = layout;
+	g_arena.writable_code = reinterpret_cast<u8*>(alias);
+	g_arena.data = layout + capacity;
+	g_arena.capacity = capacity;
+	g_arena.prepared = true;
+	return true;
+}
+
+bool seal_arena() noexcept
+{
+	if (!prepare_arena())
+	{
+		return false;
+	}
+
+	{
+		std::lock_guard lock(g_arena_mutex);
+		if (g_arena.sealed)
+		{
+			return true;
+		}
+		g_arena.sealed = true;
+	}
+
+	// StikDebug's built-in Universal script detaches on command 0. The scoped
+	// fallback and Xcode stop hook consume the same command without detaching.
+	bool issued = false;
+	protocol_call(command_detach, nullptr, 0, &issued);
+	if (!issued)
+	{
+		std::lock_guard lock(g_arena_mutex);
+		g_arena.sealed = false;
+		return false;
+	}
+	return true;
+}
+
+void* runtime_memory(bool executable) noexcept
+{
+	if (!prepare_arena())
+	{
+		return nullptr;
+	}
+
+	std::lock_guard lock(g_arena_mutex);
+	return executable ? static_cast<void*>(g_arena.code) : static_cast<void*>(g_arena.data);
+}
+
+usz arena_capacity() noexcept
+{
+	if (!prepare_arena())
+	{
+		return 0;
+	}
+
+	std::lock_guard lock(g_arena_mutex);
+	return g_arena.capacity;
+}
+
+bool claim_runtime(bool executable, usz offset, usz size) noexcept
 {
 	if (!size)
 	{
-		set_error("Cannot reserve an empty executable region");
-		return nullptr;
+		return true;
 	}
-
-	// Request the final protection up front. On iOS 26 the mapping may not become
-	// usable for execution until the attached debugger prepares every page, but
-	// the request must still be RX; a PROT_NONE reservation cannot be promoted by
-	// Universal JIT's debugserver page writes.
-	void* result = ::mmap(nullptr, size, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANON, jit_vm_tag, 0);
-	if (result == MAP_FAILED)
+	if (!prepare_arena())
 	{
-		set_error("Unable to reserve the executable address range: " + std::string{std::strerror(errno)});
-		return nullptr;
+		return false;
 	}
 
-	return result;
+	std::lock_guard lock(g_arena_mutex);
+	arena_allocator& allocator = executable ? g_arena.code_allocator : g_arena.data_allocator;
+	arena_range allocation;
+	if (!allocator.allocate_lowest(size, 1, allocation) || allocation.offset != offset)
+	{
+		if (allocation.size)
+		{
+			allocator.release(allocation.offset, allocation.size);
+		}
+		set_error("The Universal JIT arena is exhausted or fragmented at the runtime boundary");
+		return false;
+	}
+
+	usz& runtime = executable ? g_arena.runtime_code_bytes : g_arena.runtime_data_bytes;
+	runtime += size;
+	update_live_bytes(executable, size);
+	return true;
 }
 
-void* reserve_address_space(usz size, usz executable_size) noexcept
+void reset_runtime() noexcept
 {
-	if (!size || !executable_size || executable_size > size)
+	std::lock_guard lock(g_arena_mutex);
+	if (g_arena.runtime_code_bytes)
 	{
-		set_error("Invalid JIT address-space layout sizes");
-		return nullptr;
+		if (!g_arena.code_allocator.release(0, g_arena.runtime_code_bytes))
+		{
+			set_error("Unable to release the runtime code portion of the Universal JIT arena");
+			return;
+		}
+		g_arena.live_code_bytes -= g_arena.runtime_code_bytes;
+		g_arena.runtime_code_bytes = 0;
 	}
-
-	void* result = ::mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANON, jit_vm_tag, 0);
-	if (result == MAP_FAILED)
+	if (g_arena.runtime_data_bytes)
 	{
-		set_error("Unable to reserve the JIT address-space layout: " + std::string{std::strerror(errno)});
-		return nullptr;
+		if (!g_arena.data_allocator.release(0, g_arena.runtime_data_bytes))
+		{
+			set_error("Unable to release the runtime data portion of the Universal JIT arena");
+			return;
+		}
+		g_arena.live_data_bytes -= g_arena.runtime_data_bytes;
+		g_arena.runtime_data_bytes = 0;
 	}
-
-	bool registered = false;
-	{
-		std::lock_guard lock(g_mapping_mutex);
-		registered = g_address_space_reservations.insert(reinterpret_cast<uptr>(result), executable_size);
-	}
-	if (!registered)
-	{
-		::munmap(result, size);
-		set_error("Unable to register the JIT executable subrange");
-		return nullptr;
-	}
-
-	return result;
 }
 
-bool commit(void* executable, usz size) noexcept
+void* allocate(bool executable, usz size, usz alignment) noexcept
 {
-	return commit_impl(executable, size, false);
+	if (!prepare_arena())
+	{
+		return nullptr;
+	}
+
+	std::lock_guard lock(g_arena_mutex);
+	arena_allocator& allocator = executable ? g_arena.code_allocator : g_arena.data_allocator;
+	arena_range allocation;
+	if (!allocator.allocate_highest(size, alignment, allocation))
+	{
+		set_error("The Universal JIT arena is exhausted by a temporary allocation");
+		return nullptr;
+	}
+
+	u8* const target = (executable ? g_arena.code : g_arena.data) + allocation.offset;
+	u8* const storage = (executable ? g_arena.writable_code : g_arena.data) + allocation.offset;
+	std::memset(storage, 0, allocation.size);
+	update_live_bytes(executable, allocation.size);
+	return target;
 }
 
-bool commit_reserved(void* executable, usz size) noexcept
+void release_allocation(bool executable, void* address, usz size) noexcept
 {
-	return commit_impl(executable, size, true);
+	if (!address || !size)
+	{
+		return;
+	}
+
+	std::lock_guard lock(g_arena_mutex);
+	usz offset = 0;
+	u8* const base = executable ? g_arena.code : g_arena.data;
+	if (!contains(base, g_arena.capacity, address, size, offset))
+	{
+		set_error("Attempted to release an address outside the Universal JIT arena");
+		return;
+	}
+
+	arena_allocator& allocator = executable ? g_arena.code_allocator : g_arena.data_allocator;
+	if (!allocator.release(offset, size))
+	{
+		set_error("Attempted to release an invalid or overlapping Universal JIT allocation");
+		return;
+	}
+
+	usz& live = executable ? g_arena.live_code_bytes : g_arena.live_data_bytes;
+	live = size <= live ? live - size : 0;
 }
 
 void* writable(const void* executable, usz size) noexcept
 {
-	if (!executable || !size)
-	{
-		return nullptr;
-	}
-
-	const uptr address = reinterpret_cast<uptr>(executable);
-	if (address > std::numeric_limits<uptr>::max() - size)
-	{
-		return nullptr;
-	}
-
-	std::lock_guard lock(g_mapping_mutex);
-	return g_mappings.translate(address, size);
+	std::lock_guard lock(g_arena_mutex);
+	usz offset = 0;
+	return contains(g_arena.code, g_arena.capacity, executable, size, offset)
+		? static_cast<void*>(g_arena.writable_code + offset)
+		: nullptr;
 }
 
 void flush(const void* executable, usz size) noexcept
@@ -369,37 +500,30 @@ void flush(const void* executable, usz size) noexcept
 		return;
 	}
 
-	// Clean through the address that received the writes, then invalidate the
-	// instruction view that will actually be executed.
 	void* const alias = writable(executable, size);
 	::sys_dcache_flush(alias ? alias : const_cast<void*>(executable), size);
 	::sys_icache_invalidate(const_cast<void*>(executable), size);
 }
 
-void release(void* executable, usz size) noexcept
+arena_statistics get_statistics() noexcept
 {
-	if (!executable || !size)
-	{
-		return;
-	}
-
-	const uptr begin = reinterpret_cast<uptr>(executable);
-	std::lock_guard commit_lock(g_commit_mutex);
-	std::lock_guard mapping_lock(g_mapping_mutex);
-
-	g_mappings.remove_contained(begin, size, [](const alias_mapping& item)
-	{
-		::vm_deallocate(mach_task_self(), static_cast<vm_address_t>(item.writable), static_cast<vm_size_t>(item.size));
-	});
-	g_address_space_reservations.remove_contained(begin, size);
-
-	::munmap(executable, size);
+	std::lock_guard lock(g_arena_mutex);
+	return {
+		g_arena.capacity,
+		g_arena.runtime_code_bytes,
+		g_arena.runtime_data_bytes,
+		g_arena.live_code_bytes,
+		g_arena.live_data_bytes,
+		g_arena.peak_code_bytes,
+		g_arena.peak_data_bytes,
+		g_arena.sealed,
+	};
 }
 
 const char* last_error() noexcept
 {
 	thread_local std::string copy;
-	std::lock_guard lock(g_mapping_mutex);
+	std::lock_guard lock(g_error_mutex);
 	copy = g_last_error;
 	return copy.c_str();
 }

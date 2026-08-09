@@ -121,24 +121,25 @@ void jit_announce(uptr func, usz size, std::string_view name)
 	}
 }
 
-static u8* get_jit_memory()
+static u8* get_jit_memory(bool executable)
 {
+#ifdef RPCS3_IOS
+	return static_cast<u8*>(rpcs3::ios::jit::runtime_memory(executable));
+#else
+	(void)executable;
 	// Reserve 2G memory (magic static)
 	static void* const s_memory2 = []() -> void*
 	{
-#ifdef RPCS3_IOS
-		return ensure(rpcs3::ios::jit::reserve(0x80000000));
-#else
 		void* ptr = utils::memory_reserve(0x80000000, true);
 #ifdef CAN_OVERCOMMIT
 		utils::memory_commit(ptr, 0x80000000);
 		utils::memory_protect(ptr, 0x40000000, utils::protection::wx);
 #endif
 		return ptr;
-#endif
 	}();
 
 	return static_cast<u8*>(s_memory2);
+#endif
 }
 
 // Allocation counters (1G code, 1G data subranges)
@@ -148,11 +149,21 @@ static atomic_t<u64> s_code_pos{0}, s_data_pos{0};
 static std::vector<u8> s_code_init, s_data_init;
 static bool s_snapshot_initialized = false;
 
-template <atomic_t<u64>& Ctr, uint Off, utils::protection Prot>
+template <atomic_t<u64>& Ctr, bool Executable, utils::protection Prot>
 static u8* add_jit_memory(usz size, usz align)
 {
 	// Select subrange
-	u8* pointer = get_jit_memory() + Off;
+	u8* pointer = ensure(get_jit_memory(Executable));
+#ifdef RPCS3_IOS
+	const u64 capacity = rpcs3::ios::jit::arena_capacity();
+	ensure(capacity);
+#else
+	constexpr u64 capacity = 0x40000000;
+	if constexpr (!Executable)
+	{
+		pointer += capacity;
+	}
+#endif
 
 	if (!size && !align) [[unlikely]]
 	{
@@ -174,10 +185,10 @@ static u8* add_jit_memory(usz size, usz align)
 		const u64 _pos = utils::align(ctr & 0xffff'ffff, align);
 		const u64 _new = utils::align(_pos + size, align);
 
-		if (_new > 0x40000000) [[unlikely]]
+		if (_new > capacity) [[unlikely]]
 		{
 			// Sorry, we failed, and further attempts should fail too.
-			ctr |= 0x40000000;
+			ctr = (ctr & 0xffff'ffff'0000'0000) | capacity;
 			return -1;
 		}
 
@@ -197,7 +208,8 @@ static u8* add_jit_memory(usz size, usz align)
 
 	if (pos == umax) [[unlikely]]
 	{
-		jit_log.error("Out of memory (size=0x%x, align=0x%x, off=0x%x)", size, align, Off);
+		jit_log.error("Out of JIT %s memory (size=0x%x, align=0x%x, capacity=0x%x)",
+			Executable ? "code" : "data", size, align, capacity);
 		return nullptr;
 	}
 
@@ -206,14 +218,7 @@ static u8* add_jit_memory(usz size, usz align)
 #ifndef CAN_OVERCOMMIT
 		// Commit more memory.
 #ifdef RPCS3_IOS
-		if constexpr (Prot == utils::protection::wx)
-		{
-			ensure(rpcs3::ios::jit::commit(pointer + olda, newa - olda));
-		}
-		else
-		{
-			utils::memory_commit(pointer + olda, newa - olda, Prot);
-		}
+		ensure(rpcs3::ios::jit::claim_runtime(Executable, olda, newa - olda));
 #else
 		utils::memory_commit(pointer + olda, newa - olda, Prot);
 #endif
@@ -228,8 +233,7 @@ static u8* add_jit_memory(usz size, usz align)
 		});
 	}
 
-	ensure(pointer + pos >= get_jit_memory() + Off);
-	ensure(pointer + pos < get_jit_memory() + Off + 0x40000000);
+	ensure(pos < capacity);
 
 	return pointer + pos;
 }
@@ -304,11 +308,11 @@ u8* jit_runtime::alloc(usz size, usz align, bool exec) noexcept
 
 	if (exec)
 	{
-		return add_jit_memory<s_code_pos, 0x0, utils::protection::wx>(size, align);
+		return add_jit_memory<s_code_pos, true, utils::protection::wx>(size, align);
 	}
 	else
 	{
-		return add_jit_memory<s_data_pos, 0x40000000, utils::protection::rw>(size, align);
+		return add_jit_memory<s_data_pos, false, utils::protection::rw>(size, align);
 	}
 }
 
@@ -335,11 +339,11 @@ u8* jit_runtime::peek(bool exec) noexcept
 {
 	if (exec)
 	{
-		return add_jit_memory<s_code_pos, 0x0, utils::protection::wx>(0, 1);
+		return add_jit_memory<s_code_pos, true, utils::protection::wx>(0, 1);
 	}
 	else
 	{
-		return add_jit_memory<s_data_pos, 0x40000000, utils::protection::rw>(0, 1);
+		return add_jit_memory<s_data_pos, false, utils::protection::rw>(0, 1);
 	}
 }
 
@@ -371,13 +375,14 @@ void jit_runtime::finalize() noexcept
 #endif
 	// Reset JIT memory
 #ifdef RPCS3_IOS
-	// iOS executable mappings retain their debugger-prepared RX identity. Reuse
-	// them and restore the initialization snapshot through their RW aliases.
+	// Recycle only the low-growing runtime portion. Temporary LLVM allocations
+	// live at the high end and are released by their owning memory managers.
+	rpcs3::ios::jit::reset_runtime();
 #elif defined(CAN_OVERCOMMIT)
-	utils::memory_reset(get_jit_memory(), 0x80000000, true);
-	utils::memory_protect(get_jit_memory(), 0x40000000, utils::protection::wx);
+	utils::memory_reset(get_jit_memory(true), 0x80000000, true);
+	utils::memory_protect(get_jit_memory(true), 0x40000000, utils::protection::wx);
 #else
-	utils::memory_decommit(get_jit_memory(), 0x80000000, true);
+	utils::memory_decommit(get_jit_memory(true), 0x80000000, true);
 #endif
 
 	s_code_pos = 0;
@@ -423,7 +428,7 @@ jit_runtime_base& asmjit::get_global_runtime()
 		custom_runtime() noexcept
 		{
 #ifdef RPCS3_IOS
-			ensure(m_pos.raw() = static_cast<uchar*>(rpcs3::ios::jit::reserve(size)));
+			ensure(m_pos.raw() = static_cast<uchar*>(rpcs3::ios::jit::allocate(true, size, 64)));
 #else
 			ensure(m_pos.raw() = static_cast<uchar*>(utils::memory_reserve(size, true)));
 #endif
@@ -433,7 +438,7 @@ jit_runtime_base& asmjit::get_global_runtime()
 
 			// Make memory writable + executable
 #ifdef RPCS3_IOS
-			ensure(rpcs3::ios::jit::commit(m_pos, size));
+			// The complete code arena was prepared before StikDebug detached.
 #else
 			utils::memory_commit(m_pos, size, utils::protection::wx);
 #endif
