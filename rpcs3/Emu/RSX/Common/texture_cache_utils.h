@@ -1,6 +1,7 @@
 #pragma once
 
 #include "texture_cache_types.h"
+#include "texture_cache_protection_policy.h"
 #include "texture_cache_predictor.h"
 #include "TextureUtils.h"
 
@@ -18,12 +19,6 @@ namespace rsx
 		full_range,
 		locked_range,
 		confirmed_range
-	};
-
-	enum section_protection_strategy
-	{
-		lock,
-		hash
 	};
 
 	static inline void memory_protect(const address_range32& range, utils::protection prot)
