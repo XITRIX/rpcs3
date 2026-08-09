@@ -2207,7 +2207,18 @@ namespace vm
 
 	inline namespace ps3_
 	{
+#ifdef RPCS3_IOS
+		static utils::shm& get_hook_memory()
+		{
+			// The app injects its sandbox paths immediately before Emu.Init().
+			// Constructing this 32 GiB sparse backing during dylib initialization
+			// would run before those paths exist and make dlopen fallible.
+			static utils::shm s_hook{0x800000000, ""};
+			return s_hook;
+		}
+#else
 		static utils::shm s_hook{0x800000000, ""};
+#endif
 
 		void init()
 		{
@@ -2246,7 +2257,11 @@ namespace vm
 #ifdef _WIN32
 			utils::memory_release(g_hook_addr, 0x800000000);
 #endif
+#ifdef RPCS3_IOS
+			ensure(get_hook_memory().map(g_hook_addr, utils::protection::rw, true));
+#else
 			ensure(s_hook.map(g_hook_addr, utils::protection::rw, true));
+#endif
 		}
 	}
 

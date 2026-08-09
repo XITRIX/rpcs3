@@ -1,6 +1,9 @@
 #include "stdafx.h"
 #include "util/vm.hpp"
 #include "util/asm.hpp"
+#ifdef RPCS3_IOS
+#include "ios/RPCS3IOSSharedMemory.h"
+#endif
 #ifdef _WIN32
 #include "Utilities/File.h"
 #include "util/dyn_lib.hpp"
@@ -501,6 +504,8 @@ namespace utils
 #ifdef _WIN32
 		const ULARGE_INTEGER max_size{ .QuadPart = m_size };
 		m_handle = ensure(::CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, max_size.HighPart, max_size.LowPart, nullptr));
+#elif defined(RPCS3_IOS)
+		m_file = ensure(rpcs3::ios::create_shared_memory_file(fs::get_cache_dir(), m_size), FN(x >= 0));
 #elif defined(__linux__) || defined(__FreeBSD__)
 		m_file = -1;
 
@@ -708,6 +713,11 @@ namespace utils
 			m_storage = std::move(storage1);
 		}
 #else
+#ifdef RPCS3_IOS
+		(void)storage;
+		m_file = ensure(rpcs3::ios::create_shared_memory_file(fs::get_cache_dir(), m_size), FN(x >= 0));
+		return;
+#else
 
 #ifdef __linux__
 #ifdef ANDROID
@@ -806,6 +816,7 @@ namespace utils
 			// Fix file size
 			ensure(::ftruncate(m_file, m_size) >= 0);
 		}
+#endif
 #endif
 	}
 
