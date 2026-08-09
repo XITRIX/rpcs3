@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 7u
+#define RPCS3_IOS_ABI_VERSION 8u
 
 typedef enum rpcs3_ios_status
 {
@@ -35,7 +35,9 @@ typedef enum rpcs3_ios_status
     RPCS3_IOS_STOP_FAILED = 11,
     RPCS3_IOS_PACKAGE_INVALID = 12,
     RPCS3_IOS_PACKAGE_INSTALL_FAILED = 13,
-    RPCS3_IOS_GAME_NOT_FOUND = 14
+    RPCS3_IOS_GAME_NOT_FOUND = 14,
+    RPCS3_IOS_ISO_INVALID = 15,
+    RPCS3_IOS_ISO_INSTALL_FAILED = 16
 } rpcs3_ios_status;
 
 typedef enum rpcs3_ios_state
@@ -67,6 +69,11 @@ typedef void (*rpcs3_ios_firmware_progress_callback)(
     uint32_t total,
     const char* stage);
 typedef void (*rpcs3_ios_package_progress_callback)(
+    void* user_context,
+    uint32_t completed,
+    uint32_t total,
+    const char* stage);
+typedef void (*rpcs3_ios_iso_progress_callback)(
     void* user_context,
     uint32_t completed,
     uint32_t total,
@@ -164,6 +171,13 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_firmware(
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_package(
     const char* package_path,
     rpcs3_ios_package_progress_callback progress_callback,
+    void* user_context) RPCS3_IOS_NOEXCEPT;
+// key_path may be NULL for decrypted and self-keyed images. Redump images
+// require their matching .dkey or .key path to be supplied by the wrapper.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_iso(
+    const char* iso_path,
+    const char* key_path,
+    rpcs3_ios_iso_progress_callback progress_callback,
     void* user_context) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_games(
     rpcs3_ios_game_callback callback,
