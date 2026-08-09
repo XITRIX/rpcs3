@@ -1,6 +1,7 @@
 #include "RPCS3IOS.h"
 #include "RPCS3IOSCapabilities.h"
 #include "RPCS3IOSContract.h"
+#include "FirmwareInstaller.h"
 
 #include "Emu/System.h"
 #include "Emu/IdManager.h"
@@ -256,7 +257,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":1,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"renderer\":\"null\",\"audio\":\"null\",\"input\":\"null\",\"media_codecs\":false}";
+	return "{\"abi\":2,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"renderer\":\"null\",\"audio\":\"null\",\"input\":\"null\",\"media_codecs\":false}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -400,6 +401,83 @@ extern "C" rpcs3_ios_status rpcs3_ios_run_llvm_self_test(uint64_t input, uint64_
 #endif
 
 	return RPCS3_IOS_SELF_TEST_FAILED;
+}
+
+extern "C" const char* rpcs3_ios_firmware_version(void) noexcept
+{
+	thread_local std::string copy;
+	std::lock_guard lock(g_api_mutex);
+	copy.clear();
+	try
+	{
+		copy = rpcs3::ios::firmware_version();
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while reading the installed firmware version");
+	}
+	return copy.c_str();
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_install_firmware(
+	const char* pup_path,
+	rpcs3_ios_firmware_progress_callback progress_callback,
+	void* user_context) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!pup_path || !pup_path[0] || pup_path[0] != '/')
+	{
+		set_error("The firmware path must be an absolute sandbox path");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = g_lifecycle.begin_firmware_install(); result != RPCS3_IOS_OK)
+	{
+		set_error("RPCS3Core must be ready before installing firmware");
+		return result;
+	}
+
+	try
+	{
+		auto progress = [progress_callback, user_context](u32 completed, u32 total, std::string_view stage)
+		{
+			if (!progress_callback)
+			{
+				return;
+			}
+			const std::string terminated{stage};
+			progress_callback(user_context, completed, total, terminated.c_str());
+		};
+
+		emit_log(4, "Starting PlayStation 3 firmware installation");
+		const auto install_result = rpcs3::ios::install_firmware(pup_path, progress);
+		g_lifecycle.finish_firmware_install();
+		if (install_result.error != rpcs3::ios::firmware_install_error::none)
+		{
+			set_error(install_result.detail);
+			emit_log(2, install_result.detail);
+			return install_result.error == rpcs3::ios::firmware_install_error::invalid_firmware
+				? RPCS3_IOS_FIRMWARE_INVALID
+				: RPCS3_IOS_FIRMWARE_INSTALL_FAILED;
+		}
+
+		emit_log(4, fmt::format("Successfully installed PlayStation 3 firmware %s", install_result.version));
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception during firmware installation");
+	}
+
+	g_lifecycle.finish_firmware_install();
+	return RPCS3_IOS_FIRMWARE_INSTALL_FAILED;
 }
 
 extern "C" rpcs3_ios_state rpcs3_ios_get_state(void) noexcept
