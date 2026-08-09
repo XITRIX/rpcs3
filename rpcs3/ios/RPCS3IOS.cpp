@@ -2,6 +2,8 @@
 #include "RPCS3IOSCapabilities.h"
 #include "RPCS3IOSContract.h"
 #include "RPCS3IOSDisplay.h"
+#include "RPCS3IOSPlatform.h"
+#include "RPCS3IOSSettings.h"
 #include "FirmwareInstaller.h"
 #include "GameLibrary.h"
 #include "IOSGSFrame.h"
@@ -20,6 +22,7 @@
 #include "Emu/Io/Null/NullMouseHandler.h"
 #include "Emu/Io/Null/null_camera_handler.h"
 #include "Emu/Io/Null/null_music_handler.h"
+#include "Emu/NP/rpcn_countries.h"
 #ifdef HAVE_VULKAN
 #include "Emu/RSX/VK/VKGSRender.h"
 #endif
@@ -348,8 +351,8 @@ EmuCallbacks make_callbacks()
 	callbacks.get_font_dirs = []() { return std::vector<std::string>{}; };
 	callbacks.on_install_pkgs = [](const std::vector<std::string>&) { return false; };
 	callbacks.add_breakpoint = [](u32) {};
-	callbacks.display_sleep_control_supported = []() { return false; };
-	callbacks.enable_display_sleep = [](bool) {};
+	callbacks.display_sleep_control_supported = []() { return rpcs3::ios::display_sleep_control_supported(); };
+	callbacks.enable_display_sleep = [](bool enable) { rpcs3::ios::enable_display_sleep(enable); };
 	callbacks.check_microphone_permissions = []() {};
 	callbacks.make_video_source = []() -> std::unique_ptr<video_source> { return {}; };
 	callbacks.enable_gamemode = [](bool) {};
@@ -376,7 +379,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":9,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"audio\":\"remoteio\",\"input\":\"gamecontroller\",\"games\":\"pkg-iso-zip-library\",\"media_codecs\":false}";
+	return "{\"abi\":10,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"audio\":\"remoteio\",\"input\":\"gamecontroller\",\"games\":\"pkg-iso-zip-library\",\"settings\":\"cfg-root-catalog\",\"media_codecs\":false}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -862,6 +865,256 @@ extern "C" rpcs3_ios_status rpcs3_ios_enumerate_games(
 	catch (...)
 	{
 		set_error("Unknown exception while enumerating installed games");
+	}
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_enumerate_settings(
+	rpcs3_ios_setting_callback setting_callback,
+	rpcs3_ios_setting_option_callback option_callback,
+	void* user_context) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!setting_callback)
+	{
+		set_error("Settings enumeration requires a setting callback");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (g_lifecycle.state() != RPCS3_IOS_STATE_READY)
+	{
+		set_error("RPCS3Core must be ready before enumerating settings");
+		return RPCS3_IOS_INVALID_STATE;
+	}
+
+	try
+	{
+		for (const auto& setting : rpcs3::ios::settings_catalog())
+		{
+			const std::string value = setting.entry->to_string();
+			const std::string default_value = setting.entry->def_to_string();
+			std::vector<std::string> options;
+			if (setting.kind == RPCS3_IOS_SETTING_CHOICE)
+			{
+				if (setting.key == "network.psn_country")
+				{
+					options.reserve(countries::g_countries.size());
+					for (const auto& country : countries::g_countries)
+					{
+						options.emplace_back(country.ccode);
+					}
+				}
+				else if (setting.key == "gpu.anisotropic_filter")
+				{
+					options = {"0", "2", "4", "8", "16"};
+				}
+				else if (setting.key == "advanced.mfc_shuffling")
+				{
+					options = {"0", "1"};
+				}
+				else
+				{
+					options = setting.entry->to_list();
+				}
+				std::erase_if(options, [&setting](const std::string& option)
+				{
+					return (setting.key == "advanced.fifo_accuracy" && option == "PS3") ||
+						(setting.key == "network.psn_status" && option == "Simulated") ||
+						(setting.key == "audio.format" && option == "Manual") ||
+						(setting.key == "cpu.spu_xfloat_accuracy" && option == "Inaccurate") ||
+						(setting.key == "gpu.resolution" && option.ends_with("i"));
+				});
+			}
+
+			const rpcs3_ios_setting_info info{
+				sizeof(rpcs3_ios_setting_info),
+				static_cast<uint32_t>(setting.kind),
+				setting.key.data(),
+				setting.category.data(),
+				setting.section.data(),
+				setting.name.data(),
+				setting.description.data(),
+				value.c_str(),
+				default_value.c_str(),
+				setting.minimum,
+				setting.maximum,
+				setting.step,
+				static_cast<uint32_t>(options.size()),
+				1u,
+			};
+			setting_callback(user_context, &info);
+
+			if (option_callback)
+			{
+				for (const std::string& option : options)
+				{
+					std::string label = option;
+					if (setting.key == "network.psn_country")
+					{
+						const auto country = std::find_if(countries::g_countries.begin(), countries::g_countries.end(), [&option](const auto& entry)
+						{
+							return entry.ccode == option;
+						});
+						if (country != countries::g_countries.end())
+						{
+							label = country->name;
+						}
+					}
+					else if (setting.key == "gpu.anisotropic_filter")
+					{
+						label = option == "0" ? "Auto" : option + "x";
+					}
+					else if (setting.key == "advanced.mfc_shuffling")
+					{
+						label = option == "0" ? "Disabled" : "Enabled";
+					}
+					const rpcs3_ios_setting_option setting_option{
+						sizeof(rpcs3_ios_setting_option),
+						0,
+						setting.key.data(),
+						option.c_str(),
+						label.c_str(),
+					};
+					option_callback(user_context, &setting_option);
+				}
+			}
+		}
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while enumerating settings");
+	}
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_set_setting(
+	const char* key,
+	const char* value) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!key || !key[0] || !value)
+	{
+		set_error("A setting key and value are required");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("Stop emulation before changing settings");
+		return result;
+	}
+
+	const auto* setting = rpcs3::ios::find_setting(key);
+	if (!setting)
+	{
+		set_error(fmt::format("Unknown or unavailable iOS setting: %s", key));
+		return RPCS3_IOS_SETTING_NOT_FOUND;
+	}
+
+	try
+	{
+		if (setting->key == "network.psn_country" && std::none_of(countries::g_countries.begin(), countries::g_countries.end(), [value](const auto& country)
+		{
+			return country.ccode == value;
+		}))
+		{
+			set_error(fmt::format("Invalid PSN country code '%s'", value));
+			return RPCS3_IOS_SETTING_INVALID;
+		}
+
+		const std::string previous = setting->entry->to_string();
+		cfg::_base* companion = nullptr;
+		std::string companion_previous;
+		if (std::string_view{value} == "true" && setting->key == "gpu.precise_zcull")
+		{
+			companion = &g_cfg.video.relaxed_zcull_sync;
+		}
+		else if (std::string_view{value} == "true" && setting->key == "gpu.relaxed_zcull")
+		{
+			companion = &g_cfg.video.precise_zpass_count;
+		}
+		if (companion)
+		{
+			companion_previous = companion->to_string();
+			companion->from_string("false");
+		}
+		if (!setting->entry->from_string(value))
+		{
+			if (companion)
+			{
+				companion->from_string(companion_previous);
+			}
+			set_error(fmt::format("Invalid value '%s' for setting '%s'", value, key));
+			return RPCS3_IOS_SETTING_INVALID;
+		}
+		if (!rpcs3::ios::save_global_settings())
+		{
+			setting->entry->from_string(previous);
+			if (companion)
+			{
+				companion->from_string(companion_previous);
+			}
+			set_error("Unable to atomically save RPCS3 config.yml");
+			return RPCS3_IOS_SETTINGS_SAVE_FAILED;
+		}
+		g_backup_cfg.from_string(g_cfg.to_string());
+		emit_log(4, fmt::format("Saved setting %s = %s", key, setting->entry->to_string()));
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while changing a setting");
+	}
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_reset_settings(void) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("Stop emulation before resetting settings");
+		return result;
+	}
+
+	try
+	{
+		std::vector<std::pair<cfg::_base*, std::string>> previous;
+		previous.reserve(rpcs3::ios::settings_catalog().size());
+		for (const auto& setting : rpcs3::ios::settings_catalog())
+		{
+			previous.emplace_back(setting.entry, setting.entry->to_string());
+			setting.entry->from_default();
+		}
+		if (!rpcs3::ios::save_global_settings())
+		{
+			for (const auto& [entry, value] : previous)
+			{
+				entry->from_string(value);
+			}
+			set_error("Unable to atomically save default RPCS3 settings");
+			return RPCS3_IOS_SETTINGS_SAVE_FAILED;
+		}
+		g_backup_cfg.from_string(g_cfg.to_string());
+		emit_log(4, "Restored all iOS-exposed RPCS3 settings to defaults");
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while resetting settings");
 	}
 	return RPCS3_IOS_INTERNAL_ERROR;
 }
