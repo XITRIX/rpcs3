@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 2u
+#define RPCS3_IOS_ABI_VERSION 4u
 
 typedef enum rpcs3_ios_status
 {
@@ -30,7 +30,9 @@ typedef enum rpcs3_ios_status
     RPCS3_IOS_SELF_TEST_FAILED = 6,
     RPCS3_IOS_INTERNAL_ERROR = 7,
     RPCS3_IOS_FIRMWARE_INVALID = 8,
-    RPCS3_IOS_FIRMWARE_INSTALL_FAILED = 9
+    RPCS3_IOS_FIRMWARE_INSTALL_FAILED = 9,
+    RPCS3_IOS_BOOT_FAILED = 10,
+    RPCS3_IOS_STOP_FAILED = 11
 } rpcs3_ios_status;
 
 typedef enum rpcs3_ios_state
@@ -42,6 +44,18 @@ typedef enum rpcs3_ios_state
     RPCS3_IOS_STATE_STOPPED = 4,
     RPCS3_IOS_STATE_FAILED = 5
 } rpcs3_ios_state;
+
+typedef enum rpcs3_ios_emulation_state
+{
+    RPCS3_IOS_EMULATION_STATE_UNKNOWN = 0,
+    RPCS3_IOS_EMULATION_STATE_STOPPED = 1,
+    RPCS3_IOS_EMULATION_STATE_LOADING = 2,
+    RPCS3_IOS_EMULATION_STATE_READY = 3,
+    RPCS3_IOS_EMULATION_STATE_STARTING = 4,
+    RPCS3_IOS_EMULATION_STATE_RUNNING = 5,
+    RPCS3_IOS_EMULATION_STATE_PAUSED = 6,
+    RPCS3_IOS_EMULATION_STATE_STOPPING = 7
+} rpcs3_ios_emulation_state;
 
 typedef void (*rpcs3_ios_log_callback)(void* user_context, int32_t level, const char* message);
 typedef void (*rpcs3_ios_firmware_progress_callback)(
@@ -75,6 +89,16 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_firmware(
     const char* pup_path,
     rpcs3_ios_firmware_progress_callback progress_callback,
     void* user_context) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_boot_vsh(void) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_emulation_state rpcs3_ios_get_emulation_state(void) RPCS3_IOS_NOEXCEPT;
+// Observational and safe to poll while boot is running. A zero total means
+// RPCS3 knows the current stage but cannot calculate a percentage yet.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_get_boot_progress(
+    uint32_t* completed,
+    uint32_t* total,
+    char* stage,
+    size_t stage_capacity) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_stop_emulation(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_state rpcs3_ios_get_state(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_shutdown(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT const char* rpcs3_ios_last_error(void) RPCS3_IOS_NOEXCEPT;
