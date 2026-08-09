@@ -181,6 +181,7 @@ if(RPCS3_FRONTEND STREQUAL "IOS")
         ios/RPCS3IOS.h
         ios/RPCS3IOSCapabilities.h
         ios/RPCS3IOSDisplay.h
+        ios/RPCS3IOSInput.h
         ios/RPCS3IOS.exports
     )
 
