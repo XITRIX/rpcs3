@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 10u
+#define RPCS3_IOS_ABI_VERSION 11u
 
 typedef enum rpcs3_ios_status
 {
@@ -215,6 +215,29 @@ typedef void (*rpcs3_ios_setting_option_callback)(
     void* user_context,
     const rpcs3_ios_setting_option* option);
 
+typedef enum rpcs3_ios_performance_metric_validity
+{
+    RPCS3_IOS_PERFORMANCE_FPS_VALID = 1u << 0,
+    RPCS3_IOS_PERFORMANCE_CPU_VALID = 1u << 1,
+    RPCS3_IOS_PERFORMANCE_GPU_VALID = 1u << 2,
+    RPCS3_IOS_PERFORMANCE_MEMORY_VALID = 1u << 3
+} rpcs3_ios_performance_metric_validity;
+
+// CPU is this process's usage normalized across the device's logical cores.
+// GPU is RPCS3's approximate RSX renderer utilization rather than a private
+// Metal hardware counter. Memory is this process's physical footprint relative
+// to total device memory, not the current iOS jetsam limit.
+typedef struct rpcs3_ios_performance_metrics
+{
+    uint32_t struct_size;
+    uint32_t valid_fields;
+    double frames_per_second;
+    double cpu_usage_percent;
+    double gpu_usage_percent;
+    uint64_t memory_used_bytes;
+    uint64_t memory_total_bytes;
+} rpcs3_ios_performance_metrics;
+
 RPCS3_IOS_EXPORT uint32_t rpcs3_ios_abi_version(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT const char* rpcs3_ios_build_info(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) RPCS3_IOS_NOEXCEPT;
@@ -273,6 +296,10 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_get_boot_progress(
     uint32_t* total,
     char* stage,
     size_t stage_capacity) RPCS3_IOS_NOEXCEPT;
+// Observational and safe to poll while boot or emulation owns the serialized
+// lifecycle lock. Fields without a valid_fields bit must not be displayed.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_get_performance_metrics(
+    rpcs3_ios_performance_metrics* metrics) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_stop_emulation(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_state rpcs3_ios_get_state(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_shutdown(void) RPCS3_IOS_NOEXCEPT;
