@@ -182,6 +182,12 @@ if(NOT RPCS3_FRONTEND STREQUAL "IOS")
         Audio/Cubeb/CubebBackend.cpp
         Audio/Cubeb/cubeb_enumerator.cpp
     )
+else()
+    target_sources(rpcs3_emu PRIVATE
+        Audio/IOS/IOSAudioBackend.cpp
+    )
+    find_library(RPCS3_AUDIOTOOLBOX_FRAMEWORK AudioToolbox REQUIRED)
+    target_link_libraries(rpcs3_emu PUBLIC ${RPCS3_AUDIOTOOLBOX_FRAMEWORK})
 endif()
 
 if(USE_FAUDIO)
