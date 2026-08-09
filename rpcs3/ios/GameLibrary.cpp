@@ -1,4 +1,5 @@
 #include "GameLibrary.h"
+#include "GameArchiveContract.h"
 
 #include "Utilities/StrFmt.h"
 #include "Crypto/unpkg.h"
@@ -9,6 +10,8 @@
 #include "Utilities/File.h"
 #include "Utilities/Thread.h"
 
+#include <minizip/unzip.h>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -16,7 +19,9 @@
 #include <chrono>
 #include <deque>
 #include <limits>
+#include <sys/stat.h>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 namespace rpcs3::ios
@@ -90,6 +95,24 @@ game_iso_install_result iso_installation_failed(
 	};
 }
 
+game_zip_install_result invalid_zip(std::string detail)
+{
+	return {game_zip_install_error::invalid_zip, {}, {}, std::move(detail)};
+}
+
+game_zip_install_result zip_installation_failed(
+	std::string detail,
+	std::string title_id = {},
+	std::string title = {})
+{
+	return {
+		game_zip_install_error::installation_failed,
+		std::move(title_id),
+		std::move(title),
+		std::move(detail),
+	};
+}
+
 bool valid_title_id(std::string_view title_id)
 {
 	return !title_id.empty() && title_id.size() <= 32 &&
@@ -102,6 +125,11 @@ bool valid_title_id(std::string_view title_id)
 std::string disc_image_root()
 {
 	return rpcs3::utils::get_games_dir() + "DiscImages/";
+}
+
+std::string extracted_game_root()
+{
+	return rpcs3::utils::get_games_dir() + "ExtractedGames/";
 }
 
 std::string formatted_byte_size(u64 bytes)
@@ -131,6 +159,229 @@ struct temporary_directory
 		}
 	}
 };
+
+struct zip_handle
+{
+	unzFile value = nullptr;
+
+	~zip_handle()
+	{
+		if (value)
+		{
+			unzClose(value);
+		}
+	}
+};
+
+struct zip_entry
+{
+	unz64_file_pos position{};
+	unz_file_info64 info{};
+	std::string path;
+	bool is_directory = false;
+	bool is_symlink = false;
+	bool is_special = false;
+};
+
+bool enumerate_zip_entries(
+	unzFile archive,
+	std::vector<zip_entry>& entries,
+	std::vector<std::string>& files,
+	std::string& detail)
+{
+	unz_global_info64 global{};
+	if (unzGetGlobalInfo64(archive, &global) != UNZ_OK || !global.number_entry)
+	{
+		detail = "The selected file is empty or is not a readable ZIP archive";
+		return false;
+	}
+	if (global.number_entry > 1'000'000)
+	{
+		detail = "The selected ZIP contains too many entries";
+		return false;
+	}
+	if (unzGoToFirstFile(archive) != UNZ_OK)
+	{
+		detail = "RPCS3 could not read the ZIP directory";
+		return false;
+	}
+
+	std::unordered_set<std::string> seen_paths;
+	entries.reserve(static_cast<usz>(global.number_entry));
+	files.reserve(static_cast<usz>(global.number_entry));
+	for (ZPOS64_T index = 0; index < global.number_entry; index++)
+	{
+		unz_file_info64 info{};
+		if (unzGetCurrentFileInfo64(archive, &info, nullptr, 0, nullptr, 0, nullptr, 0) != UNZ_OK ||
+			!info.size_filename || info.size_filename > 4096)
+		{
+			detail = "The ZIP contains an invalid file name";
+			return false;
+		}
+
+		std::vector<char> name(info.size_filename + 1, '\0');
+		if (unzGetCurrentFileInfo64(archive, &info, name.data(), name.size(),
+			nullptr, 0, nullptr, 0) != UNZ_OK)
+		{
+			detail = "RPCS3 could not read a ZIP entry";
+			return false;
+		}
+
+		const std::string raw_path{name.data(), info.size_filename};
+		const u32 source_system = (info.version >> 8) & 0xff;
+		const mode_t unix_mode = static_cast<mode_t>(info.external_fa >> 16);
+		const mode_t unix_type = unix_mode & S_IFMT;
+		const bool has_unix_type = source_system == 3 || source_system == 19;
+		const bool is_symlink = has_unix_type && unix_type == S_IFLNK;
+		const bool unix_directory = has_unix_type && unix_type == S_IFDIR;
+		const bool unix_regular = !has_unix_type || !unix_type || unix_type == S_IFREG;
+		const bool is_directory = raw_path.ends_with('/') || unix_directory ||
+			(info.external_fa & 0x10) != 0;
+		const bool is_special = has_unix_type && unix_type &&
+			!unix_regular && !unix_directory && !is_symlink;
+		const auto normalized = normalize_game_archive_path(raw_path, is_directory);
+		if (!normalized)
+		{
+			detail = fmt::format("The ZIP contains an unsafe path: %s", raw_path);
+			return false;
+		}
+		if (!seen_paths.emplace(*normalized).second)
+		{
+			detail = fmt::format("The ZIP contains duplicate entries for %s", *normalized);
+			return false;
+		}
+
+		unz64_file_pos position{};
+		if (unzGetFilePos64(archive, &position) != UNZ_OK)
+		{
+			detail = "RPCS3 could not index a ZIP entry";
+			return false;
+		}
+		entries.push_back({position, info, *normalized, is_directory, is_symlink, is_special});
+		if (!is_directory)
+		{
+			files.emplace_back(*normalized);
+		}
+
+		if (index + 1 < global.number_entry && unzGoToNextFile(archive) != UNZ_OK)
+		{
+			detail = "The ZIP directory ended unexpectedly";
+			return false;
+		}
+	}
+	return true;
+}
+
+bool ignored_zip_metadata(std::string_view relative_path)
+{
+	if (relative_path == "__MACOSX" || relative_path.starts_with("__MACOSX/"))
+	{
+		return true;
+	}
+	const usz separator = relative_path.rfind('/');
+	const std::string_view name = separator == std::string_view::npos
+		? relative_path
+		: relative_path.substr(separator + 1);
+	return name == ".DS_Store" || name.starts_with("._");
+}
+
+bool selected_zip_entry(
+	const zip_entry& entry,
+	const game_archive_layout& layout,
+	std::string_view& relative_path)
+{
+	if (!layout.prefix.empty() && !entry.path.starts_with(layout.prefix))
+	{
+		return false;
+	}
+	relative_path = std::string_view{entry.path}.substr(layout.prefix.size());
+	return !relative_path.empty() && !ignored_zip_metadata(relative_path);
+}
+
+bool extract_zip_entry(
+	unzFile archive,
+	const zip_entry& entry,
+	const std::string& destination,
+	u64& extracted,
+	u64 total,
+	const game_zip_progress_callback& progress,
+	std::string& detail)
+{
+	if ((entry.info.flag & 1) != 0)
+	{
+		detail = fmt::format("Password-protected ZIP entries are not supported (%s)", entry.path);
+		return false;
+	}
+	if (entry.info.compression_method != 0 && entry.info.compression_method != Z_DEFLATED)
+	{
+		detail = fmt::format("The ZIP uses unsupported compression for %s", entry.path);
+		return false;
+	}
+	if (unzGoToFilePos64(archive, &entry.position) != UNZ_OK ||
+		unzOpenCurrentFile(archive) != UNZ_OK)
+	{
+		detail = fmt::format("RPCS3 could not open %s inside the ZIP", entry.path);
+		return false;
+	}
+
+	fs::file output{destination, fs::rewrite};
+	if (!output)
+	{
+		unzCloseCurrentFile(archive);
+		detail = fmt::format("RPCS3 could not create %s", entry.path);
+		return false;
+	}
+
+	std::vector<u8> buffer(1024 * 1024);
+	u64 written = 0;
+	for (;;)
+	{
+		const int count = unzReadCurrentFile(archive, buffer.data(), buffer.size());
+		if (count < 0)
+		{
+			unzCloseCurrentFile(archive);
+			detail = fmt::format("The compressed data for %s is corrupt", entry.path);
+			return false;
+		}
+		if (!count)
+		{
+			break;
+		}
+		if (output.write(buffer.data(), static_cast<usz>(count)) != static_cast<usz>(count))
+		{
+			unzCloseCurrentFile(archive);
+			detail = fmt::format("RPCS3 could not write %s", entry.path);
+			return false;
+		}
+		written += static_cast<u64>(count);
+		extracted += static_cast<u64>(count);
+		if (written > entry.info.uncompressed_size || extracted > total)
+		{
+			unzCloseCurrentFile(archive);
+			detail = fmt::format("The ZIP reported an invalid size for %s", entry.path);
+			return false;
+		}
+		if (progress)
+		{
+			const u32 scaled = total
+				? static_cast<u32>(std::min<long double>(900,
+					static_cast<long double>(extracted) * 900 / total))
+				: 900;
+			progress(scaled, 1000, fmt::format("Extracting %s (%s of %s)", entry.path,
+				formatted_byte_size(extracted), formatted_byte_size(total)));
+		}
+	}
+
+	const int close_result = unzCloseCurrentFile(archive);
+	if (close_result != UNZ_OK || written != entry.info.uncompressed_size)
+	{
+		detail = close_result == UNZ_CRCERROR
+			? fmt::format("The ZIP checksum failed for %s", entry.path)
+			: fmt::format("The ZIP ended early while extracting %s", entry.path);
+		return false;
+	}
+	return true;
+}
 
 bool copy_file_with_progress(
 	const std::string& source_path,
@@ -268,6 +519,52 @@ std::optional<installed_game> installed_iso(const std::string& directory)
 		std::move(version),
 		std::move(category),
 		iso_path,
+		std::move(icon_path),
+	};
+}
+
+std::optional<installed_game> installed_extracted_game(const std::string& directory)
+{
+	const bool is_disc = fs::is_file(directory + "/PS3_GAME/PARAM.SFO") &&
+		fs::is_file(directory + "/PS3_GAME/USRDIR/EBOOT.BIN");
+	const std::string content_root = is_disc ? directory + "/PS3_GAME" : directory;
+	const std::string sfo_path = content_root + "/PARAM.SFO";
+	if (!fs::is_file(sfo_path) || !fs::is_file(content_root + "/USRDIR/EBOOT.BIN"))
+	{
+		return std::nullopt;
+	}
+
+	const psf::registry metadata = psf::load_object(sfo_path);
+	std::string title_id{psf::get_string(metadata, "TITLE_ID")};
+	std::string category{psf::get_string(metadata, "CATEGORY")};
+	if (!valid_title_id(title_id) ||
+		(is_disc ? category != "DG" : !psf::is_cat_hdd(category)))
+	{
+		return std::nullopt;
+	}
+
+	std::string title{psf::get_string(metadata, "TITLE")};
+	if (title.empty())
+	{
+		title = title_id;
+	}
+	std::string version{psf::get_string(metadata, "APP_VER")};
+	if (version.empty())
+	{
+		version = std::string{psf::get_string(metadata, "VERSION")};
+	}
+	std::string icon_path = content_root + "/ICON0.PNG";
+	if (!fs::is_file(icon_path))
+	{
+		icon_path.clear();
+	}
+
+	return installed_game{
+		std::move(title_id),
+		std::move(title),
+		std::move(version),
+		std::move(category),
+		directory,
 		std::move(icon_path),
 	};
 }
@@ -490,6 +787,179 @@ game_iso_install_result install_game_iso(
 	return {game_iso_install_error::none, std::move(title_id), std::move(title), {}};
 }
 
+game_zip_install_result install_game_zip(
+	const std::string& zip_path,
+	const game_zip_progress_callback& progress)
+{
+	if (zip_path.empty() || zip_path.front() != '/')
+	{
+		return invalid_zip("The ZIP path must be an absolute sandbox path");
+	}
+
+	zip_handle archive{unzOpen64(zip_path.c_str())};
+	if (!archive.value)
+	{
+		return invalid_zip("The selected file is not a readable ZIP archive");
+	}
+	if (progress)
+	{
+		progress(0, 1000, "Inspecting ZIP archive");
+	}
+
+	std::vector<zip_entry> entries;
+	std::vector<std::string> files;
+	std::string failure_detail;
+	if (!enumerate_zip_entries(archive.value, entries, files, failure_detail))
+	{
+		return invalid_zip(std::move(failure_detail));
+	}
+	const auto layout = detect_game_archive_layout(files);
+	if (!layout)
+	{
+		return invalid_zip("The ZIP must contain exactly one bootable PlayStation 3 game folder with PARAM.SFO and USRDIR/EBOOT.BIN");
+	}
+
+	u64 required_size = 0;
+	for (const zip_entry& entry : entries)
+	{
+		std::string_view relative_path;
+		if (!selected_zip_entry(entry, *layout, relative_path))
+		{
+			continue;
+		}
+		if (entry.is_symlink || entry.is_special)
+		{
+			return invalid_zip(fmt::format("The ZIP contains an unsupported link or special file: %s", entry.path));
+		}
+		if ((entry.info.flag & 1) != 0)
+		{
+			return invalid_zip(fmt::format("Password-protected ZIP entries are not supported (%s)", entry.path));
+		}
+		if (!entry.is_directory && entry.info.compression_method != 0 &&
+			entry.info.compression_method != Z_DEFLATED)
+		{
+			return invalid_zip(fmt::format("The ZIP uses unsupported compression for %s", entry.path));
+		}
+		if (!entry.is_directory)
+		{
+			if (entry.info.uncompressed_size > std::numeric_limits<u64>::max() - required_size)
+			{
+				return invalid_zip("The ZIP reports an invalid extracted size");
+			}
+			required_size += entry.info.uncompressed_size;
+		}
+	}
+	if (!required_size)
+	{
+		return invalid_zip("The ZIP contains no extractable game data");
+	}
+
+	const std::string root = extracted_game_root();
+	if (!fs::create_path(root))
+	{
+		return zip_installation_failed("Unable to create the extracted-game library");
+	}
+	for (auto&& entry : fs::dir{root})
+	{
+		if (entry.is_directory && entry.name.starts_with(".import-"))
+		{
+			fs::remove_all(root + entry.name, true, true);
+		}
+	}
+	fs::device_stat device{};
+	if (!fs::statfs(root, device))
+	{
+		return zip_installation_failed("Unable to determine free space for ZIP installation");
+	}
+	if (device.avail_free < required_size)
+	{
+		return zip_installation_failed(fmt::format(
+			"Not enough free space to extract the ZIP (need at least %s more)",
+			formatted_byte_size(required_size - device.avail_free)));
+	}
+
+	static std::atomic<u64> import_counter{0};
+	temporary_directory temporary{
+		root + fmt::format(".import-%x", import_counter.fetch_add(1, std::memory_order_relaxed))
+	};
+	if (!fs::create_dir(temporary.path))
+	{
+		return zip_installation_failed("Unable to create temporary ZIP installation storage");
+	}
+
+	u64 extracted = 0;
+	for (const zip_entry& entry : entries)
+	{
+		std::string_view relative_path;
+		if (!selected_zip_entry(entry, *layout, relative_path))
+		{
+			continue;
+		}
+		const std::string destination = temporary.path + "/" + std::string{relative_path};
+		if (entry.is_directory)
+		{
+			if (!fs::create_path(destination + "/"))
+			{
+				return zip_installation_failed(fmt::format(
+					"Unable to create the directory %s", relative_path));
+			}
+			continue;
+		}
+
+		const usz separator = relative_path.rfind('/');
+		if (separator != std::string_view::npos &&
+			!fs::create_path(temporary.path + "/" + std::string{relative_path.substr(0, separator + 1)}))
+		{
+			return zip_installation_failed(fmt::format(
+				"Unable to create storage for %s", relative_path));
+		}
+		if (!extract_zip_entry(archive.value, entry, destination, extracted,
+			required_size, progress, failure_detail))
+		{
+			return invalid_zip(std::move(failure_detail));
+		}
+	}
+
+	if (progress)
+	{
+		progress(920, 1000, "Validating extracted PlayStation 3 game");
+	}
+	const bool is_disc = layout->kind == game_archive_layout_kind::disc_folder;
+	const std::string content_root = is_disc ? temporary.path + "/PS3_GAME" : temporary.path;
+	const std::string sfo_path = content_root + "/PARAM.SFO";
+	const psf::registry metadata = psf::load_object(sfo_path);
+	std::string title_id{psf::get_string(metadata, "TITLE_ID")};
+	std::string title{psf::get_string(metadata, "TITLE")};
+	const std::string category{psf::get_string(metadata, "CATEGORY")};
+	if (!valid_title_id(title_id) || !fs::is_file(content_root + "/USRDIR/EBOOT.BIN") ||
+		(is_disc ? category != "DG" : !psf::is_cat_hdd(category)))
+	{
+		return invalid_zip("The extracted folder is not a bootable PlayStation 3 game");
+	}
+	if (title.empty())
+	{
+		title = title_id;
+	}
+
+	if (find_installed_game(title_id))
+	{
+		return zip_installation_failed(
+			fmt::format("A game with title ID %s is already installed", title_id), title_id, title);
+	}
+	const std::string final_directory = root + title_id;
+	if (fs::is_dir(final_directory) || !fs::rename(temporary.path, final_directory, false))
+	{
+		return zip_installation_failed("Unable to finalize the ZIP installation", title_id, title);
+	}
+	temporary.path.clear();
+
+	if (progress)
+	{
+		progress(1000, 1000, fmt::format("Installed %s", title));
+	}
+	return {game_zip_install_error::none, std::move(title_id), std::move(title), {}};
+}
+
 std::vector<installed_game> installed_games()
 {
 	std::vector<installed_game> result;
@@ -554,6 +1024,20 @@ std::vector<installed_game> installed_games()
 			continue;
 		}
 		if (auto game = installed_iso(iso_root + entry.name))
+		{
+			result.emplace_back(std::move(*game));
+		}
+	}
+
+	const std::string archive_root = extracted_game_root();
+	for (auto&& entry : fs::dir{archive_root})
+	{
+		if (!entry.is_directory || entry.name == "." || entry.name == ".." ||
+			entry.name.starts_with(".import-"))
+		{
+			continue;
+		}
+		if (auto game = installed_extracted_game(archive_root + entry.name))
 		{
 			result.emplace_back(std::move(*game));
 		}
