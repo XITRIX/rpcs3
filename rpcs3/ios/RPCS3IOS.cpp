@@ -2,6 +2,7 @@
 #include "RPCS3IOSCapabilities.h"
 #include "RPCS3IOSContract.h"
 #include "RPCS3IOSDisplay.h"
+#include "RPCS3IOSLocalization.h"
 #include "RPCS3IOSPlatform.h"
 #include "RPCS3IOSPerformance.h"
 #include "RPCS3IOSSettings.h"
@@ -74,6 +75,7 @@ rpcs3::ios::error_store g_last_error;
 rpcs3_ios_config g_config{};
 std::string g_application_support_path;
 std::string g_cache_path;
+std::string g_preferred_language = "en";
 bool g_emu_started = false;
 std::atomic_bool g_accept_display_surfaces = false;
 std::atomic_bool g_accept_pad_state = false;
@@ -208,21 +210,6 @@ void invoke_main_thread_payload(void* raw_payload)
 	}
 }
 
-std::u32string ascii_to_u32(const char* fallback)
-{
-	std::u32string result;
-	if (!fallback)
-	{
-		return result;
-	}
-
-	while (*fallback)
-	{
-		result.push_back(static_cast<unsigned char>(*fallback++));
-	}
-	return result;
-}
-
 EmuCallbacks make_callbacks()
 {
 	EmuCallbacks callbacks{};
@@ -332,15 +319,23 @@ EmuCallbacks make_callbacks()
 	callbacks.get_sendmessage_dialog = []() -> std::shared_ptr<SendMessageDialogBase> { return {}; };
 	callbacks.get_recvmessage_dialog = []() -> std::shared_ptr<RecvMessageDialogBase> { return {}; };
 	callbacks.get_trophy_notification_dialog = []() -> std::unique_ptr<TrophyNotificationBase> { return {}; };
-	callbacks.get_localized_string = [](localized_string_id, const char* fallback)
+	callbacks.get_localized_string = [](localized_string_id id, const char* argument)
 	{
-		return fallback ? std::string{fallback} : std::string{};
+		return rpcs3::ios::localized_overlay_string(id, g_preferred_language, argument);
 	};
-	callbacks.get_localized_u32string = [](localized_string_id, const char* fallback)
+	callbacks.get_localized_u32string = [](localized_string_id id, const char* argument)
 	{
-		return ascii_to_u32(fallback);
+		return rpcs3::ios::localized_overlay_u32string(id, g_preferred_language, argument);
 	};
-	callbacks.get_localized_setting = [](const cfg::_base*, u32) { return std::string{}; };
+	callbacks.get_localized_setting = [](const cfg::_base* setting, u32 enum_index)
+	{
+		if (!setting)
+		{
+			return std::string{};
+		}
+		const auto options = setting->to_list();
+		return enum_index < options.size() ? options[enum_index] : std::string{};
+	};
 	callbacks.get_photo_path = [](std::string_view name)
 	{
 		return fs::get_config_dir() + "photos/" + std::string{name};
@@ -432,6 +427,8 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 
 		g_log_listener = std::make_unique<callback_log_listener>();
 		logs::listener::add(g_log_listener.get());
+		g_preferred_language = rpcs3::ios::preferred_language_identifier();
+		emit_log(4, "Using iOS preferred language for native overlays: " + g_preferred_language);
 		rpcs3::ios::shared_pad_state().clear();
 		const auto jit_stats = rpcs3::ios::jit::get_statistics();
 		emit_log(4, fmt::format(
