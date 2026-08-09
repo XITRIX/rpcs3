@@ -1,5 +1,6 @@
 #include "JITIOS.h"
 #include "JITAliasRegistry.h"
+#include "JITReservationRegistry.h"
 
 #if !defined(RPCS3_IOS)
 #error "JITIOS.cpp is only available in the iOS frontend"
@@ -16,6 +17,7 @@
 #include <libkern/OSCacheControl.h>
 #include <mach/mach.h>
 #include <mach/vm_map.h>
+#include <mach/vm_statistics.h>
 #include <sys/mman.h>
 #include <sys/ucontext.h>
 #include <unistd.h>
@@ -29,8 +31,13 @@ std::mutex g_protocol_mutex;
 std::mutex g_mapping_mutex;
 std::mutex g_commit_mutex;
 rpcs3::ios::jit::alias_registry g_mappings;
+rpcs3::ios::jit::reservation_registry g_address_space_reservations;
 std::string g_last_error;
 struct sigaction g_previous_trap_action{};
+
+// Keep RPCS3's large, sparse JIT reservations out of the anonymous heap VM
+// range. XNU reserves tags 240-255 for application-specific mappings.
+constexpr int jit_vm_tag = VM_MAKE_TAG(VM_MEMORY_APPLICATION_SPECIFIC_1);
 
 void set_error(std::string message) noexcept
 {
@@ -143,59 +150,8 @@ bool checked_range(const void* address, usz size, uptr& begin, usz& length) noex
 	length = end - begin;
 	return length != 0;
 }
-}
 
-namespace rpcs3::ios::jit
-{
-bool is_ready() noexcept
-{
-	const usz length = page_size();
-	// Universal JIT prepares pages from an executable mapping request. Starting
-	// from PROT_NONE lets debugserver report a successful byte write while the
-	// reservation remains inaccessible, which only fails later when the first
-	// instruction-cache operation touches the RX view.
-	void* const probe = ::mmap(nullptr, length, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANON, -1, 0);
-	if (probe == MAP_FAILED)
-	{
-		set_error("Unable to reserve the Universal JIT readiness page: " + std::string{std::strerror(errno)});
-		return false;
-	}
-
-	const uptr expected = reinterpret_cast<uptr>(probe);
-	const u64 response = protocol_call(command_prepare_region, probe, length);
-	::munmap(probe, length);
-	if (response != expected)
-	{
-		set_error("StikDebug's Universal JIT script is not attached or did not prepare the readiness page");
-		return false;
-	}
-
-	return true;
-}
-
-void* reserve(usz size) noexcept
-{
-	if (!size)
-	{
-		set_error("Cannot reserve an empty executable region");
-		return nullptr;
-	}
-
-	// Request the final protection up front. On iOS 26 the mapping may not become
-	// usable for execution until the attached debugger prepares every page, but
-	// the request must still be RX; a PROT_NONE reservation cannot be promoted by
-	// Universal JIT's debugserver page writes.
-	void* result = ::mmap(nullptr, size, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANON, -1, 0);
-	if (result == MAP_FAILED)
-	{
-		set_error("Unable to reserve the executable address range: " + std::string{std::strerror(errno)});
-		return nullptr;
-	}
-
-	return result;
-}
-
-bool commit(void* executable, usz size) noexcept
+bool commit_impl(void* executable, usz size, bool activate_reserved_range) noexcept
 {
 	uptr begin = 0;
 	usz length = 0;
@@ -212,9 +168,39 @@ bool commit(void* executable, usz size) noexcept
 	}
 
 	void* const rx = reinterpret_cast<void*>(begin);
+	if (activate_reserved_range)
+	{
+		bool is_reserved = false;
+		{
+			std::lock_guard mapping_lock(g_mapping_mutex);
+			is_reserved = g_address_space_reservations.contains(begin, length);
+		}
+		if (!is_reserved)
+		{
+			set_error("Executable activation range is not inside a registered JIT layout");
+			return false;
+		}
+
+		// The surrounding layout is only an address-space placeholder. Install a
+		// fresh RX mapping at the final address before asking the debugger to
+		// prepare it; preparing PROT_NONE directly produces an unusable mapping.
+		void* const mapped = ::mmap(
+			rx,
+			length,
+			PROT_READ | PROT_EXEC,
+			MAP_FIXED | MAP_PRIVATE | MAP_ANON,
+			jit_vm_tag,
+			0);
+		if (mapped != rx)
+		{
+			set_error("Unable to activate the reserved executable range: " + std::string{std::strerror(errno)});
+			return false;
+		}
+	}
+
 	// The debugger owns the transition from the stable reservation to RX on
 	// iOS 26. An in-process mprotect(PROT_EXEC) would fail before that step.
-	if (protocol_call(command_prepare_region, rx, length) != begin)
+	if (protocol_call(rpcs3::ios::jit::command_prepare_region, rx, length) != begin)
 	{
 		::mprotect(rx, length, PROT_NONE);
 		set_error("The debugger did not prepare the requested executable range");
@@ -267,6 +253,97 @@ bool commit(void* executable, usz size) noexcept
 
 	return true;
 }
+}
+
+namespace rpcs3::ios::jit
+{
+bool is_ready() noexcept
+{
+	const usz length = page_size();
+	// Universal JIT prepares pages from an executable mapping request. Starting
+	// from PROT_NONE lets debugserver report a successful byte write while the
+	// reservation remains inaccessible, which only fails later when the first
+	// instruction-cache operation touches the RX view.
+	void* const probe = ::mmap(nullptr, length, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANON, jit_vm_tag, 0);
+	if (probe == MAP_FAILED)
+	{
+		set_error("Unable to reserve the Universal JIT readiness page: " + std::string{std::strerror(errno)});
+		return false;
+	}
+
+	const uptr expected = reinterpret_cast<uptr>(probe);
+	const u64 response = protocol_call(command_prepare_region, probe, length);
+	::munmap(probe, length);
+	if (response != expected)
+	{
+		set_error("StikDebug's Universal JIT script is not attached or did not prepare the readiness page");
+		return false;
+	}
+
+	return true;
+}
+
+void* reserve(usz size) noexcept
+{
+	if (!size)
+	{
+		set_error("Cannot reserve an empty executable region");
+		return nullptr;
+	}
+
+	// Request the final protection up front. On iOS 26 the mapping may not become
+	// usable for execution until the attached debugger prepares every page, but
+	// the request must still be RX; a PROT_NONE reservation cannot be promoted by
+	// Universal JIT's debugserver page writes.
+	void* result = ::mmap(nullptr, size, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANON, jit_vm_tag, 0);
+	if (result == MAP_FAILED)
+	{
+		set_error("Unable to reserve the executable address range: " + std::string{std::strerror(errno)});
+		return nullptr;
+	}
+
+	return result;
+}
+
+void* reserve_address_space(usz size, usz executable_size) noexcept
+{
+	if (!size || !executable_size || executable_size > size)
+	{
+		set_error("Invalid JIT address-space layout sizes");
+		return nullptr;
+	}
+
+	void* result = ::mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANON, jit_vm_tag, 0);
+	if (result == MAP_FAILED)
+	{
+		set_error("Unable to reserve the JIT address-space layout: " + std::string{std::strerror(errno)});
+		return nullptr;
+	}
+
+	bool registered = false;
+	{
+		std::lock_guard lock(g_mapping_mutex);
+		registered = g_address_space_reservations.insert(reinterpret_cast<uptr>(result), executable_size);
+	}
+	if (!registered)
+	{
+		::munmap(result, size);
+		set_error("Unable to register the JIT executable subrange");
+		return nullptr;
+	}
+
+	return result;
+}
+
+bool commit(void* executable, usz size) noexcept
+{
+	return commit_impl(executable, size, false);
+}
+
+bool commit_reserved(void* executable, usz size) noexcept
+{
+	return commit_impl(executable, size, true);
+}
 
 void* writable(const void* executable, usz size) noexcept
 {
@@ -314,6 +391,7 @@ void release(void* executable, usz size) noexcept
 	{
 		::vm_deallocate(mach_task_self(), static_cast<vm_address_t>(item.writable), static_cast<vm_size_t>(item.size));
 	});
+	g_address_space_reservations.remove_contained(begin, size);
 
 	::munmap(executable, size);
 }

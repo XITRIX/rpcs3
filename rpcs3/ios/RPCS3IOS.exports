@@ -4,6 +4,10 @@ _rpcs3_ios_initialize
 _rpcs3_ios_run_llvm_self_test
 _rpcs3_ios_firmware_version
 _rpcs3_ios_install_firmware
+_rpcs3_ios_boot_vsh
+_rpcs3_ios_get_emulation_state
+_rpcs3_ios_get_boot_progress
+_rpcs3_ios_stop_emulation
 _rpcs3_ios_get_state
 _rpcs3_ios_shutdown
 _rpcs3_ios_last_error

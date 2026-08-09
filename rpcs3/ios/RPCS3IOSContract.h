@@ -3,6 +3,7 @@
 #include "RPCS3IOS.h"
 
 #include <string>
+#include <mutex>
 #include <utility>
 
 namespace rpcs3::ios
@@ -12,15 +13,18 @@ class error_store final
 public:
 	void set(std::string message)
 	{
+		std::lock_guard lock(m_mutex);
 		m_message = std::move(message);
 	}
 
-	const std::string& get() const noexcept
+	std::string get() const
 	{
+		std::lock_guard lock(m_mutex);
 		return m_message;
 	}
 
 private:
+	mutable std::mutex m_mutex;
 	std::string m_message;
 };
 
@@ -35,6 +39,16 @@ inline rpcs3_ios_status validate_config_contract(const rpcs3_ios_config* config)
 	}
 
 	return RPCS3_IOS_OK;
+}
+
+inline rpcs3_ios_status validate_idle_operation_contract(
+	rpcs3_ios_state core_state,
+	rpcs3_ios_emulation_state emulation_state) noexcept
+{
+	return core_state == RPCS3_IOS_STATE_READY &&
+		emulation_state == RPCS3_IOS_EMULATION_STATE_STOPPED
+		? RPCS3_IOS_OK
+		: RPCS3_IOS_INVALID_STATE;
 }
 
 class lifecycle final
