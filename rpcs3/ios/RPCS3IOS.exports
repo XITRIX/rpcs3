@@ -29,6 +29,8 @@ _rpcs3_ios_boot_game
 _rpcs3_ios_get_emulation_state
 _rpcs3_ios_get_boot_progress
 _rpcs3_ios_get_performance_metrics
+_rpcs3_ios_pause_emulation
+_rpcs3_ios_resume_emulation
 _rpcs3_ios_stop_emulation
 _rpcs3_ios_get_state
 _rpcs3_ios_shutdown
