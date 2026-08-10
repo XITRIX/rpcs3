@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 12u
+#define RPCS3_IOS_ABI_VERSION 13u
 
 typedef enum rpcs3_ios_status
 {
@@ -44,7 +44,10 @@ typedef enum rpcs3_ios_status
     RPCS3_IOS_SETTING_INVALID = 20,
     RPCS3_IOS_SETTINGS_SAVE_FAILED = 21,
     RPCS3_IOS_FOLDER_INVALID = 22,
-    RPCS3_IOS_FOLDER_INSTALL_FAILED = 23
+    RPCS3_IOS_FOLDER_INSTALL_FAILED = 23,
+    RPCS3_IOS_PATCH_INVALID = 24,
+    RPCS3_IOS_PATCH_TITLE_MISMATCH = 25,
+    RPCS3_IOS_PATCH_INSTALL_FAILED = 26
 } rpcs3_ios_status;
 
 typedef enum rpcs3_ios_state
@@ -176,6 +179,21 @@ typedef void (*rpcs3_ios_game_callback)(
     void* user_context,
     const rpcs3_ios_game_info* game);
 
+// PS3 update packages are cumulative in dev_hdd0/game, so enumeration reports
+// the currently installed update state for the requested title ID. The ABI
+// keeps the internal "patch" name because PS3 PKG metadata calls it a patch.
+typedef struct rpcs3_ios_game_patch_info
+{
+    uint32_t struct_size;
+    const char* title_id;
+    const char* title;
+    const char* version;
+} rpcs3_ios_game_patch_info;
+
+typedef void (*rpcs3_ios_game_patch_callback)(
+    void* user_context,
+    const rpcs3_ios_game_patch_info* patch);
+
 typedef enum rpcs3_ios_setting_kind
 {
     RPCS3_IOS_SETTING_BOOLEAN = 0,
@@ -278,8 +296,19 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_folder(
     const char* folder_path,
     rpcs3_ios_folder_progress_callback progress_callback,
     void* user_context) RPCS3_IOS_NOEXCEPT;
+// Installs only a CATEGORY=GD package carrying the PS3 patch flag, and only
+// when its TITLE_ID matches expected_title_id.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_game_patch(
+    const char* expected_title_id,
+    const char* package_path,
+    rpcs3_ios_package_progress_callback progress_callback,
+    void* user_context) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_games(
     rpcs3_ios_game_callback callback,
+    void* user_context) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_game_patches(
+    const char* title_id,
+    rpcs3_ios_game_patch_callback callback,
     void* user_context) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_settings(
     rpcs3_ios_setting_callback setting_callback,
