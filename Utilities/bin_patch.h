@@ -194,7 +194,7 @@ public:
 	static bool add_patch_data(YAML::Node node, patch_info& info, u32 modifier, const YAML::Node& root, std::string_view path, std::stringstream* log_messages = nullptr);
 
 	// Save to patch_config.yml
-	static void save_config(const patch_map& patches_map);
+	static bool save_config(const patch_map& patches_map);
 
 	// Save a patch file
 	static bool save_patches(const patch_map& patches, const std::string& path, std::stringstream* log_messages = nullptr);
