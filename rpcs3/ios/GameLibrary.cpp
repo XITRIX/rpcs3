@@ -748,6 +748,7 @@ std::optional<installed_game> installed_iso(const std::string& directory)
 		std::move(title),
 		std::move(version),
 		std::move(category),
+		psf::get_integer(metadata, "RESOLUTION", 0),
 		iso_path,
 		std::move(icon_path),
 	};
@@ -794,6 +795,7 @@ std::optional<installed_game> installed_extracted_game(const std::string& direct
 		std::move(title),
 		std::move(version),
 		std::move(category),
+		psf::get_integer(metadata, "RESOLUTION", 0),
 		directory,
 		std::move(icon_path),
 	};
@@ -1472,6 +1474,7 @@ std::vector<installed_game> installed_games()
 			std::move(title),
 			std::move(version),
 			std::move(category),
+			psf::get_integer(metadata, "RESOLUTION", 0),
 			path,
 			std::move(icon_path),
 		});

@@ -283,7 +283,7 @@ void init_fxo_for_exec(utils::serial* ar, bool full = false)
 }
 
 // Some settings are not allowed with certain conditions
-static void fixup_settings(const psf::registry* _psf)
+static void fixup_settings(const psf::registry* _psf, u32 inherited_psf_resolution = 0)
 {
 	// Disable some incompatible settings in headless mode
 	if (Emu.IsHeadless())
@@ -352,7 +352,15 @@ static void fixup_settings(const psf::registry* _psf)
 	}
 #endif
 
-	if (const u32 psf_resolution = _psf ? psf::get_integer(*_psf, "RESOLUTION", 0) : 0)
+	u32 psf_resolution = _psf ? psf::get_integer(*_psf, "RESOLUTION", 0) : 0;
+
+	if (!psf_resolution && inherited_psf_resolution)
+	{
+		psf_resolution = inherited_psf_resolution;
+		sys_log.notice("Using parent disc resolution flags 0x%x for game update.", psf_resolution);
+	}
+
+	if (psf_resolution)
 	{
 		const std::map<video_resolution, u32> resolutions
 		{
@@ -1154,7 +1162,7 @@ void Emulator::SetContinuousMode(bool continuous_mode)
 	}
 }
 
-game_boot_result Emulator::Load(const std::string& title_id, bool is_disc_patch, usz recursion_count)
+game_boot_result Emulator::Load(const std::string& title_id, bool is_disc_patch, usz recursion_count, u32 inherited_psf_resolution)
 {
 	if (recursion_count == 0 && m_restrict_emu_state_change)
 	{
@@ -1807,7 +1815,7 @@ game_boot_result Emulator::Load(const std::string& title_id, bool is_disc_patch,
 			}
 
 			// Disable incompatible settings
-			fixup_settings(&_psf);
+			fixup_settings(&_psf, inherited_psf_resolution);
 
 			// Force audio provider
 			if (m_path.ends_with("vsh.self"sv))
@@ -2528,7 +2536,7 @@ game_boot_result Emulator::Load(const std::string& title_id, bool is_disc_patch,
 				sys_log.success("Updates found at /dev_hdd0/game/%s/", m_title_id);
 				m_path = hdd0_boot;
 
-				const game_boot_result boot_result = Load(m_title_id, true, recursion_count + 1);
+				const game_boot_result boot_result = Load(m_title_id, true, recursion_count + 1, psf::get_integer(_psf, "RESOLUTION", 0));
 				if (boot_result == game_boot_result::no_errors)
 				{
 					return game_boot_result::no_errors;

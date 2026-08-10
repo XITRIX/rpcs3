@@ -8,6 +8,7 @@
 #include "RPCS3IOSPlatform.h"
 #include "RPCS3IOSPerformance.h"
 #include "RPCS3IOSRuntimePatches.h"
+#include "RPCS3IOSResolution.h"
 #include "RPCS3IOSSettings.h"
 #include "FirmwareInstaller.h"
 #include "GameLibrary.h"
@@ -235,25 +236,51 @@ bool load_settings_for_api(std::string_view title_id, bool& has_custom_config)
 	return false;
 }
 
-rpcs3_ios_status validate_game_settings_target(const char* title_id)
+rpcs3_ios_status validate_game_settings_target(const char* title_id, rpcs3::ios::installed_game* installed_game = nullptr)
 {
 	if (!title_id || !title_id[0])
 	{
 		set_error("A game title ID is required");
 		return RPCS3_IOS_INVALID_ARGUMENT;
 	}
-	if (!rpcs3::ios::find_installed_game(title_id))
+	auto game = rpcs3::ios::find_installed_game(title_id);
+	if (!game)
 	{
 		set_error(fmt::format("Installed game not found: %s", title_id));
 		return RPCS3_IOS_GAME_NOT_FOUND;
 	}
+	if (installed_game)
+	{
+		*installed_game = std::move(*game);
+	}
 	return RPCS3_IOS_OK;
+}
+
+std::vector<std::string> supported_game_resolution_options(u32 resolution_flags)
+{
+	std::vector<std::string> options = g_cfg.video.resolution.to_list();
+	rpcs3::ios::filter_game_resolution_options(options, resolution_flags);
+	return options;
+}
+
+void normalize_current_game_resolution(u32 resolution_flags)
+{
+	const std::vector<std::string> options = supported_game_resolution_options(resolution_flags);
+	if (std::ranges::find(options, g_cfg.video.resolution.to_string()) != options.end())
+	{
+		return;
+	}
+
+	const auto preferred = std::ranges::find(options, rpcs3::ios::default_game_resolution);
+	const std::string_view fallback = preferred != options.end() ? *preferred : options.front();
+	g_cfg.video.resolution.from_string(fallback);
 }
 
 void enumerate_current_settings(
 	rpcs3_ios_setting_callback setting_callback,
 	rpcs3_ios_setting_option_callback option_callback,
-	void* user_context)
+	void* user_context,
+	u32 game_resolution_flags = 0)
 {
 	for (const auto& setting : rpcs3::ios::settings_catalog())
 	{
@@ -290,6 +317,10 @@ void enumerate_current_settings(
 					(setting.key == "cpu.spu_xfloat_accuracy" && option == "Inaccurate") ||
 					(setting.key == "gpu.resolution" && option.ends_with("i"));
 			});
+			if (setting.key == "gpu.resolution")
+			{
+				rpcs3::ios::filter_game_resolution_options(options, game_resolution_flags);
+			}
 		}
 
 		const rpcs3_ios_setting_info info{
@@ -1617,7 +1648,8 @@ extern "C" rpcs3_ios_status rpcs3_ios_enumerate_game_settings(
 		set_error("Stop emulation before enumerating game settings");
 		return result;
 	}
-	if (const auto result = validate_game_settings_target(title_id); result != RPCS3_IOS_OK)
+	rpcs3::ios::installed_game game;
+	if (const auto result = validate_game_settings_target(title_id, &game); result != RPCS3_IOS_OK)
 	{
 		return result;
 	}
@@ -1632,7 +1664,8 @@ extern "C" rpcs3_ios_status rpcs3_ios_enumerate_game_settings(
 		{
 			return RPCS3_IOS_SETTINGS_SAVE_FAILED;
 		}
-		enumerate_current_settings(setting_callback, option_callback, user_context);
+		normalize_current_game_resolution(game.resolution);
+		enumerate_current_settings(setting_callback, option_callback, user_context, game.resolution);
 		return RPCS3_IOS_OK;
 	}
 	catch (const std::exception& error)
@@ -1663,7 +1696,8 @@ extern "C" rpcs3_ios_status rpcs3_ios_set_game_setting(
 		set_error("Stop emulation before changing game settings");
 		return result;
 	}
-	if (const auto result = validate_game_settings_target(title_id); result != RPCS3_IOS_OK)
+	rpcs3::ios::installed_game game;
+	if (const auto result = validate_game_settings_target(title_id, &game); result != RPCS3_IOS_OK)
 	{
 		return result;
 	}
@@ -1675,6 +1709,16 @@ extern "C" rpcs3_ios_status rpcs3_ios_set_game_setting(
 		if (!load_settings_for_api(title_id, has_custom_config))
 		{
 			return RPCS3_IOS_SETTINGS_SAVE_FAILED;
+		}
+		normalize_current_game_resolution(game.resolution);
+		if (std::string_view{key} == "gpu.resolution")
+		{
+			const std::vector<std::string> options = supported_game_resolution_options(game.resolution);
+			if (std::ranges::find(options, value) == options.end())
+			{
+				set_error(fmt::format("The game does not support Default Resolution '%s'", value));
+				return RPCS3_IOS_SETTING_INVALID;
+			}
 		}
 		if (const auto result = update_current_setting(key, value); result != RPCS3_IOS_OK)
 		{
