@@ -14,6 +14,11 @@ mkdir -p "${OUTPUT_ROOT}"
 "${OUTPUT_ROOT}/RPCS3IOSContractTests"
 
 "${CXX_COMPILER}" -std=c++20 -Wall -Wextra -Werror \
+    "${SCRIPT_DIR}/RPCS3IOSPathTests.cpp" \
+    -o "${OUTPUT_ROOT}/RPCS3IOSPathTests"
+"${OUTPUT_ROOT}/RPCS3IOSPathTests"
+
+"${CXX_COMPILER}" -std=c++20 -Wall -Wextra -Werror \
     -I "${SOURCE_ROOT}" -I "${SOURCE_ROOT}/rpcs3" \
     "${SCRIPT_DIR}/RPCS3IOSLocalizationTests.cpp" \
     "${SCRIPT_DIR}/../RPCS3IOSLocalization.cpp" \
