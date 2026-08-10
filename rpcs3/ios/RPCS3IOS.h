@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 14u
+#define RPCS3_IOS_ABI_VERSION 15u
 
 typedef enum rpcs3_ios_status
 {
@@ -374,6 +374,28 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_setting(
     const char* key,
     const char* value) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_reset_settings(void) RPCS3_IOS_NOEXCEPT;
+// Per-game settings use RPCS3's desktop-compatible
+// custom_configs/config_<TITLE_ID>.yml files. Enumeration reports the
+// effective global-plus-custom values and whether a custom file exists.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_game_settings(
+    const char* title_id,
+    rpcs3_ios_setting_callback setting_callback,
+    rpcs3_ios_setting_option_callback option_callback,
+    void* user_context,
+    uint32_t* has_custom_config) RPCS3_IOS_NOEXCEPT;
+// The first mutation creates a complete custom configuration from the
+// title's current effective settings. Changes take effect on the next boot.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_game_setting(
+    const char* title_id,
+    const char* key,
+    const char* value) RPCS3_IOS_NOEXCEPT;
+// Restores the audited settings catalog to RPCS3 defaults while retaining a
+// custom configuration for the title.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_reset_game_settings(
+    const char* title_id) RPCS3_IOS_NOEXCEPT;
+// Removes the title's custom configuration so it inherits global settings.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_remove_game_settings(
+    const char* title_id) RPCS3_IOS_NOEXCEPT;
 // Pass NULL to detach. Detach and layer replacement require stopped
 // emulation; dimensions for the currently attached layer may change live.
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_display_surface(
