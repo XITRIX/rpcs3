@@ -93,6 +93,7 @@ struct installed_game
 	std::string title;
 	std::string version;
 	std::string category;
+	u32 resolution = 0;
 	std::string path;
 	std::string icon_path;
 };
