@@ -375,7 +375,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":11,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller\",\"games\":\"pkg-iso-zip-library\",\"settings\":\"cfg-root-catalog\",\"performance\":\"fps-cpu-rsx-memory\",\"media_codecs\":true}";
+	return "{\"abi\":12,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller\",\"games\":\"pkg-iso-zip-folder-library\",\"settings\":\"cfg-root-catalog\",\"performance\":\"fps-cpu-rsx-memory\",\"media_codecs\":true}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -822,6 +822,70 @@ extern "C" rpcs3_ios_status rpcs3_ios_install_zip(
 
 	g_lifecycle.finish_content_install();
 	return RPCS3_IOS_ZIP_INSTALL_FAILED;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_install_folder(
+	const char* folder_path,
+	rpcs3_ios_folder_progress_callback progress_callback,
+	void* user_context) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!folder_path || !folder_path[0] || folder_path[0] != '/')
+	{
+		set_error("The game-folder path must be an absolute security-scoped path");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("Stop emulation before installing a game folder");
+		return result;
+	}
+	if (const auto result = g_lifecycle.begin_content_install(); result != RPCS3_IOS_OK)
+	{
+		set_error("RPCS3Core must be ready before installing a game folder");
+		return result;
+	}
+
+	try
+	{
+		auto progress = [progress_callback, user_context](u32 completed, u32 total, std::string_view stage)
+		{
+			if (!progress_callback)
+			{
+				return;
+			}
+			const std::string terminated{stage};
+			progress_callback(user_context, completed, total, terminated.c_str());
+		};
+
+		emit_log(4, "Starting PlayStation 3 folder installation");
+		const auto install_result = rpcs3::ios::install_game_folder(folder_path, progress);
+		g_lifecycle.finish_content_install();
+		if (install_result.error != rpcs3::ios::game_folder_install_error::none)
+		{
+			set_error(install_result.detail);
+			emit_log(2, install_result.detail);
+			return install_result.error == rpcs3::ios::game_folder_install_error::invalid_folder
+				? RPCS3_IOS_FOLDER_INVALID
+				: RPCS3_IOS_FOLDER_INSTALL_FAILED;
+		}
+
+		emit_log(4, fmt::format("Successfully installed PlayStation 3 folder: %s (%s)",
+			install_result.title, install_result.title_id));
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception during game-folder installation");
+	}
+
+	g_lifecycle.finish_content_install();
+	return RPCS3_IOS_FOLDER_INSTALL_FAILED;
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_enumerate_games(
