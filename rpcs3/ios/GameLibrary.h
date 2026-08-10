@@ -38,6 +38,14 @@ enum class game_folder_install_error
 	installation_failed,
 };
 
+enum class game_patch_install_error
+{
+	none,
+	invalid_patch,
+	title_mismatch,
+	installation_failed,
+};
+
 struct game_package_install_result
 {
 	game_package_install_error error = game_package_install_error::none;
@@ -70,6 +78,15 @@ struct game_folder_install_result
 	std::string detail;
 };
 
+struct game_patch_install_result
+{
+	game_patch_install_error error = game_patch_install_error::none;
+	std::string title_id;
+	std::string title;
+	std::string version;
+	std::string detail;
+};
+
 struct installed_game
 {
 	std::string title_id;
@@ -78,6 +95,13 @@ struct installed_game
 	std::string category;
 	std::string path;
 	std::string icon_path;
+};
+
+struct installed_game_patch
+{
+	std::string title_id;
+	std::string title;
+	std::string version;
 };
 
 using game_package_progress_callback =
@@ -102,6 +126,11 @@ game_zip_install_result install_game_zip(
 game_folder_install_result install_game_folder(
 	const std::string& folder_path,
 	const game_folder_progress_callback& progress);
+game_patch_install_result install_game_patch(
+	std::string_view expected_title_id,
+	const std::string& package_path,
+	const game_package_progress_callback& progress);
 std::vector<installed_game> installed_games();
 std::optional<installed_game> find_installed_game(std::string_view title_id);
+std::vector<installed_game_patch> installed_game_patches(std::string_view title_id);
 }
