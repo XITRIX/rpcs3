@@ -441,7 +441,7 @@ public:
 	void SetForceBoot(bool force_boot);
 	void SetContinuousMode(bool continuous_mode);
 
-	game_boot_result Load(const std::string& title_id = "", bool is_disc_patch = false, usz recursion_count = 0);
+	game_boot_result Load(const std::string& title_id = "", bool is_disc_patch = false, usz recursion_count = 0, u32 inherited_psf_resolution = 0);
 	void Run(bool start_playtime);
 	void RunPPU();
 	void FixGuestTime();
