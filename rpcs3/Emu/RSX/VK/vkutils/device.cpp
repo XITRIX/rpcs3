@@ -1,5 +1,6 @@
 #include "device.h"
 #include "instance.h"
+#include "VRAMBudgetPolicy.h"
 #include "util/logs.hpp"
 #include "Emu/system_config.h"
 #include <vulkan/vulkan_core.h>
@@ -863,8 +864,27 @@ namespace vk
 		}
 
 		// Useful for debugging different VRAM configurations
-		const u64 vram_allocation_limit = g_cfg.video.vk.vram_allocation_limit * 0x100000ull;
-		memory_map.device_local_total_bytes = std::min(memory_map.device_local_total_bytes, vram_allocation_limit);
+		const u64 reported_device_local_bytes = memory_map.device_local_total_bytes;
+		const u64 configured_vram_allocation_limit = g_cfg.video.vk.vram_allocation_limit * 0x100000ull;
+		const u64 requested_vram_allocation_limit = get_requested_vram_allocation_limit(
+			reported_device_local_bytes,
+			configured_vram_allocation_limit);
+		const u64 vram_pressure_limit = get_effective_vram_pressure_limit(
+			reported_device_local_bytes,
+			configured_vram_allocation_limit);
+
+#ifdef RPCS3_IOS
+		if (vram_pressure_limit < requested_vram_allocation_limit)
+		{
+			rsx_log.notice(
+				"iOS unified-memory VRAM pressure budget set to %llu MiB (reported heap %llu MiB, configured limit %llu MiB)",
+				vram_pressure_limit / vram_budget_mib,
+				reported_device_local_bytes / vram_budget_mib,
+				configured_vram_allocation_limit / vram_budget_mib);
+		}
+#endif
+
+		memory_map.device_local_total_bytes = vram_pressure_limit;
 	}
 
 	void render_device::destroy()

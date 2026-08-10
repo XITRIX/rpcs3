@@ -1,5 +1,6 @@
 #include "device.h"
 #include "memory.h"
+#include "VRAMBudgetPolicy.h"
 
 #include "Emu/RSX/Utils/algorithm.hpp"
 
@@ -171,16 +172,38 @@ namespace vk
 		allocatorInfo.instance = inst;
 		allocatorInfo.vulkanApiVersion = VK_API_VERSION_1_2;
 
+		VkPhysicalDeviceMemoryProperties memory_properties;
+		vkGetPhysicalDeviceMemoryProperties(pdev, &memory_properties);
+
 		std::vector<VkDeviceSize> heap_limits;
-		const auto vram_allocation_limit = g_cfg.video.vk.vram_allocation_limit * 0x100000ull;
-		if (vram_allocation_limit < dev.get_memory_mapping().device_local_total_bytes)
+		const auto configured_vram_allocation_limit = g_cfg.video.vk.vram_allocation_limit * 0x100000ull;
+		const auto reported_device_local_bytes = dev.get_memory_mapping().device_local_total_bytes;
+		const auto requested_vram_allocation_limit = get_requested_vram_allocation_limit(
+			reported_device_local_bytes,
+			configured_vram_allocation_limit);
+
+#ifdef RPCS3_IOS
+		const auto vram_pressure_limit = get_effective_vram_pressure_limit(
+			reported_device_local_bytes,
+			configured_vram_allocation_limit);
+		for (u32 i = 0; i < memory_properties.memoryHeapCount; ++i)
 		{
-			VkPhysicalDeviceMemoryProperties memory_properties;
-			vkGetPhysicalDeviceMemoryProperties(pdev, &memory_properties);
+			if (memory_properties.memoryHeaps[i].flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+			{
+				m_pressure_heap_limits[i] = vram_pressure_limit;
+			}
+		}
+#endif
+
+		// A user-configured allocation limit remains a hard VMA ceiling. The
+		// iOS platform limit is intentionally soft: it drives proactive cache
+		// pressure without making a transient allocation fail inside a cache.
+		if (requested_vram_allocation_limit < reported_device_local_bytes)
+		{
 			for (u32 i = 0; i < memory_properties.memoryHeapCount; ++i)
 			{
 				const u64 max_sz = (memory_properties.memoryHeaps[i].flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
-					? vram_allocation_limit
+					? requested_vram_allocation_limit
 					: VK_WHOLE_SIZE;
 
 				heap_limits.push_back(max_sz);
@@ -332,14 +355,23 @@ namespace vk
 		}
 
 		float max_usage = 0.f;
-		for (const auto& info : stats)
+		for (u32 i = 0; i < stats.size(); ++i)
 		{
+			const auto& info = stats[i];
 			if (!info.budget)
 			{
 				break;
 			}
 
-			const float this_usage = (info.usage * 100.f) / info.budget;
+			auto pressure_budget = info.budget;
+#ifdef RPCS3_IOS
+			if (m_pressure_heap_limits[i])
+			{
+				pressure_budget = std::min(pressure_budget, m_pressure_heap_limits[i]);
+			}
+#endif
+
+			const float this_usage = (info.usage * 100.f) / pressure_budget;
 			max_usage = std::max(max_usage, this_usage);
 		}
 
