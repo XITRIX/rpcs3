@@ -90,3 +90,16 @@ mkdir -p "${OUTPUT_ROOT}"
     "${SCRIPT_DIR}/TextureCacheProtectionPolicyTests.cpp" \
     -o "${OUTPUT_ROOT}/TextureCacheProtectionPolicyIOSTests"
 "${OUTPUT_ROOT}/TextureCacheProtectionPolicyIOSTests"
+
+"${CXX_COMPILER}" -std=c++20 -Wall -Wextra -Werror \
+    -I "${SOURCE_ROOT}" -I "${SOURCE_ROOT}/rpcs3" \
+    "${SCRIPT_DIR}/VRAMBudgetPolicyTests.cpp" \
+    -o "${OUTPUT_ROOT}/VRAMBudgetPolicyHostTests"
+"${OUTPUT_ROOT}/VRAMBudgetPolicyHostTests"
+
+"${CXX_COMPILER}" -std=c++20 -Wall -Wextra -Werror \
+    -DRPCS3_IOS=1 \
+    -I "${SOURCE_ROOT}" -I "${SOURCE_ROOT}/rpcs3" \
+    "${SCRIPT_DIR}/VRAMBudgetPolicyTests.cpp" \
+    -o "${OUTPUT_ROOT}/VRAMBudgetPolicyIOSTests"
+"${OUTPUT_ROOT}/VRAMBudgetPolicyIOSTests"

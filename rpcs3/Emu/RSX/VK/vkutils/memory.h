@@ -131,6 +131,9 @@ namespace vk
 		VmaAllocator m_allocator;
 		std::array<VmaBudget, VK_MAX_MEMORY_HEAPS> stats;
 		u32 m_rebar_heap_idx = UINT32_MAX;
+#ifdef RPCS3_IOS
+		std::array<VkDeviceSize, VK_MAX_MEMORY_HEAPS> m_pressure_heap_limits{};
+#endif
 	};
 
 
