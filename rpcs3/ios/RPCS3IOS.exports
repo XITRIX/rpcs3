@@ -8,7 +8,9 @@ _rpcs3_ios_install_package
 _rpcs3_ios_install_iso
 _rpcs3_ios_install_zip
 _rpcs3_ios_install_folder
+_rpcs3_ios_install_game_patch
 _rpcs3_ios_enumerate_games
+_rpcs3_ios_enumerate_game_patches
 _rpcs3_ios_enumerate_settings
 _rpcs3_ios_set_setting
 _rpcs3_ios_reset_settings
