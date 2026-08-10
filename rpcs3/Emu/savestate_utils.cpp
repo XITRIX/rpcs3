@@ -499,6 +499,23 @@ bool boot_current_game_savestate(bool testing, u32 index)
 
 			// Make sure we keep the game window opened
 			Emu.SetContinuousMode(true);
+
+#ifdef RPCS3_IOS
+			// iOS dispatches final Kill() cleanup back to UIKit's main queue. Waiting for
+			// GracefulShutdown() on that queue deadlocks because the queued cleanup can
+			// never reach system_state::stopped. Boot only after asynchronous cleanup.
+			Emu.after_kill_callback = [savestate_path]()
+			{
+				if (game_boot_result error = Emu.BootGame(savestate_path, "", true); error != game_boot_result::no_errors)
+				{
+					Emu.SetContinuousMode(false);
+					sys_log.error("Failed to boot savestate \'%s\' using the Reload shortcut. (error: %s)", savestate_path, error);
+				}
+			};
+
+			Emu.GracefulShutdown(false, true, false, true);
+			return true;
+#else
 			Emu.GracefulShutdown(false, false, false, true);
 
 			if (game_boot_result error = Emu.BootGame(savestate_path, "", true); error != game_boot_result::no_errors)
@@ -509,6 +526,7 @@ bool boot_current_game_savestate(bool testing, u32 index)
 			{
 				return true;
 			}
+#endif
 		}
 
 		sys_log.error("No compatible savestate file found in \'%s\''", get_savestate_file(Emu.GetTitleID(), Emu.GetBoot(), -1));
@@ -691,4 +709,3 @@ bool hle_locks_t::try_finalize(std::function<bool()> test)
 	lock_val.notify_all();
 	return true;
 }
-
