@@ -3,6 +3,10 @@
 #include "system_config_types.h"
 #include "Utilities/Config.h"
 
+#ifdef RPCS3_IOS
+#include "ios/RPCS3IOSGPUDefaults.h"
+#endif
+
 enum CellNetCtlState : s32;
 enum CellSysutilLicenseArea : s32;
 enum CellSysutilLang : s32;
@@ -113,6 +117,16 @@ struct cfg_root : cfg::node
 	{
 		node_video(cfg::node* _this) : cfg::node(_this, "Video") {}
 
+#ifdef RPCS3_IOS
+		static constexpr shader_mode default_shader_mode = rpcs3::ios::default_shader_mode;
+		static constexpr bool default_relaxed_zcull = rpcs3::ios::default_relaxed_zcull;
+		static constexpr bool default_precise_zcull = rpcs3::ios::default_precise_zcull;
+#else
+		static constexpr shader_mode default_shader_mode = shader_mode::async_with_interpreter;
+		static constexpr bool default_relaxed_zcull = false;
+		static constexpr bool default_precise_zcull = true;
+#endif
+
 #if defined(HAVE_VULKAN)
 		cfg::_enum<video_renderer> renderer{ this, "Renderer", video_renderer::vulkan };
 #else
@@ -124,7 +138,7 @@ struct cfg_root : cfg::node
 		cfg::_enum<frame_limit_type> frame_limit{ this, "Frame limit", frame_limit_type::_auto, true };
 		cfg::_float<0, 1000> second_frame_limit{ this, "Second Frame Limit", 0, true }; // 0 disables its effect
 		cfg::_enum<msaa_level> antialiasing_level{ this, "MSAA", msaa_level::_auto };
-		cfg::_enum<shader_mode> shadermode{ this, "Shader Mode", shader_mode::async_with_interpreter };
+		cfg::_enum<shader_mode> shadermode{ this, "Shader Mode", default_shader_mode };
 		cfg::_enum<gpu_preset_level> shader_precision{ this, "Shader Precision", gpu_preset_level::high };
 		cfg::_enum<vsync_mode> vsync{ this, "VSync Mode", vsync_mode::off, true };
 
@@ -154,13 +168,13 @@ struct cfg_root : cfg::node
 		cfg::_bool full_rgb_range_output{ this, "Use full RGB output range", true, true }; // Video out dynamic range
 		cfg::_bool strict_texture_flushing{ this, "Strict Texture Flushing", false };
 		cfg::_bool multithreaded_rsx{ this, "Multithreaded RSX", false };
-		cfg::_bool relaxed_zcull_sync{ this, "Relaxed ZCULL Sync", false };
+		cfg::_bool relaxed_zcull_sync{ this, "Relaxed ZCULL Sync", default_relaxed_zcull };
 		cfg::_bool force_hw_MSAA_resolve{ this, "Force Hardware MSAA Resolve", false, true };
 		cfg::_bool stereo_enabled{ this, "3D Display Enabled", false };
 		cfg::_enum<stereo_render_mode_options> stereo_render_mode{ this, "3D Display Mode", stereo_render_mode_options::disabled, true };
 		cfg::_int<10, 99> screen_size{ this, "Screen size in inches", 24, false };
 		cfg::_bool debug_program_analyser{ this, "Debug Program Analyser", false };
-		cfg::_bool precise_zpass_count{ this, "Accurate ZCULL stats", true };
+		cfg::_bool precise_zpass_count{ this, "Accurate ZCULL stats", default_precise_zcull };
 		cfg::_int<1, 8> consecutive_frames_to_draw{ this, "Consecutive Frames To Draw", 1, true};
 		cfg::_int<1, 8> consecutive_frames_to_skip{ this, "Consecutive Frames To Skip", 1, true};
 		cfg::uint<25, 800> resolution_scale_percent{ this, "Resolution Scale", 100, true };
