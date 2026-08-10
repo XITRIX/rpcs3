@@ -50,6 +50,19 @@ mkdir -p "${OUTPUT_ROOT}"
 
 "${CXX_COMPILER}" -std=c++20 -Wall -Wextra -Werror \
     -I "${SOURCE_ROOT}" -I "${SOURCE_ROOT}/rpcs3" \
+    "${SCRIPT_DIR}/VMLayoutPolicyTests.cpp" \
+    -o "${OUTPUT_ROOT}/VMLayoutPolicyHostTests"
+"${OUTPUT_ROOT}/VMLayoutPolicyHostTests"
+
+"${CXX_COMPILER}" -std=c++20 -Wall -Wextra -Werror \
+    -DRPCS3_IOS=1 \
+    -I "${SOURCE_ROOT}" -I "${SOURCE_ROOT}/rpcs3" \
+    "${SCRIPT_DIR}/VMLayoutPolicyTests.cpp" \
+    -o "${OUTPUT_ROOT}/VMLayoutPolicyIOSTests"
+"${OUTPUT_ROOT}/VMLayoutPolicyIOSTests"
+
+"${CXX_COMPILER}" -std=c++20 -Wall -Wextra -Werror \
+    -I "${SOURCE_ROOT}" -I "${SOURCE_ROOT}/rpcs3" \
     "${SCRIPT_DIR}/JITArenaAllocatorTests.cpp" \
     -o "${OUTPUT_ROOT}/JITArenaAllocatorTests"
 "${OUTPUT_ROOT}/JITArenaAllocatorTests"
