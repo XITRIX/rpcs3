@@ -1,5 +1,6 @@
 #include "GameLibrary.h"
 #include "GameArchiveContract.h"
+#include "GameFolderContract.h"
 
 #include "Utilities/StrFmt.h"
 #include "Crypto/unpkg.h"
@@ -17,7 +18,9 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <cerrno>
 #include <deque>
+#include <dirent.h>
 #include <limits>
 #include <sys/stat.h>
 #include <thread>
@@ -113,6 +116,24 @@ game_zip_install_result zip_installation_failed(
 	};
 }
 
+game_folder_install_result invalid_folder(std::string detail)
+{
+	return {game_folder_install_error::invalid_folder, {}, {}, std::move(detail)};
+}
+
+game_folder_install_result folder_installation_failed(
+	std::string detail,
+	std::string title_id = {},
+	std::string title = {})
+{
+	return {
+		game_folder_install_error::installation_failed,
+		std::move(title_id),
+		std::move(title),
+		std::move(detail),
+	};
+}
+
 bool valid_title_id(std::string_view title_id)
 {
 	return !title_id.empty() && title_id.size() <= 32 &&
@@ -172,6 +193,124 @@ struct zip_handle
 		}
 	}
 };
+
+struct folder_directory_handle
+{
+	DIR* value = nullptr;
+
+	~folder_directory_handle()
+	{
+		if (value)
+		{
+			::closedir(value);
+		}
+	}
+};
+
+struct folder_tree_entry
+{
+	std::string relative_path;
+	u64 size = 0;
+	bool is_directory = false;
+};
+
+bool enumerate_folder_directory(
+	const std::string& source_root,
+	std::string_view relative_directory,
+	u32 depth,
+	std::vector<folder_tree_entry>& entries,
+	std::vector<std::string>& files,
+	u64& total_size,
+	std::string& detail)
+{
+	if (depth > 64)
+	{
+		detail = "The selected folder is nested too deeply";
+		return false;
+	}
+
+	const std::string directory_path = relative_directory.empty()
+		? source_root
+		: source_root + "/" + std::string{relative_directory};
+	folder_directory_handle directory{::opendir(directory_path.c_str())};
+	if (!directory.value)
+	{
+		detail = fmt::format("RPCS3 could not read the directory %s",
+			relative_directory.empty() ? "." : relative_directory);
+		return false;
+	}
+
+	std::vector<std::string> names;
+	errno = 0;
+	while (dirent* item = ::readdir(directory.value))
+	{
+		std::string name{item->d_name};
+		if (name != "." && name != "..")
+		{
+			names.emplace_back(std::move(name));
+		}
+	}
+	if (errno)
+	{
+		detail = fmt::format("RPCS3 could not finish reading the directory %s",
+			relative_directory.empty() ? "." : relative_directory);
+		return false;
+	}
+	std::sort(names.begin(), names.end());
+
+	for (const std::string& name : names)
+	{
+		const std::string relative_path = relative_directory.empty()
+			? name
+			: std::string{relative_directory} + "/" + name;
+		if (relative_path.size() > 4096 || entries.size() >= 1'000'000)
+		{
+			detail = relative_path.size() > 4096
+				? "The selected folder contains a path that is too long"
+				: "The selected folder contains too many entries";
+			return false;
+		}
+
+		const std::string source_path = source_root + "/" + relative_path;
+		struct stat info{};
+		if (::lstat(source_path.c_str(), &info) != 0)
+		{
+			detail = fmt::format("RPCS3 could not inspect %s", relative_path);
+			return false;
+		}
+		if (S_ISLNK(info.st_mode))
+		{
+			detail = fmt::format("The selected folder contains an unsupported link: %s", relative_path);
+			return false;
+		}
+		if (S_ISDIR(info.st_mode))
+		{
+			entries.push_back({relative_path, 0, true});
+			if (!enumerate_folder_directory(source_root, relative_path, depth + 1,
+				entries, files, total_size, detail))
+			{
+				return false;
+			}
+			continue;
+		}
+		if (!S_ISREG(info.st_mode) || info.st_size < 0)
+		{
+			detail = fmt::format("The selected folder contains an unsupported special file: %s", relative_path);
+			return false;
+		}
+
+		const u64 size = static_cast<u64>(info.st_size);
+		if (size > std::numeric_limits<u64>::max() - total_size)
+		{
+			detail = "The selected folder reports an invalid total size";
+			return false;
+		}
+		total_size += size;
+		entries.push_back({relative_path, size, false});
+		files.emplace_back(relative_path);
+	}
+	return true;
+}
 
 struct zip_entry
 {
@@ -415,7 +554,8 @@ bool copy_file_with_progress(
 		if (progress)
 		{
 			const u32 scaled = total
-				? static_cast<u32>(std::min<u64>(900, copied * 900 / total))
+				? static_cast<u32>(std::min<long double>(900,
+					static_cast<long double>(copied) * 900 / total))
 				: 900;
 			progress(scaled, 1000, fmt::format("%s (%s of %s)", stage,
 				formatted_byte_size(copied), formatted_byte_size(total)));
@@ -423,6 +563,50 @@ bool copy_file_with_progress(
 	}
 
 	return source.pos() == source.size();
+}
+
+bool copy_folder_file_with_progress(
+	const std::string& source_path,
+	const std::string& destination_path,
+	std::string_view relative_path,
+	u64 expected_size,
+	u64& copied,
+	u64 total,
+	const game_folder_progress_callback& progress)
+{
+	fs::file source{source_path, fs::read};
+	fs::file destination{destination_path, fs::rewrite};
+	if (!source || !destination || source.size() != expected_size)
+	{
+		return false;
+	}
+
+	std::vector<u8> buffer(4 * 1024 * 1024);
+	u64 file_copied = 0;
+	while (file_copied < expected_size)
+	{
+		const u64 remaining = expected_size - file_copied;
+		const u64 count = source.read(buffer.data(), std::min<u64>(buffer.size(), remaining));
+		if (!count || count > remaining || destination.write(buffer.data(), count) != count)
+		{
+			return false;
+		}
+
+		file_copied += count;
+		copied += count;
+		if (progress)
+		{
+			const u32 scaled = total
+				? static_cast<u32>(std::min<long double>(900,
+					static_cast<long double>(copied) * 900 / total))
+				: 900;
+			progress(scaled, 1000, fmt::format("Copying %s (%s of %s)", relative_path,
+				formatted_byte_size(copied), formatted_byte_size(total)));
+		}
+	}
+
+	u8 extra = 0;
+	return source.read(&extra, 1) == 0 && source.pos() == source.size();
 }
 
 bool extract_iso_file(iso_archive& archive, const std::string& source, const std::string& destination)
@@ -958,6 +1142,165 @@ game_zip_install_result install_game_zip(
 		progress(1000, 1000, fmt::format("Installed %s", title));
 	}
 	return {game_zip_install_error::none, std::move(title_id), std::move(title), {}};
+}
+
+game_folder_install_result install_game_folder(
+	const std::string& folder_path,
+	const game_folder_progress_callback& progress)
+{
+	if (folder_path.empty() || folder_path.front() != '/')
+	{
+		return invalid_folder("The game-folder path must be an absolute security-scoped path");
+	}
+
+	std::string source_root = folder_path;
+	while (source_root.size() > 1 && source_root.ends_with('/'))
+	{
+		source_root.pop_back();
+	}
+	struct stat root_info{};
+	if (::lstat(source_root.c_str(), &root_info) != 0 ||
+		S_ISLNK(root_info.st_mode) || !S_ISDIR(root_info.st_mode))
+	{
+		return invalid_folder("The selected item is not a readable folder");
+	}
+	if (progress)
+	{
+		progress(0, 1000, "Inspecting selected game folder");
+	}
+
+	std::vector<folder_tree_entry> entries;
+	std::vector<std::string> files;
+	u64 required_size = 0;
+	std::string failure_detail;
+	if (!enumerate_folder_directory(
+		source_root, {}, 0, entries, files, required_size, failure_detail))
+	{
+		return invalid_folder(std::move(failure_detail));
+	}
+	const auto layout = detect_game_folder_layout(files);
+	if (!layout)
+	{
+		return invalid_folder(
+			"Select a game folder containing either PS3_GAME/PARAM.SFO and PS3_GAME/USRDIR/EBOOT.BIN, or PARAM.SFO and USRDIR/EBOOT.BIN");
+	}
+
+	const psf::registry metadata = psf::load_object(source_root + "/" + layout->metadata_path);
+	std::string title_id{psf::get_string(metadata, "TITLE_ID")};
+	std::string title{psf::get_string(metadata, "TITLE")};
+	const std::string category{psf::get_string(metadata, "CATEGORY")};
+	const bool is_disc_category = category == "DG";
+	const bool is_hdd_category = psf::is_cat_hdd(category);
+	const auto install_prefix = game_folder_install_prefix(
+		layout->kind, is_disc_category, is_hdd_category);
+	if (!valid_title_id(title_id) || !install_prefix)
+	{
+		return invalid_folder("The selected folder is not a bootable PlayStation 3 game");
+	}
+	if (title.empty())
+	{
+		title = title_id;
+	}
+	if (find_installed_game(title_id))
+	{
+		return folder_installation_failed(
+			fmt::format("A game with title ID %s is already installed", title_id), title_id, title);
+	}
+
+	const std::string root = extracted_game_root();
+	if (!fs::create_path(root))
+	{
+		return folder_installation_failed("Unable to create the extracted-game library", title_id, title);
+	}
+	for (auto&& entry : fs::dir{root})
+	{
+		if (entry.is_directory && entry.name.starts_with(".import-"))
+		{
+			fs::remove_all(root + entry.name, true, true);
+		}
+	}
+	fs::device_stat device{};
+	if (!fs::statfs(root, device))
+	{
+		return folder_installation_failed(
+			"Unable to determine free space for folder installation", title_id, title);
+	}
+	if (device.avail_free < required_size)
+	{
+		return folder_installation_failed(fmt::format(
+			"Not enough free space to copy the game folder (need at least %s more)",
+			formatted_byte_size(required_size - device.avail_free)), title_id, title);
+	}
+
+	static std::atomic<u64> import_counter{0};
+	temporary_directory temporary{
+		root + fmt::format(".import-%x", import_counter.fetch_add(1, std::memory_order_relaxed))
+	};
+	if (!fs::create_dir(temporary.path))
+	{
+		return folder_installation_failed(
+			"Unable to create temporary folder installation storage", title_id, title);
+	}
+
+	const std::string destination_root = temporary.path + "/" + std::string{*install_prefix};
+	if (!fs::create_path(destination_root))
+	{
+		return folder_installation_failed(
+			"Unable to prepare temporary game-folder storage", title_id, title);
+	}
+	u64 copied = 0;
+	for (const folder_tree_entry& entry : entries)
+	{
+		const std::string destination = destination_root + entry.relative_path;
+		if (entry.is_directory)
+		{
+			if (!fs::create_path(destination + "/"))
+			{
+				return folder_installation_failed(
+					fmt::format("Unable to create storage for %s", entry.relative_path),
+					title_id, title);
+			}
+			continue;
+		}
+
+		if (!copy_folder_file_with_progress(
+			source_root + "/" + entry.relative_path,
+			destination,
+			entry.relative_path,
+			entry.size,
+			copied,
+			required_size,
+			progress))
+		{
+			return folder_installation_failed(
+				fmt::format("Unable to copy %s from the selected folder", entry.relative_path),
+				title_id, title);
+		}
+	}
+
+	if (progress)
+	{
+		progress(920, 1000, "Validating copied PlayStation 3 game");
+	}
+	const auto copied_game = installed_extracted_game(temporary.path);
+	if (!copied_game || copied_game->title_id != title_id)
+	{
+		return invalid_folder("The copied folder is not a bootable PlayStation 3 game");
+	}
+
+	const std::string final_directory = root + title_id;
+	if (fs::is_dir(final_directory) || !fs::rename(temporary.path, final_directory, false))
+	{
+		return folder_installation_failed(
+			"Unable to finalize the game-folder installation", title_id, title);
+	}
+	temporary.path.clear();
+
+	if (progress)
+	{
+		progress(1000, 1000, fmt::format("Installed %s", title));
+	}
+	return {game_folder_install_error::none, std::move(title_id), std::move(title), {}};
 }
 
 std::vector<installed_game> installed_games()
