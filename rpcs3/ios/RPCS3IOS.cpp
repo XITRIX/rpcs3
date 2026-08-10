@@ -6,6 +6,7 @@
 #include "RPCS3IOSOverlayMedia.h"
 #include "RPCS3IOSPlatform.h"
 #include "RPCS3IOSPerformance.h"
+#include "RPCS3IOSRuntimePatches.h"
 #include "RPCS3IOSSettings.h"
 #include "FirmwareInstaller.h"
 #include "GameLibrary.h"
@@ -376,7 +377,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":13,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller\",\"games\":\"pkg-iso-zip-folder-patches-library\",\"settings\":\"cfg-root-catalog\",\"performance\":\"fps-cpu-rsx-memory\",\"media_codecs\":true}";
+	return "{\"abi\":14,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller\",\"games\":\"pkg-iso-zip-folder-updates-runtime-patches-library\",\"settings\":\"cfg-root-catalog\",\"performance\":\"fps-cpu-rsx-memory\",\"media_codecs\":true}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -1046,6 +1047,208 @@ extern "C" rpcs3_ios_status rpcs3_ios_enumerate_game_patches(
 	catch (...)
 	{
 		set_error("Unknown exception while enumerating installed game updates");
+	}
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_get_patch_repository_url(
+	char* url,
+	size_t url_capacity) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!url || url_capacity == 0)
+	{
+		set_error("Patch-repository URL retrieval requires a writable output buffer");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("Stop emulation before managing game patches");
+		return result;
+	}
+
+	try
+	{
+		const std::string repository_url = rpcs3::ios::patch_repository_url();
+		if (repository_url.size() + 1 > url_capacity)
+		{
+			set_error("The patch-repository URL output buffer is too small");
+			return RPCS3_IOS_INVALID_ARGUMENT;
+		}
+		std::memcpy(url, repository_url.c_str(), repository_url.size() + 1);
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while building the patch-repository URL");
+	}
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_install_patch_repository(
+	const char* version,
+	const char* sha256,
+	const void* patch_content,
+	size_t patch_content_size) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	constexpr size_t maximum_repository_size = 64u * 1024u * 1024u;
+	if (!version || !version[0] || !sha256 || !sha256[0] || !patch_content ||
+		patch_content_size == 0 || patch_content_size > maximum_repository_size)
+	{
+		set_error("Patch-repository installation requires versioned, checksummed YAML no larger than 64 MiB");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("Stop emulation before updating the game-patch repository");
+		return result;
+	}
+
+	try
+	{
+		const auto result = rpcs3::ios::install_patch_repository(
+			version,
+			sha256,
+			std::string_view{static_cast<const char*>(patch_content), patch_content_size});
+		if (result.error == rpcs3::ios::patch_repository_install_error::none)
+		{
+			emit_log(4, "Installed the latest RPCS3 Patch Engine repository");
+			return RPCS3_IOS_OK;
+		}
+
+		set_error(result.detail);
+		emit_log(2, result.detail);
+		return result.error == rpcs3::ios::patch_repository_install_error::invalid_repository
+			? RPCS3_IOS_PATCH_REPOSITORY_INVALID
+			: RPCS3_IOS_PATCH_REPOSITORY_INSTALL_FAILED;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while installing the patch repository");
+	}
+	return RPCS3_IOS_PATCH_REPOSITORY_INSTALL_FAILED;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_enumerate_runtime_patches(
+	const char* title_id,
+	const char* app_version,
+	rpcs3_ios_runtime_patch_callback callback,
+	void* user_context) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!title_id || !title_id[0] || !app_version || !callback)
+	{
+		set_error("Game-patch enumeration requires a title ID, application version, and callback");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("Stop emulation before managing game patches");
+		return result;
+	}
+
+	try
+	{
+		const auto result = rpcs3::ios::runtime_patches_for_title(title_id, app_version);
+		if (result.error != rpcs3::ios::runtime_patch_update_error::none)
+		{
+			set_error(result.detail);
+			return RPCS3_IOS_PATCH_REPOSITORY_INVALID;
+		}
+
+		for (const auto& patch : result.patches)
+		{
+			const rpcs3_ios_runtime_patch_info info{
+				sizeof(rpcs3_ios_runtime_patch_info),
+				patch.enabled ? 1u : 0u,
+				patch.configurable_count,
+				0,
+				patch.hash.c_str(),
+				patch.title.c_str(),
+				patch.description.c_str(),
+				patch.patch_version.c_str(),
+				patch.author.c_str(),
+				patch.notes.c_str(),
+				patch.patch_group.c_str(),
+				patch.app_version.c_str(),
+			};
+			callback(user_context, &info);
+		}
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while enumerating game patches");
+	}
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_set_runtime_patch_enabled(
+	const char* title_id,
+	const char* hash,
+	const char* title,
+	const char* app_version,
+	const char* description,
+	uint32_t enabled) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!title_id || !title_id[0] || !hash || !hash[0] || !title || !title[0] ||
+		!app_version || !app_version[0] || !description || !description[0] || enabled > 1)
+	{
+		set_error("Game-patch updates require the complete enumerated patch identity and a Boolean state");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("Stop emulation before changing game patches");
+		return result;
+	}
+
+	try
+	{
+		const auto result = rpcs3::ios::set_runtime_patch_enabled(
+			title_id, hash, title, app_version, description, enabled != 0);
+		switch (result.error)
+		{
+		case rpcs3::ios::runtime_patch_update_error::none:
+			emit_log(4, fmt::format("%s game patch '%s' for %s",
+				enabled ? "Enabled" : "Disabled", description, title_id));
+			return RPCS3_IOS_OK;
+		case rpcs3::ios::runtime_patch_update_error::patch_not_found:
+			set_error(result.detail);
+			return RPCS3_IOS_RUNTIME_PATCH_NOT_FOUND;
+		case rpcs3::ios::runtime_patch_update_error::storage_failed:
+			set_error(result.detail);
+			return RPCS3_IOS_RUNTIME_PATCH_SAVE_FAILED;
+		case rpcs3::ios::runtime_patch_update_error::invalid_patch_files:
+			set_error(result.detail);
+			return RPCS3_IOS_PATCH_REPOSITORY_INVALID;
+		}
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while changing a game patch");
 	}
 	return RPCS3_IOS_INTERNAL_ERROR;
 }
