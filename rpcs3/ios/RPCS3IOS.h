@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 11u
+#define RPCS3_IOS_ABI_VERSION 12u
 
 typedef enum rpcs3_ios_status
 {
@@ -42,7 +42,9 @@ typedef enum rpcs3_ios_status
     RPCS3_IOS_ZIP_INSTALL_FAILED = 18,
     RPCS3_IOS_SETTING_NOT_FOUND = 19,
     RPCS3_IOS_SETTING_INVALID = 20,
-    RPCS3_IOS_SETTINGS_SAVE_FAILED = 21
+    RPCS3_IOS_SETTINGS_SAVE_FAILED = 21,
+    RPCS3_IOS_FOLDER_INVALID = 22,
+    RPCS3_IOS_FOLDER_INSTALL_FAILED = 23
 } rpcs3_ios_status;
 
 typedef enum rpcs3_ios_state
@@ -84,6 +86,11 @@ typedef void (*rpcs3_ios_iso_progress_callback)(
     uint32_t total,
     const char* stage);
 typedef void (*rpcs3_ios_zip_progress_callback)(
+    void* user_context,
+    uint32_t completed,
+    uint32_t total,
+    const char* stage);
+typedef void (*rpcs3_ios_folder_progress_callback)(
     void* user_context,
     uint32_t completed,
     uint32_t total,
@@ -263,6 +270,13 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_iso(
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_zip(
     const char* zip_path,
     rpcs3_ios_zip_progress_callback progress_callback,
+    void* user_context) RPCS3_IOS_NOEXCEPT;
+// Copies one security-scoped PS3 game folder into RPCS3's private library.
+// The wrapper may remove the source after this operation succeeds to offer
+// move semantics while retaining file-provider coordination.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_folder(
+    const char* folder_path,
+    rpcs3_ios_folder_progress_callback progress_callback,
     void* user_context) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_games(
     rpcs3_ios_game_callback callback,
