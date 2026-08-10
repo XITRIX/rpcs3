@@ -6,7 +6,7 @@
 int main()
 {
 	using namespace rpcs3::ios;
-	static_assert(RPCS3_IOS_ABI_VERSION == 15);
+	static_assert(RPCS3_IOS_ABI_VERSION == 16);
 	static_assert(RPCS3_IOS_FOLDER_INVALID == 22);
 	static_assert(RPCS3_IOS_FOLDER_INSTALL_FAILED == 23);
 	static_assert(RPCS3_IOS_PATCH_INVALID == 24);
@@ -49,6 +49,24 @@ int main()
 	assert(validate_idle_operation_contract(
 		RPCS3_IOS_STATE_READY,
 		RPCS3_IOS_EMULATION_STATE_RUNNING) == RPCS3_IOS_INVALID_STATE);
+	assert(validate_pause_operation_contract(
+		RPCS3_IOS_STATE_READY,
+		RPCS3_IOS_EMULATION_STATE_RUNNING) == RPCS3_IOS_OK);
+	assert(validate_pause_operation_contract(
+		RPCS3_IOS_STATE_READY,
+		RPCS3_IOS_EMULATION_STATE_PAUSED) == RPCS3_IOS_INVALID_STATE);
+	assert(validate_pause_operation_contract(
+		RPCS3_IOS_STATE_UNINITIALIZED,
+		RPCS3_IOS_EMULATION_STATE_RUNNING) == RPCS3_IOS_INVALID_STATE);
+	assert(validate_resume_operation_contract(
+		RPCS3_IOS_STATE_READY,
+		RPCS3_IOS_EMULATION_STATE_PAUSED) == RPCS3_IOS_OK);
+	assert(validate_resume_operation_contract(
+		RPCS3_IOS_STATE_READY,
+		RPCS3_IOS_EMULATION_STATE_RUNNING) == RPCS3_IOS_INVALID_STATE);
+	assert(validate_resume_operation_contract(
+		RPCS3_IOS_STATE_STOPPED,
+		RPCS3_IOS_EMULATION_STATE_PAUSED) == RPCS3_IOS_INVALID_STATE);
 	config.cache_path = "/tmp/rpcs3-cache";
 	config.abi_version++;
 	assert(validate_config_contract(&config) == RPCS3_IOS_INVALID_ARGUMENT);
