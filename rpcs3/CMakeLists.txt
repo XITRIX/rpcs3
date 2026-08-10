@@ -194,6 +194,9 @@ if(RPCS3_FRONTEND STREQUAL "IOS")
         ios/RPCS3IOSInput.h
         ios/RPCS3IOSLocalization.cpp
         ios/RPCS3IOSLocalization.h
+        ios/RPCS3IOSOverlayMedia.cpp
+        ios/RPCS3IOSOverlayMedia.h
+        ios/RPCS3IOSOverlayMediaBuffer.h
         ios/RPCS3IOSPlatform.h
         ios/RPCS3IOSPlatform.mm
         ios/RPCS3IOSPerformance.cpp
