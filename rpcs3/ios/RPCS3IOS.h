@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 13u
+#define RPCS3_IOS_ABI_VERSION 14u
 
 typedef enum rpcs3_ios_status
 {
@@ -47,7 +47,11 @@ typedef enum rpcs3_ios_status
     RPCS3_IOS_FOLDER_INSTALL_FAILED = 23,
     RPCS3_IOS_PATCH_INVALID = 24,
     RPCS3_IOS_PATCH_TITLE_MISMATCH = 25,
-    RPCS3_IOS_PATCH_INSTALL_FAILED = 26
+    RPCS3_IOS_PATCH_INSTALL_FAILED = 26,
+    RPCS3_IOS_PATCH_REPOSITORY_INVALID = 27,
+    RPCS3_IOS_PATCH_REPOSITORY_INSTALL_FAILED = 28,
+    RPCS3_IOS_RUNTIME_PATCH_NOT_FOUND = 29,
+    RPCS3_IOS_RUNTIME_PATCH_SAVE_FAILED = 30
 } rpcs3_ios_status;
 
 typedef enum rpcs3_ios_state
@@ -194,6 +198,29 @@ typedef void (*rpcs3_ios_game_patch_callback)(
     void* user_context,
     const rpcs3_ios_game_patch_info* patch);
 
+// RPCS3 Patch Engine entries are distinct from installed PS3 update PKGs.
+// These callback-scoped strings describe one patch variant that targets the
+// requested title and either its exact application version or all versions.
+typedef struct rpcs3_ios_runtime_patch_info
+{
+    uint32_t struct_size;
+    uint32_t enabled;
+    uint32_t configurable_count;
+    uint32_t reserved;
+    const char* hash;
+    const char* title;
+    const char* description;
+    const char* patch_version;
+    const char* author;
+    const char* notes;
+    const char* patch_group;
+    const char* app_version;
+} rpcs3_ios_runtime_patch_info;
+
+typedef void (*rpcs3_ios_runtime_patch_callback)(
+    void* user_context,
+    const rpcs3_ios_runtime_patch_info* patch);
+
 typedef enum rpcs3_ios_setting_kind
 {
     RPCS3_IOS_SETTING_BOOLEAN = 0,
@@ -310,6 +337,33 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_game_patches(
     const char* title_id,
     rpcs3_ios_game_patch_callback callback,
     void* user_context) RPCS3_IOS_NOEXCEPT;
+// Builds the official RPCS3 Patch Engine 1.2 endpoint and includes the local
+// patch.yml SHA-256 when present, matching the desktop conditional request.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_get_patch_repository_url(
+    char* url,
+    size_t url_capacity) RPCS3_IOS_NOEXCEPT;
+// The wrapper performs HTTPS and JSON decoding. The core independently checks
+// the version and SHA-256, validates the Patch Engine YAML, keeps patch.yml.old,
+// and atomically replaces patch.yml only after every check succeeds.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_patch_repository(
+    const char* version,
+    const char* sha256,
+    const void* patch_content,
+    size_t patch_content_size) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_runtime_patches(
+    const char* title_id,
+    const char* app_version,
+    rpcs3_ios_runtime_patch_callback callback,
+    void* user_context) RPCS3_IOS_NOEXCEPT;
+// Patch state is persisted to patch_config.yml and takes effect on the next
+// boot. Enabling an entry disables peers in the same Patch Engine group.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_runtime_patch_enabled(
+    const char* title_id,
+    const char* hash,
+    const char* title,
+    const char* app_version,
+    const char* description,
+    uint32_t enabled) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_settings(
     rpcs3_ios_setting_callback setting_callback,
     rpcs3_ios_setting_option_callback option_callback,
