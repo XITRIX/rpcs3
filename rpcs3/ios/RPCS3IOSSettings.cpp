@@ -1,6 +1,7 @@
 #include "RPCS3IOSSettings.h"
 
 #include "Emu/system_config.h"
+#include "Emu/system_utils.hpp"
 #include "Utilities/File.h"
 
 #include <array>
@@ -190,5 +191,85 @@ const setting_record* find_setting(std::string_view key) noexcept
 bool save_global_settings() noexcept
 {
 	return g_cfg.save(fs::get_config_dir(true) + "config.yml");
+}
+
+settings_load_error load_effective_settings(std::string_view title_id, bool& has_custom_config) noexcept
+{
+	has_custom_config = false;
+	g_cfg.from_default();
+	g_cfg.name.clear();
+
+	const std::string global_path = fs::get_config_dir(true) + "config.yml";
+	if (fs::file global_config{global_path})
+	{
+		if (!g_cfg.from_string(global_config.to_string()))
+		{
+			return settings_load_error::global_invalid;
+		}
+		g_cfg.name = global_path;
+	}
+	else
+	{
+		return settings_load_error::global_access_failed;
+	}
+
+	if (title_id.empty())
+	{
+		return settings_load_error::none;
+	}
+
+	const std::string custom_path = rpcs3::utils::get_custom_config_path(std::string{title_id});
+	if (fs::file custom_config{custom_path})
+	{
+		has_custom_config = true;
+		if (!g_cfg.from_string(custom_config.to_string()))
+		{
+			return settings_load_error::game_invalid;
+		}
+		g_cfg.name = custom_path;
+		return settings_load_error::none;
+	}
+
+	return fs::g_tls_error == fs::error::noent
+		? settings_load_error::none
+		: settings_load_error::game_access_failed;
+}
+
+bool save_game_settings(std::string_view title_id) noexcept
+{
+	if (title_id.empty() || !fs::create_path(rpcs3::utils::get_custom_config_dir()))
+	{
+		return false;
+	}
+	return g_cfg.save(rpcs3::utils::get_custom_config_path(std::string{title_id}));
+}
+
+bool remove_game_settings(std::string_view title_id) noexcept
+{
+	if (title_id.empty())
+	{
+		return false;
+	}
+
+	const std::string path = rpcs3::utils::get_custom_config_path(std::string{title_id});
+	return fs::remove_file(path) || fs::g_tls_error == fs::error::noent;
+}
+
+std::string_view settings_load_error_detail(settings_load_error error) noexcept
+{
+	switch (error)
+	{
+	case settings_load_error::none:
+		return {};
+	case settings_load_error::global_access_failed:
+		return "Unable to read RPCS3's global config.yml";
+	case settings_load_error::global_invalid:
+		return "RPCS3's global config.yml is invalid";
+	case settings_load_error::game_access_failed:
+		return "Unable to read the game's custom configuration";
+	case settings_load_error::game_invalid:
+		return "The game's custom configuration is invalid";
+	}
+	return "Unable to load RPCS3 settings";
 }
 }
