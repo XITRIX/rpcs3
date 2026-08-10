@@ -157,6 +157,10 @@ std::string_view english_overlay_string(id value) noexcept
 	case id::HOME_MENU_RELOAD_SECOND_SAVESTATE: return "Reload Second-To-Last Emulation State";
 	case id::HOME_MENU_RELOAD_THIRD_SAVESTATE: return "Reload Third-To-Last Emulation State";
 	case id::HOME_MENU_RELOAD_FOURTH_SAVESTATE: return "Reload Fourth-To-Last Emulation State";
+	case id::SAVESTATE_FAILED_DUE_TO_VDEC: return "SaveState failed: a video or cutscene is active. Wait for it to finish and try again.";
+	case id::SAVESTATE_FAILED_DUE_TO_SAVEDATA: return "SaveState failed: the game is saving data. Wait for it to finish and try again.";
+	case id::SAVESTATE_FAILED_DUE_TO_SPU: return "SaveState failed: RPCS3 could not safely lock the SPU state.";
+	case id::SAVESTATE_FAILED_DUE_TO_MISSING_SPU_SETTING: return "SaveState failed: enable Advanced > Compatible Savestate Mode, restart the game, and try again. This can reduce performance.";
 	case id::HOME_MENU_TOGGLE_FULLSCREEN: return "Toggle Fullscreen";
 	case id::HOME_MENU_RECORDING: return "Start/Stop Recording";
 	case id::HOME_MENU_TROPHIES: return "Trophies";
