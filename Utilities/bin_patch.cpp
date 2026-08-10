@@ -1637,7 +1637,7 @@ void patch_engine::unload(const std::string& name)
 	}
 }
 
-void patch_engine::save_config(const patch_map& patches_map)
+bool patch_engine::save_config(const patch_map& patches_map)
 {
 	const std::string path = get_patch_config_path();
 	patch_log.notice("Saving patch config file %s", path);
@@ -1735,7 +1735,10 @@ void patch_engine::save_config(const patch_map& patches_map)
 	if (!file.file || file.file.write(out.c_str(), out.size()) < out.size() || !file.commit())
 	{
 		patch_log.error("Failed to create patch config file %s (error=%s)", path, fs::g_tls_error);
+		return false;
 	}
+
+	return true;
 }
 
 static void append_patches(patch_engine::patch_map& existing_patches, const patch_engine::patch_map& new_patches, usz& count, usz& total, std::stringstream* log_messages, std::string_view path)
