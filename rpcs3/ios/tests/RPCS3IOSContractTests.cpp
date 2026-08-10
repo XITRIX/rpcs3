@@ -6,7 +6,9 @@
 int main()
 {
 	using namespace rpcs3::ios;
-	static_assert(RPCS3_IOS_ABI_VERSION == 11);
+	static_assert(RPCS3_IOS_ABI_VERSION == 12);
+	static_assert(RPCS3_IOS_FOLDER_INVALID == 22);
+	static_assert(RPCS3_IOS_FOLDER_INSTALL_FAILED == 23);
 	static_assert(sizeof(rpcs3_ios_display_surface) == 24);
 	static_assert(sizeof(rpcs3_ios_pad_state) == 40);
 	static_assert(sizeof(rpcs3_ios_game_info) == 48);
