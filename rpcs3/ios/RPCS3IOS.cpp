@@ -4,6 +4,7 @@
 #include "RPCS3IOSDisplay.h"
 #include "RPCS3IOSLocalization.h"
 #include "RPCS3IOSOverlayMedia.h"
+#include "RPCS3IOSPath.h"
 #include "RPCS3IOSPlatform.h"
 #include "RPCS3IOSPerformance.h"
 #include "RPCS3IOSRuntimePatches.h"
@@ -345,7 +346,10 @@ EmuCallbacks make_callbacks()
 	callbacks.play_sound = [](const std::string&, std::optional<f32>) {};
 	callbacks.get_image_info = [](const std::string&, std::string&, s32&, s32&, s32&) { return false; };
 	callbacks.get_scaled_image = [](const std::string&, s32, s32, s32&, s32&, u8*, bool) { return false; };
-	callbacks.resolve_path = [](std::string_view path) { return std::string{path}; };
+	callbacks.resolve_path = [](std::string_view path)
+	{
+		return rpcs3::ios::normalize_resolved_host_path(path);
+	};
 	callbacks.get_font_dirs = []() { return std::vector<std::string>{}; };
 	callbacks.on_install_pkgs = [](const std::vector<std::string>&) { return false; };
 	callbacks.add_breakpoint = [](u32) {};
