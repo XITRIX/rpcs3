@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 15u
+#define RPCS3_IOS_ABI_VERSION 16u
 
 typedef enum rpcs3_ios_status
 {
@@ -419,6 +419,10 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_get_boot_progress(
 // lifecycle lock. Fields without a valid_fields bit must not be displayed.
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_get_performance_metrics(
     rpcs3_ios_performance_metrics* metrics) RPCS3_IOS_NOEXCEPT;
+// Uses the same Emulator::Pause/Resume lifecycle as the desktop frontend.
+// Pause is accepted only from running; resume is accepted only from paused.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_pause_emulation(void) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_resume_emulation(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_stop_emulation(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_state rpcs3_ios_get_state(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_shutdown(void) RPCS3_IOS_NOEXCEPT;
