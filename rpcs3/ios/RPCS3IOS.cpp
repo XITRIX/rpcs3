@@ -3,6 +3,7 @@
 #include "RPCS3IOSContract.h"
 #include "RPCS3IOSDisplay.h"
 #include "RPCS3IOSLocalization.h"
+#include "RPCS3IOSOverlayMedia.h"
 #include "RPCS3IOSPlatform.h"
 #include "RPCS3IOSPerformance.h"
 #include "RPCS3IOSSettings.h"
@@ -350,7 +351,7 @@ EmuCallbacks make_callbacks()
 	callbacks.display_sleep_control_supported = []() { return rpcs3::ios::display_sleep_control_supported(); };
 	callbacks.enable_display_sleep = [](bool enable) { rpcs3::ios::enable_display_sleep(enable); };
 	callbacks.check_microphone_permissions = []() {};
-	callbacks.make_video_source = []() -> std::unique_ptr<video_source> { return {}; };
+	callbacks.make_video_source = []() { return rpcs3::ios::make_overlay_media_source(); };
 	callbacks.enable_gamemode = [](bool) {};
 	callbacks.get_database_config = [](const std::string&) { return std::string{}; };
 	return callbacks;
