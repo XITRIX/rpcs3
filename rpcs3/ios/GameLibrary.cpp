@@ -1,6 +1,7 @@
 #include "GameLibrary.h"
 #include "GameArchiveContract.h"
 #include "GameFolderContract.h"
+#include "GamePatchContract.h"
 
 #include "Utilities/StrFmt.h"
 #include "Crypto/unpkg.h"
@@ -130,6 +131,51 @@ game_folder_install_result folder_installation_failed(
 		game_folder_install_error::installation_failed,
 		std::move(title_id),
 		std::move(title),
+		std::move(detail),
+	};
+}
+
+game_patch_install_result invalid_patch(
+	std::string detail,
+	std::string title_id = {},
+	std::string title = {},
+	std::string version = {})
+{
+	return {
+		game_patch_install_error::invalid_patch,
+		std::move(title_id),
+		std::move(title),
+		std::move(version),
+		std::move(detail),
+	};
+}
+
+game_patch_install_result patch_title_mismatch(
+	std::string detail,
+	std::string title_id,
+	std::string title,
+	std::string version)
+{
+	return {
+		game_patch_install_error::title_mismatch,
+		std::move(title_id),
+		std::move(title),
+		std::move(version),
+		std::move(detail),
+	};
+}
+
+game_patch_install_result patch_installation_failed(
+	std::string detail,
+	std::string title_id = {},
+	std::string title = {},
+	std::string version = {})
+{
+	return {
+		game_patch_install_error::installation_failed,
+		std::move(title_id),
+		std::move(title),
+		std::move(version),
 		std::move(detail),
 	};
 }
@@ -838,6 +884,79 @@ game_package_install_result install_game_package(
 	return {game_package_install_error::none, title_id, title, {}};
 }
 
+game_patch_install_result install_game_patch(
+	std::string_view expected_title_id,
+	const std::string& package_path,
+	const game_package_progress_callback& progress)
+{
+	if (!valid_title_id(expected_title_id))
+	{
+		return invalid_patch("The selected game has an invalid title ID");
+	}
+	if (!find_installed_game(expected_title_id))
+	{
+		return patch_installation_failed(
+			fmt::format("Game %s is not installed", expected_title_id),
+			std::string{expected_title_id});
+	}
+	if (package_path.empty() || package_path.front() != '/')
+	{
+		return invalid_patch("The update-package path must be an absolute sandbox path");
+	}
+
+	package_reader reader{package_path};
+	if (!reader.is_valid() || reader.get_header().pkg_platform != PKG_PLATFORM_TYPE_PS3)
+	{
+		return invalid_patch("The selected file is not a valid PlayStation 3 update package");
+	}
+
+	const psf::registry& package_psf = reader.get_psf();
+	std::string package_title_id{psf::get_string(package_psf, "TITLE_ID")};
+	std::string title{psf::get_string(package_psf, "TITLE")};
+	std::string version{psf::get_string(package_psf, "APP_VER")};
+	const std::string category{psf::get_string(package_psf, "CATEGORY")};
+	const bool has_patch_flag =
+		(static_cast<u32>(reader.get_metadata().package_type) & pkg_flag::PKG_FLAG_PATCH) != 0;
+	if (title.empty())
+	{
+		title = package_title_id.empty() ? "PlayStation 3 game update" : package_title_id;
+	}
+
+	switch (validate_game_patch_contract(
+		expected_title_id, package_title_id, category, has_patch_flag))
+	{
+	case game_patch_validation_error::invalid_patch:
+		return invalid_patch(
+			"The selected package is not a PlayStation 3 game update",
+			std::move(package_title_id), std::move(title), std::move(version));
+	case game_patch_validation_error::title_mismatch:
+		return patch_title_mismatch(fmt::format(
+			"The selected update is for %s, not %s", package_title_id, expected_title_id),
+			std::move(package_title_id), std::move(title), std::move(version));
+	case game_patch_validation_error::none:
+		break;
+	}
+
+	const game_package_install_result result = install_game_package(package_path, progress);
+	if (result.error == game_package_install_error::invalid_package)
+	{
+		return invalid_patch(result.detail, std::move(package_title_id),
+			std::move(title), std::move(version));
+	}
+	if (result.error != game_package_install_error::none)
+	{
+		return patch_installation_failed(result.detail, std::move(package_title_id),
+			std::move(title), std::move(version));
+	}
+	return {
+		game_patch_install_error::none,
+		std::move(package_title_id),
+		std::move(title),
+		std::move(version),
+		{},
+	};
+}
+
 game_iso_install_result install_game_iso(
 	const std::string& iso_path,
 	const std::string& key_path,
@@ -1386,9 +1505,53 @@ std::vector<installed_game> installed_games()
 		}
 	}
 
+	// Match the Qt game list: keep the disc/private base as the boot entry, but
+	// display the newer cumulative update version installed in dev_hdd0.
+	for (installed_game& game : result)
+	{
+		if (game.category == "GD")
+		{
+			continue;
+		}
+
+		const std::string update_sfo_path = game_root + game.title_id + "/PARAM.SFO";
+		if (!fs::is_file(update_sfo_path))
+		{
+			continue;
+		}
+
+		const psf::registry update_metadata = psf::load_object(update_sfo_path);
+		if (psf::get_string(update_metadata, "TITLE_ID") != game.title_id ||
+			psf::get_string(update_metadata, "CATEGORY") != "GD")
+		{
+			continue;
+		}
+
+		std::string update_version{psf::get_string(update_metadata, "APP_VER")};
+		if (update_version.empty())
+		{
+			update_version = std::string{psf::get_string(update_metadata, "VERSION")};
+		}
+		if (!update_version.empty() && (game.version.empty() ||
+			rpcs3::utils::version_is_bigger(update_version, game.version, game.title_id, false)))
+		{
+			game.version = std::move(update_version);
+		}
+	}
+
 	std::sort(result.begin(), result.end(), [](const installed_game& left, const installed_game& right)
 	{
-		return left.title_id < right.title_id;
+		if (left.title_id != right.title_id)
+		{
+			return left.title_id < right.title_id;
+		}
+		const bool left_is_patch = left.category == "GD";
+		const bool right_is_patch = right.category == "GD";
+		if (left_is_patch != right_is_patch)
+		{
+			return !left_is_patch;
+		}
+		return left.path < right.path;
 	});
 	result.erase(std::unique(result.begin(), result.end(), [](const installed_game& left, const installed_game& right)
 	{
@@ -1415,5 +1578,40 @@ std::optional<installed_game> find_installed_game(std::string_view title_id)
 		return std::nullopt;
 	}
 	return std::move(*found);
+}
+
+std::vector<installed_game_patch> installed_game_patches(std::string_view title_id)
+{
+	if (!valid_title_id(title_id))
+	{
+		return {};
+	}
+
+	const std::string path = rpcs3::utils::get_hdd0_dir() +
+		"game/" + std::string{title_id};
+	const std::string sfo_path = path + "/PARAM.SFO";
+	if (!fs::is_file(sfo_path))
+	{
+		return {};
+	}
+
+	const psf::registry metadata = psf::load_object(sfo_path);
+	const std::string installed_title_id{psf::get_string(metadata, "TITLE_ID")};
+	if (installed_title_id != title_id || psf::get_string(metadata, "CATEGORY") != "GD")
+	{
+		return {};
+	}
+
+	std::string title{psf::get_string(metadata, "TITLE")};
+	if (title.empty())
+	{
+		title = installed_title_id;
+	}
+	std::string version{psf::get_string(metadata, "APP_VER")};
+	if (version.empty())
+	{
+		version = std::string{psf::get_string(metadata, "VERSION")};
+	}
+	return {{std::move(installed_title_id), std::move(title), std::move(version)}};
 }
 }

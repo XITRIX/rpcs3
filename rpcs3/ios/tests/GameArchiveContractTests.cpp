@@ -1,5 +1,6 @@
 #include "../GameArchiveContract.h"
 #include "../GameFolderContract.h"
+#include "../GamePatchContract.h"
 
 #include <cassert>
 #include <string>
@@ -76,6 +77,15 @@ int main()
 	assert(!detect_game_folder_layout(ambiguous_folder));
 	assert(!game_folder_install_prefix(game_folder_layout_kind::content_root, false, false));
 	assert(!game_folder_install_prefix(game_folder_layout_kind::content_root, true, true));
+
+	assert(validate_game_patch_contract("BLUS12345", "BLUS12345", "GD", true) ==
+		game_patch_validation_error::none);
+	assert(validate_game_patch_contract("BLUS12345", "BLES54321", "GD", true) ==
+		game_patch_validation_error::title_mismatch);
+	assert(validate_game_patch_contract("BLUS12345", "BLUS12345", "HG", true) ==
+		game_patch_validation_error::invalid_patch);
+	assert(validate_game_patch_contract("BLUS12345", "BLUS12345", "GD", false) ==
+		game_patch_validation_error::invalid_patch);
 
 	return 0;
 }
