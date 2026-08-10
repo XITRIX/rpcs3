@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "vm_locking.h"
+#include "VMLayoutPolicy.h"
 #include "vm_ptr.h"
 #include "vm_reservation.h"
 
@@ -26,9 +27,10 @@ extern bool is_memory_compatible_for_copy_from_executable_optimization(u32 addr,
 
 namespace vm
 {
-	static u8* memory_reserve_4GiB(void* _addr, u64 size = 0x100000000, bool is_memory_mapping = false)
+	static u8* memory_reserve_4GiB(void* _addr, u64 size = layout::guest_address_space_size, bool is_memory_mapping = false)
 	{
-		for (u64 addr = reinterpret_cast<u64>(_addr) + 0x100000000; addr < 0x8000'0000'0000; addr += 0x100000000)
+		for (u64 addr = reinterpret_cast<u64>(_addr) + layout::guest_address_space_size;
+			addr < 0x8000'0000'0000; addr += layout::guest_address_space_size)
 		{
 			if (auto ptr = utils::memory_reserve(size, reinterpret_cast<void*>(addr), is_memory_mapping, false))
 			{
@@ -40,22 +42,31 @@ namespace vm
 	}
 
 	// Emulated virtual memory
-	u8* const g_base_addr = memory_reserve_4GiB(reinterpret_cast<void*>(0x2'0000'0000), 0x2'0000'0000, true);
+	u8* const g_base_addr = memory_reserve_4GiB(
+		reinterpret_cast<void*>(0x2'0000'0000), layout::guest_memory_reservation_size, true);
 
 	// Unprotected virtual memory mirror
-	u8* const g_sudo_addr = g_base_addr + 0x1'0000'0000;
+	u8* const g_sudo_addr = g_base_addr + layout::guest_address_space_size;
 
 	// Auxiliary virtual memory for executable areas
-	u8* const g_exec_addr = memory_reserve_4GiB(g_sudo_addr, 0x300000000);
+	u8* const g_exec_addr = memory_reserve_4GiB(g_sudo_addr, layout::exec_memory_reservation_size);
 
 	// Hooks for memory R/W interception (default: zero offset to some function with only ret instructions)
-	u8* const g_hook_addr = memory_reserve_4GiB(g_exec_addr, 0x800000000);
+	u8* const g_hook_addr = []()
+	{
+		if constexpr (layout::reserve_sparse_hook_memory)
+		{
+			return memory_reserve_4GiB(g_exec_addr, layout::sparse_hook_memory_size);
+		}
+
+		return g_exec_addr;
+	}();
 
 	// Stats for debugging
-	u8* const g_stat_addr = memory_reserve_4GiB(g_hook_addr);
+	u8* const g_stat_addr = memory_reserve_4GiB(g_hook_addr, layout::stat_memory_reservation_size);
 
 	// For SPU
-	u8* const g_free_addr = g_stat_addr + 0x1'0000'0000;
+	u8* const g_free_addr = g_stat_addr + layout::guest_address_space_size;
 
 	// Reservation stats
 	alignas(4096) u8 g_reservations[65536 / 128 * 64]{0};
@@ -2207,34 +2218,42 @@ namespace vm
 
 	inline namespace ps3_
 	{
-#ifdef RPCS3_IOS
-		static utils::shm& get_hook_memory()
-		{
-			// The app injects its sandbox paths immediately before Emu.Init().
-			// Constructing this 32 GiB sparse backing during dylib initialization
-			// would run before those paths exist and make dlopen fallible.
-			static utils::shm s_hook{0x800000000, ""};
-			return s_hook;
-		}
-#else
-		static utils::shm s_hook{0x800000000, ""};
+#ifndef RPCS3_IOS
+		static utils::shm s_hook{layout::sparse_hook_memory_size, ""};
 #endif
 
 		void init()
 		{
-			vm_log.notice("Guest memory bases address ranges:\n"
-			"vm::g_base_addr = %p - %p\n"
-			"vm::g_sudo_addr = %p - %p\n"
-			"vm::g_exec_addr = %p - %p\n"
-			"vm::g_hook_addr = %p - %p\n"
-			"vm::g_stat_addr = %p - %p\n"
-			"vm::g_reservations = %p - %p\n",
-			g_base_addr, g_base_addr + 0xffff'ffff,
-			g_sudo_addr, g_sudo_addr + 0xffff'ffff,
-			g_exec_addr, g_exec_addr + 0x200000000 - 1,
-			g_hook_addr, g_hook_addr + 0x800000000 - 1,
-			g_stat_addr, g_stat_addr + 0xffff'ffff,
-			g_reservations, g_reservations + sizeof(g_reservations) - 1);
+			if constexpr (layout::reserve_sparse_hook_memory)
+			{
+				vm_log.notice("Guest memory bases address ranges:\n"
+					"vm::g_base_addr = %p - %p\n"
+					"vm::g_sudo_addr = %p - %p\n"
+					"vm::g_exec_addr = %p - %p\n"
+					"vm::g_hook_addr = %p - %p\n"
+					"vm::g_stat_addr = %p - %p\n"
+					"vm::g_reservations = %p - %p\n",
+					g_base_addr, g_base_addr + 0xffff'ffff,
+					g_sudo_addr, g_sudo_addr + 0xffff'ffff,
+					g_exec_addr, g_exec_addr + 0x200000000 - 1,
+					g_hook_addr, g_hook_addr + layout::sparse_hook_memory_size - 1,
+					g_stat_addr, g_stat_addr + 0xffff'ffff,
+					g_reservations, g_reservations + sizeof(g_reservations) - 1);
+			}
+			else
+			{
+				vm_log.notice("Guest memory bases address ranges:\n"
+					"vm::g_base_addr = %p - %p\n"
+					"vm::g_sudo_addr = %p - %p\n"
+					"vm::g_exec_addr = %p - %p\n"
+					"vm::g_stat_addr = %p - %p\n"
+					"vm::g_reservations = %p - %p\n",
+					g_base_addr, g_base_addr + 0xffff'ffff,
+					g_sudo_addr, g_sudo_addr + 0xffff'ffff,
+					g_exec_addr, g_exec_addr + 0x200000000 - 1,
+					g_stat_addr, g_stat_addr + 0xffff'ffff,
+					g_reservations, g_reservations + sizeof(g_reservations) - 1);
+			}
 
 			std::memset(&g_pages, 0, sizeof(g_pages));
 
@@ -2255,11 +2274,9 @@ namespace vm
 			std::memset(g_range_lock_bits, 0, sizeof(g_range_lock_bits));
 
 #ifdef _WIN32
-			utils::memory_release(g_hook_addr, 0x800000000);
+			utils::memory_release(g_hook_addr, layout::sparse_hook_memory_size);
 #endif
-#ifdef RPCS3_IOS
-			ensure(get_hook_memory().map(g_hook_addr, utils::protection::rw, true));
-#else
+#ifndef RPCS3_IOS
 			ensure(s_hook.map(g_hook_addr, utils::protection::rw, true));
 #endif
 		}
@@ -2283,13 +2300,13 @@ namespace vm
 		}
 
 		utils::memory_decommit(g_exec_addr, 0x200000000);
-		utils::memory_decommit(g_stat_addr, 0x100000000);
+		utils::memory_decommit(g_stat_addr, layout::stat_memory_reservation_size);
 
 #ifdef _WIN32
 		s_hook.unmap(g_hook_addr);
-		ensure(utils::memory_reserve(0x800000000, g_hook_addr));
-#else
-		utils::memory_decommit(g_hook_addr, 0x800000000);
+		ensure(utils::memory_reserve(layout::sparse_hook_memory_size, g_hook_addr));
+#elif !defined(RPCS3_IOS)
+		utils::memory_decommit(g_hook_addr, layout::sparse_hook_memory_size);
 #endif
 
 		std::memset(g_range_lock_set, 0, sizeof(g_range_lock_set));
