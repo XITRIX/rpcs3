@@ -51,6 +51,26 @@ inline rpcs3_ios_status validate_idle_operation_contract(
 		: RPCS3_IOS_INVALID_STATE;
 }
 
+inline rpcs3_ios_status validate_pause_operation_contract(
+	rpcs3_ios_state core_state,
+	rpcs3_ios_emulation_state emulation_state) noexcept
+{
+	return core_state == RPCS3_IOS_STATE_READY &&
+		emulation_state == RPCS3_IOS_EMULATION_STATE_RUNNING
+		? RPCS3_IOS_OK
+		: RPCS3_IOS_INVALID_STATE;
+}
+
+inline rpcs3_ios_status validate_resume_operation_contract(
+	rpcs3_ios_state core_state,
+	rpcs3_ios_emulation_state emulation_state) noexcept
+{
+	return core_state == RPCS3_IOS_STATE_READY &&
+		emulation_state == RPCS3_IOS_EMULATION_STATE_PAUSED
+		? RPCS3_IOS_OK
+		: RPCS3_IOS_INVALID_STATE;
+}
+
 class lifecycle final
 {
 public:
