@@ -10,6 +10,9 @@
 #include "Emu/RSX/RSXThread.h"
 #include "Emu/Cell/SPURecompiler.h"
 #include "Emu/perf_meter.hpp"
+#ifdef RPCS3_IOS
+#include "ios/IOSReservationLockPolicy.h"
+#endif
 #include <deque>
 #include <span>
 
@@ -89,6 +92,19 @@ namespace vm
 	auto& get_range_lock_bits(bool is_exclusive_range)
 	{
 		return g_range_lock_bits[+is_exclusive_range];
+	}
+
+	FORCE_INLINE static void reservation_lock_wait(u64 wait_iteration) noexcept
+	{
+#ifdef RPCS3_IOS
+		if (rpcs3::ios::reservation_lock_should_yield(wait_iteration)) [[unlikely]]
+		{
+			std::this_thread::yield();
+			return;
+		}
+#endif
+
+		utils::pause();
 	}
 
 	// Memory range lock slots (sparse atomics)
@@ -548,7 +564,7 @@ namespace vm
 
 			u64 point = addr1 / 128;
 
-			while (true)
+			for (u64 wait_iteration = 0;; wait_iteration++)
 			{
 				to_clear = for_all_range_locks(to_clear & ~get_range_lock_bits(true), [&](u64 addr2, u32 size2)
 				{
@@ -587,16 +603,16 @@ namespace vm
 					break;
 				}
 
-				utils::pause();
+				reservation_lock_wait(wait_iteration);
 			}
 
 			for (auto lock = g_locks.cbegin(), end = lock + g_cfg.core.ppu_threads; lock != end; lock++)
 			{
 				if (auto ptr = +*lock)
 				{
-					while (!(ptr->state & cpu_flag::wait))
+					for (u64 wait_iteration = 0; !(ptr->state & cpu_flag::wait); wait_iteration++)
 					{
-						utils::pause();
+						reservation_lock_wait(wait_iteration);
 					}
 				}
 			}
