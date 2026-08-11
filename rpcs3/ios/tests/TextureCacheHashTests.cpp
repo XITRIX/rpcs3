@@ -23,6 +23,8 @@ int main()
 	};
 	constexpr XXH64_hash_t seed = UINT64_C(0xcbf29ce484222325);
 	constexpr std::array<std::uint8_t, 3> abc = {'a', 'b', 'c'};
+	alignas(64) std::array<unsigned char, XXH3_SECRET_DEFAULT_SIZE> seeded_secret{};
+	XXH3_generateSecret_fromSeed(seeded_secret.data(), seed);
 	assert(XXH3_64bits_withSeed(nullptr, 0, seed) == UINT64_C(0x8854fa7f2b3a365d));
 	assert(XXH3_64bits_withSeed(abc.data(), abc.size(), seed) == UINT64_C(0x297e7db54428e080));
 
@@ -30,6 +32,12 @@ int main()
 	{
 		const auto baseline = XXH3_64bits_withSeed(data.data() + 1, length, seed);
 		assert(XXH3_64bits_withSeed(data.data() + 1, length, seed) == baseline);
+		assert(XXH3_64bits_withSecretandSeed(
+			data.data() + 1,
+			length,
+			seeded_secret.data(),
+			seeded_secret.size(),
+			seed) == baseline);
 		assert(XXH3_64bits_withSeed(data.data() + 1, length, seed + 1) != baseline);
 
 		if (length)
