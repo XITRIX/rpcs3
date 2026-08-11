@@ -5,6 +5,11 @@
 #include "VKAsyncScheduler.h"
 #include "vkutils/data_heap.h"
 
+#ifdef RPCS3_IOS
+#include "ios/IOSMemoryPressurePolicy.h"
+#include "ios/RPCS3IOSPerformance.h"
+#endif
+
 #include "util/asm.hpp"
 
 namespace vk
@@ -1731,6 +1736,12 @@ namespace vk
 		}
 
 		quota *= 0x100000;
+
+#ifdef RPCS3_IOS
+		const u64 process_headroom = rpcs3::ios::available_process_memory_headroom();
+		const auto process_pressure = rpcs3::ios::get_process_memory_pressure(process_headroom);
+		quota = rpcs3::ios::get_process_pressure_texture_cache_quota(quota, process_pressure);
+#endif
 
 		if (const u64 texture_cache_pool_usage = vmm_get_application_pool_usage(VMM_ALLOCATION_POOL_TEXTURE_CACHE);
 			texture_cache_pool_usage > quota)
