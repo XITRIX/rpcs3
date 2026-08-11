@@ -676,8 +676,8 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		rpcs3::ios::shared_pad_state().clear();
 		const auto jit_stats = rpcs3::ios::jit::get_statistics();
 		emit_log(4, fmt::format(
-			"Prepared and sealed a %u MiB Universal JIT arena; StikDebug may now disconnect",
-			jit_stats.capacity / (1024 * 1024)));
+			"Prepared and sealed a %u MiB Universal JIT arena in %u bounded command-1 chunks; StikDebug may now disconnect",
+			jit_stats.capacity / (1024 * 1024), jit_stats.preparation_chunks));
 		Emu.SetCallbacks(make_callbacks());
 		Emu.SetSupportedRenderers({video_renderer::vulkan});
 		Emu.SetDefaultRenderer(video_renderer::vulkan);
