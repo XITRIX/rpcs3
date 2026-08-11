@@ -4,6 +4,11 @@
 #include "Emu/system_config.h"
 #include "Emu/savestate_utils.hpp"
 
+#ifdef RPCS3_IOS
+#include "Emu/RSX/Overlays/overlay_message.h"
+#include "ios/IOSMemoryPressurePolicy.h"
+#include "ios/RPCS3IOSPerformance.h"
+#endif
 
 namespace rsx
 {
@@ -21,6 +26,20 @@ namespace rsx
 			add_item(save_state, [suspend_mode](pad_button btn) -> page_navigation
 			{
 				if (btn != pad_button::cross) return page_navigation::stay;
+
+#ifdef RPCS3_IOS
+				const u64 process_headroom = rpcs3::ios::available_process_memory_headroom();
+				if (!rpcs3::ios::has_safe_savestate_headroom(process_headroom))
+				{
+					rsx_log.error(
+						"Savestate skipped because iOS process headroom is only %llu MiB",
+						process_headroom / rpcs3::ios::process_memory_mib);
+					rsx::overlays::queue_message(std::string(
+						"SaveState skipped because iOS memory is critically low. Stop and restart the game before trying again."));
+					return page_navigation::stay;
+				}
+#endif
+
 				rsx_log.notice("User selected savestate in home menu");
 				Emu.CallFromMainThread([suspend_mode]()
 				{

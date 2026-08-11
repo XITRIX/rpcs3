@@ -8,7 +8,11 @@
 #include "texture_cache_helpers.h"
 #include "texture_cache_blit_helpers.h"
 #ifdef RPCS3_IOS
-#include "common/xxhash.h"
+#define XXH_INLINE_ALL
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wold-style-cast"
+#include "Utilities/xxhash3.h"
+#pragma clang diagnostic pop
 #endif
 
 namespace rsx
@@ -166,9 +170,9 @@ namespace rsx
 
 #ifdef RPCS3_IOS
 		// iOS cannot safely use page-protection invalidation alongside the sealed
-		// Universal JIT arena. XXH64 preserves the hash-validation model while
-		// avoiding the serial multiply dependency of the former word-wise FNV scan.
-		return static_cast<u64>(XXH64(src, hash_length, rpcs3::fnv_seed));
+		// Universal JIT arena. Inline XXH3 preserves the hash-validation model and
+		// uses AArch64 SIMD for long texture ranges without adding a library export.
+		return static_cast<u64>(XXH3_64bits_withSeed(src, hash_length, rpcs3::fnv_seed));
 #else
 		const auto cycles = hash_length / 8;
 		auto rem = hash_length % 8;
