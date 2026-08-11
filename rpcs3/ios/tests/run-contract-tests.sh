@@ -104,6 +104,12 @@ mkdir -p "${OUTPUT_ROOT}"
 "${OUTPUT_ROOT}/TextureCacheProtectionPolicyIOSTests"
 
 "${CXX_COMPILER}" -std=c++20 -Wall -Wextra -Werror \
+    -I "${SOURCE_ROOT}" \
+    "${SCRIPT_DIR}/TextureCacheHashTests.cpp" \
+    -o "${OUTPUT_ROOT}/TextureCacheHashTests"
+"${OUTPUT_ROOT}/TextureCacheHashTests"
+
+"${CXX_COMPILER}" -std=c++20 -Wall -Wextra -Werror \
     -I "${SOURCE_ROOT}" -I "${SOURCE_ROOT}/rpcs3" \
     "${SCRIPT_DIR}/VRAMBudgetPolicyTests.cpp" \
     -o "${OUTPUT_ROOT}/VRAMBudgetPolicyHostTests"
@@ -115,3 +121,9 @@ mkdir -p "${OUTPUT_ROOT}"
     "${SCRIPT_DIR}/VRAMBudgetPolicyTests.cpp" \
     -o "${OUTPUT_ROOT}/VRAMBudgetPolicyIOSTests"
 "${OUTPUT_ROOT}/VRAMBudgetPolicyIOSTests"
+
+"${CXX_COMPILER}" -std=c++20 -Wall -Wextra -Werror \
+    -I "${SOURCE_ROOT}" -I "${SOURCE_ROOT}/rpcs3" \
+    "${SCRIPT_DIR}/IOSMemoryPressurePolicyTests.cpp" \
+    -o "${OUTPUT_ROOT}/IOSMemoryPressurePolicyTests"
+"${OUTPUT_ROOT}/IOSMemoryPressurePolicyTests"
