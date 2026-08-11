@@ -1,0 +1,113 @@
+#pragma once
+
+#include <cstdint>
+
+namespace rpcs3::ios
+{
+	enum class process_memory_pressure : std::uint8_t
+	{
+		low,
+		moderate,
+		severe,
+		fatal,
+	};
+
+	inline constexpr std::uint64_t process_memory_mib = 0x100000ull;
+
+	// iOS reports the process's current dirty-memory allowance rather than a
+	// fixed device-wide limit. Enter pressure states immediately, but require an
+	// additional 256 MiB before relaxing them so cache reclamation cannot flap at
+	// a threshold from one frame to the next.
+	inline constexpr std::uint64_t process_headroom_moderate_enter = 1536 * process_memory_mib;
+	inline constexpr std::uint64_t process_headroom_moderate_exit = 1792 * process_memory_mib;
+	inline constexpr std::uint64_t process_headroom_severe_enter = 1024 * process_memory_mib;
+	inline constexpr std::uint64_t process_headroom_severe_exit = 1280 * process_memory_mib;
+	inline constexpr std::uint64_t process_headroom_fatal_enter = 512 * process_memory_mib;
+	inline constexpr std::uint64_t process_headroom_fatal_exit = 768 * process_memory_mib;
+	inline constexpr std::uint64_t texture_cache_quota_moderate = 384 * process_memory_mib;
+	inline constexpr std::uint64_t texture_cache_quota_severe = 256 * process_memory_mib;
+	inline constexpr std::uint64_t texture_cache_quota_fatal = 128 * process_memory_mib;
+
+	constexpr process_memory_pressure get_process_memory_pressure(
+		std::uint64_t available_bytes,
+		process_memory_pressure current = process_memory_pressure::low)
+	{
+		process_memory_pressure entered = process_memory_pressure::low;
+		if (available_bytes <= process_headroom_fatal_enter)
+		{
+			entered = process_memory_pressure::fatal;
+		}
+		else if (available_bytes <= process_headroom_severe_enter)
+		{
+			entered = process_memory_pressure::severe;
+		}
+		else if (available_bytes <= process_headroom_moderate_enter)
+		{
+			entered = process_memory_pressure::moderate;
+		}
+
+		if (entered > current)
+		{
+			return entered;
+		}
+
+		switch (current)
+		{
+		case process_memory_pressure::fatal:
+			if (available_bytes <= process_headroom_fatal_exit)
+			{
+				return process_memory_pressure::fatal;
+			}
+			[[fallthrough]];
+		case process_memory_pressure::severe:
+			if (available_bytes <= process_headroom_severe_exit)
+			{
+				return process_memory_pressure::severe;
+			}
+			[[fallthrough]];
+		case process_memory_pressure::moderate:
+			if (available_bytes <= process_headroom_moderate_exit)
+			{
+				return process_memory_pressure::moderate;
+			}
+			[[fallthrough]];
+		case process_memory_pressure::low:
+			return entered;
+		}
+
+		return entered;
+	}
+
+	constexpr bool has_safe_savestate_headroom(std::uint64_t available_bytes)
+	{
+		// Streaming compression is bounded, but committing guest/RSX state can
+		// still temporarily consume hundreds of MiB. Do not destructively stop a
+		// live game to save once the process has entered severe pressure.
+		return available_bytes > process_headroom_severe_enter;
+	}
+
+	constexpr std::uint64_t get_process_pressure_texture_cache_quota(
+		std::uint64_t normal_quota_bytes,
+		process_memory_pressure pressure)
+	{
+		switch (pressure)
+		{
+		case process_memory_pressure::low:
+			return normal_quota_bytes;
+		case process_memory_pressure::moderate:
+			return normal_quota_bytes < texture_cache_quota_moderate
+				? normal_quota_bytes
+				: texture_cache_quota_moderate;
+		case process_memory_pressure::severe:
+			return normal_quota_bytes < texture_cache_quota_severe
+				? normal_quota_bytes
+				: texture_cache_quota_severe;
+		case process_memory_pressure::fatal:
+			return normal_quota_bytes < texture_cache_quota_fatal
+				? normal_quota_bytes
+				: texture_cache_quota_fatal;
+		}
+
+		return texture_cache_quota_fatal;
+	}
+}
