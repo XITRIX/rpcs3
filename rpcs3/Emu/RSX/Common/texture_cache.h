@@ -1843,7 +1843,7 @@ namespace rsx
 		texture_cache() : m_storage(this), m_predictor(this)
 		{
 #ifdef RPCS3_IOS
-			rsx_log.notice("iOS texture cache validation: XXH64 hashing");
+			rsx_log.notice("iOS texture cache validation: inline XXH3 hashing");
 #endif
 		}
 		~texture_cache() = default;
