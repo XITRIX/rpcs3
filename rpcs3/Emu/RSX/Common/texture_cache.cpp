@@ -13,6 +13,24 @@
 #pragma clang diagnostic ignored "-Wold-style-cast"
 #include "Utilities/xxhash3.h"
 #pragma clang diagnostic pop
+
+namespace
+{
+	struct ios_xxh3_seeded_secret
+	{
+		alignas(64) unsigned char bytes[XXH3_SECRET_DEFAULT_SIZE]{};
+
+		ios_xxh3_seeded_secret() noexcept
+		{
+			XXH3_generateSecret_fromSeed(bytes, rpcs3::fnv_seed);
+		}
+	};
+
+	// XXH3_64bits_withSeed rebuilds this 192-byte secret for every input above
+	// 240 bytes. Texture validation uses one process-lifetime seed, so derive it
+	// once when the core is loaded and reuse it without changing hash results.
+	const ios_xxh3_seeded_secret g_ios_xxh3_seeded_secret;
+}
 #endif
 
 namespace rsx
@@ -170,9 +188,20 @@ namespace rsx
 
 #ifdef RPCS3_IOS
 		// iOS cannot safely use page-protection invalidation alongside the sealed
-		// Universal JIT arena. Inline XXH3 preserves the hash-validation model and
-		// uses AArch64 SIMD for long texture ranges without adding a library export.
-		return static_cast<u64>(XXH3_64bits_withSeed(src, hash_length, rpcs3::fnv_seed));
+		// Universal JIT arena. The cached seeded secret preserves byte-for-byte
+		// XXH3_withSeed results while avoiding per-call secret regeneration for
+		// texture ranges above 240 bytes.
+		if (hash_length <= XXH3_MIDSIZE_MAX)
+		{
+			return static_cast<u64>(XXH3_64bits_withSeed(src, hash_length, rpcs3::fnv_seed));
+		}
+
+		return static_cast<u64>(XXH3_64bits_withSecretandSeed(
+			src,
+			hash_length,
+			g_ios_xxh3_seeded_secret.bytes,
+			sizeof(g_ios_xxh3_seeded_secret.bytes),
+			rpcs3::fnv_seed));
 #else
 		const auto cycles = hash_length / 8;
 		auto rem = hash_length % 8;
