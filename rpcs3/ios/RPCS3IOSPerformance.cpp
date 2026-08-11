@@ -13,6 +13,10 @@
 #include <mach/mach.h>
 #endif
 
+#ifdef RPCS3_IOS
+#include <os/proc.h>
+#endif
+
 namespace
 {
 using sample_clock = std::chrono::steady_clock;
@@ -131,6 +135,15 @@ void reset_performance_metrics()
 void record_presented_frame(u32 rsx_load) noexcept
 {
 	g_performance_registry.record_presented_frame(rsx_load);
+}
+
+u64 available_process_memory_headroom() noexcept
+{
+#ifdef RPCS3_IOS
+	return os_proc_available_memory();
+#else
+	return umax;
+#endif
 }
 
 rpcs3_ios_status capture_performance_metrics(rpcs3_ios_performance_metrics* metrics)
