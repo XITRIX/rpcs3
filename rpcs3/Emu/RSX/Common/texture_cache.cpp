@@ -7,6 +7,9 @@
 #include "texture_cache_utils.h"
 #include "texture_cache_helpers.h"
 #include "texture_cache_blit_helpers.h"
+#ifdef RPCS3_IOS
+#include "common/xxhash.h"
+#endif
 
 namespace rsx
 {
@@ -159,10 +162,17 @@ namespace rsx
 	{
 		const auto hash_range = confirmed_range.valid() ? confirmed_range : cpu_range;
 		const auto hash_length = hash_range.length();
+		auto src = get_ptr<const char>(hash_range.start);
+
+#ifdef RPCS3_IOS
+		// iOS cannot safely use page-protection invalidation alongside the sealed
+		// Universal JIT arena. XXH64 preserves the hash-validation model while
+		// avoiding the serial multiply dependency of the former word-wise FNV scan.
+		return static_cast<u64>(XXH64(src, hash_length, rpcs3::fnv_seed));
+#else
 		const auto cycles = hash_length / 8;
 		auto rem = hash_length % 8;
 
-		auto src = get_ptr<const char>(hash_range.start);
 		auto data64 = reinterpret_cast<const u64*>(src);
 
 		usz hash = rpcs3::fnv_seed;
@@ -195,6 +205,7 @@ namespace rsx
 		}
 
 		return hash;
+#endif
 	}
 
 	bool buffered_section::is_locked(bool actual_page_flags) const

@@ -17,9 +17,9 @@ namespace rsx
 	{
 #ifdef RPCS3_IOS
 		// Mach exceptions reach an attached debugger before RPCS3's signal
-		// handler. Hashing read-only texture sources avoids repeatedly stopping
-		// the entire iOS process while retaining the existing cache-validation
-		// semantics used for small ranges on other platforms.
+		// handler. Detached page-locking also produced instruction-execute faults
+		// in the sealed Universal JIT arena on physical iOS. Hashing retains cache
+		// validation without changing native page protection.
 		(void)memory_length;
 		return section_protection_strategy::hash;
 #else
