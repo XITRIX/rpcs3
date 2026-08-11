@@ -14,6 +14,7 @@ inline constexpr u64 command_prepare_region = 1;
 struct arena_statistics
 {
 	usz capacity = 0;
+	u32 preparation_chunks = 0;
 	usz runtime_code_bytes = 0;
 	usz runtime_data_bytes = 0;
 	usz live_code_bytes = 0;

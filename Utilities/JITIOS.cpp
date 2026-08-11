@@ -34,6 +34,7 @@ struct arena_state
 	u8* writable_code = nullptr;
 	u8* data = nullptr;
 	usz capacity = 0;
+	u32 preparation_chunks = 0;
 	rpcs3::ios::jit::arena_allocator code_allocator;
 	rpcs3::ios::jit::arena_allocator data_allocator;
 	usz runtime_code_bytes = 0;
@@ -280,11 +281,19 @@ bool prepare_arena() noexcept
 		return false;
 	}
 
-	if (protocol_call(command_prepare_region, layout, capacity) != reinterpret_cast<uptr>(layout))
+	const u32 preparation_chunks = arena_prepare_chunk_count(capacity);
+	for (u32 chunk_index = 0; chunk_index < preparation_chunks; ++chunk_index)
 	{
-		discard_layout(layout, total_size, 0, capacity);
-		set_error("The debugger did not prepare the complete Universal JIT arena");
-		return false;
+		const usz offset = static_cast<usz>(chunk_index) * arena_prepare_chunk_size;
+		const usz chunk_length = arena_prepare_chunk_length(capacity, chunk_index);
+		u8* const chunk = layout + offset;
+		if (!chunk_length || protocol_call(command_prepare_region, chunk, chunk_length) != reinterpret_cast<uptr>(chunk))
+		{
+			discard_layout(layout, total_size, 0, capacity);
+			set_error("The debugger did not prepare Universal JIT arena chunk " +
+				std::to_string(chunk_index + 1) + " of " + std::to_string(preparation_chunks));
+			return false;
+		}
 	}
 
 	vm_address_t alias = 0;
@@ -324,6 +333,7 @@ bool prepare_arena() noexcept
 	g_arena.writable_code = reinterpret_cast<u8*>(alias);
 	g_arena.data = layout + capacity;
 	g_arena.capacity = capacity;
+	g_arena.preparation_chunks = preparation_chunks;
 	g_arena.prepared = true;
 	return true;
 }
@@ -510,6 +520,7 @@ arena_statistics get_statistics() noexcept
 	std::lock_guard lock(g_arena_mutex);
 	return {
 		g_arena.capacity,
+		g_arena.preparation_chunks,
 		g_arena.runtime_code_bytes,
 		g_arena.runtime_data_bytes,
 		g_arena.live_code_bytes,
