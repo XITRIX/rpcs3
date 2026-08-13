@@ -280,10 +280,16 @@ void enumerate_current_settings(
 	rpcs3_ios_setting_callback setting_callback,
 	rpcs3_ios_setting_option_callback option_callback,
 	void* user_context,
+	rpcs3::ios::setting_context context,
 	u32 game_resolution_flags = 0)
 {
 	for (const auto& setting : rpcs3::ios::settings_catalog())
 	{
+		if (!rpcs3::ios::setting_is_available(setting.scope, context))
+		{
+			continue;
+		}
+
 		const std::string value = setting.entry->to_string();
 		const std::string default_value = setting.entry->def_to_string();
 		std::vector<std::string> options;
@@ -379,9 +385,12 @@ void enumerate_current_settings(
 	}
 }
 
-rpcs3_ios_status update_current_setting(const char* key, const char* value)
+rpcs3_ios_status update_current_setting(
+	const char* key,
+	const char* value,
+	rpcs3::ios::setting_context context)
 {
-	const auto* setting = rpcs3::ios::find_setting(key);
+	const auto* setting = rpcs3::ios::find_setting(key, context);
 	if (!setting)
 	{
 		set_error(fmt::format("Unknown or unavailable iOS setting: %s", key));
@@ -426,11 +435,14 @@ rpcs3_ios_status update_current_setting(const char* key, const char* value)
 	return RPCS3_IOS_OK;
 }
 
-void reset_current_settings()
+void reset_current_settings(rpcs3::ios::setting_context context)
 {
 	for (const auto& setting : rpcs3::ios::settings_catalog())
 	{
-		setting.entry->from_default();
+		if (rpcs3::ios::setting_is_available(setting.scope, context))
+		{
+			setting.entry->from_default();
+		}
 	}
 }
 
@@ -1521,7 +1533,11 @@ extern "C" rpcs3_ios_status rpcs3_ios_enumerate_settings(
 		{
 			return RPCS3_IOS_SETTINGS_SAVE_FAILED;
 		}
-		enumerate_current_settings(setting_callback, option_callback, user_context);
+		enumerate_current_settings(
+			setting_callback,
+			option_callback,
+			user_context,
+			rpcs3::ios::setting_context::global);
 		return RPCS3_IOS_OK;
 	}
 	catch (const std::exception& error)
@@ -1552,7 +1568,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_set_setting(
 		return result;
 	}
 
-	const auto* setting = rpcs3::ios::find_setting(key);
+	const auto* setting = rpcs3::ios::find_setting(key, rpcs3::ios::setting_context::global);
 	if (!setting)
 	{
 		set_error(fmt::format("Unknown or unavailable iOS setting: %s", key));
@@ -1567,7 +1583,8 @@ extern "C" rpcs3_ios_status rpcs3_ios_set_setting(
 		{
 			return RPCS3_IOS_SETTINGS_SAVE_FAILED;
 		}
-		if (const auto result = update_current_setting(key, value); result != RPCS3_IOS_OK)
+		if (const auto result = update_current_setting(
+			key, value, rpcs3::ios::setting_context::global); result != RPCS3_IOS_OK)
 		{
 			return result;
 		}
@@ -1608,7 +1625,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_reset_settings(void) noexcept
 		{
 			return RPCS3_IOS_SETTINGS_SAVE_FAILED;
 		}
-		reset_current_settings();
+		reset_current_settings(rpcs3::ios::setting_context::global);
 		if (!rpcs3::ios::save_global_settings())
 		{
 			set_error("Unable to atomically save default RPCS3 settings");
@@ -1665,7 +1682,12 @@ extern "C" rpcs3_ios_status rpcs3_ios_enumerate_game_settings(
 			return RPCS3_IOS_SETTINGS_SAVE_FAILED;
 		}
 		normalize_current_game_resolution(game.resolution);
-		enumerate_current_settings(setting_callback, option_callback, user_context, game.resolution);
+		enumerate_current_settings(
+			setting_callback,
+			option_callback,
+			user_context,
+			rpcs3::ios::setting_context::game,
+			game.resolution);
 		return RPCS3_IOS_OK;
 	}
 	catch (const std::exception& error)
@@ -1720,7 +1742,8 @@ extern "C" rpcs3_ios_status rpcs3_ios_set_game_setting(
 				return RPCS3_IOS_SETTING_INVALID;
 			}
 		}
-		if (const auto result = update_current_setting(key, value); result != RPCS3_IOS_OK)
+		if (const auto result = update_current_setting(
+			key, value, rpcs3::ios::setting_context::game); result != RPCS3_IOS_OK)
 		{
 			return result;
 		}
@@ -1765,7 +1788,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_reset_game_settings(const char* title_id) 
 		{
 			return RPCS3_IOS_SETTINGS_SAVE_FAILED;
 		}
-		reset_current_settings();
+		reset_current_settings(rpcs3::ios::setting_context::game);
 		if (!rpcs3::ios::save_game_settings(title_id))
 		{
 			set_error(fmt::format("Unable to save default game settings for %s", title_id));

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "RPCS3IOS.h"
+#include "RPCS3IOSSettingScope.h"
 
 #include <span>
 #include <string>
@@ -25,6 +26,7 @@ struct setting_record
 	double minimum;
 	double maximum;
 	double step;
+	setting_scope scope;
 };
 
 enum class settings_load_error
@@ -37,7 +39,7 @@ enum class settings_load_error
 };
 
 std::span<const setting_record> settings_catalog() noexcept;
-const setting_record* find_setting(std::string_view key) noexcept;
+const setting_record* find_setting(std::string_view key, setting_context context) noexcept;
 bool save_global_settings() noexcept;
 settings_load_error load_effective_settings(std::string_view title_id, bool& has_custom_config) noexcept;
 bool save_game_settings(std::string_view title_id) noexcept;

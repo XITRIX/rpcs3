@@ -13,7 +13,10 @@ namespace
 using kind = rpcs3_ios_setting_kind;
 
 #define SETTING(KEY, CATEGORY, SECTION, NAME, DESCRIPTION, KIND, ENTRY, MINIMUM, MAXIMUM, STEP) \
-	setting_record{KEY, CATEGORY, SECTION, NAME, DESCRIPTION, KIND, &ENTRY, MINIMUM, MAXIMUM, STEP}
+	setting_record{KEY, CATEGORY, SECTION, NAME, DESCRIPTION, KIND, &ENTRY, MINIMUM, MAXIMUM, STEP, setting_scope::global_and_game}
+
+#define GAME_SETTING(KEY, CATEGORY, SECTION, NAME, DESCRIPTION, KIND, ENTRY, MINIMUM, MAXIMUM, STEP) \
+	setting_record{KEY, CATEGORY, SECTION, NAME, DESCRIPTION, KIND, &ENTRY, MINIMUM, MAXIMUM, STEP, setting_scope::game_only}
 
 const std::array catalog{
 	// CPU
@@ -101,6 +104,7 @@ const std::array catalog{
 	SETTING("advanced.max_spurs_threads", "Advanced", "Scheduling", "Maximum SPURS Threads", "Limits active SPURS threads; six is the default unlimited behavior.", kind::RPCS3_IOS_SETTING_INTEGER, g_cfg.core.max_spurs_threads, 1, 6, 1),
 	SETTING("advanced.sleep_timers", "Advanced", "Scheduling", "Sleep Timer Accuracy", "Controls how aggressively RPCS3 corrects host sleep timing.", kind::RPCS3_IOS_SETTING_CHOICE, g_cfg.core.sleep_timers_accuracy, 0, 0, 0),
 	SETTING("advanced.fifo_accuracy", "Advanced", "Scheduling", "RSX FIFO Accuracy", "Controls synchronization accuracy when fetching RSX commands.", kind::RPCS3_IOS_SETTING_CHOICE, g_cfg.core.rsx_fifo_accuracy, 0, 0, 0),
+	GAME_SETTING("advanced.driver_wakeup_delay", "Advanced", "Scheduling", "Driver Wake-Up Delay", "Delays RSX wake-ups to prevent FIFO desynchronization in affected titles; may reduce performance.", kind::RPCS3_IOS_SETTING_INTEGER, g_cfg.video.driver_wakeup_delay, 0, 800, 20),
 	SETTING("advanced.max_preempt_count", "Advanced", "Scheduling", "Maximum CPU Preempt Count", "Limits CPU thread preemptions per frame; zero is automatic.", kind::RPCS3_IOS_SETTING_INTEGER, g_cfg.core.max_cpu_preempt_count_per_frame, 0, 400, 10),
 
 	// Emulator
@@ -169,6 +173,7 @@ const std::array catalog{
 };
 
 #undef SETTING
+#undef GAME_SETTING
 }
 
 std::span<const setting_record> settings_catalog() noexcept
@@ -176,11 +181,11 @@ std::span<const setting_record> settings_catalog() noexcept
 	return catalog;
 }
 
-const setting_record* find_setting(std::string_view key) noexcept
+const setting_record* find_setting(std::string_view key, setting_context context) noexcept
 {
 	for (const auto& setting : catalog)
 	{
-		if (setting.key == key)
+		if (setting.key == key && setting_is_available(setting.scope, context))
 		{
 			return &setting;
 		}
