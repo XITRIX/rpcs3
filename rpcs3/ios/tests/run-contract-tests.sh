@@ -31,6 +31,11 @@ mkdir -p "${OUTPUT_ROOT}"
 "${OUTPUT_ROOT}/RPCS3IOSGPUDefaultsTests"
 
 "${CXX_COMPILER}" -std=c++20 -Wall -Wextra -Werror \
+    "${SCRIPT_DIR}/RPCS3IOSSettingScopeTests.cpp" \
+    -o "${OUTPUT_ROOT}/RPCS3IOSSettingScopeTests"
+"${OUTPUT_ROOT}/RPCS3IOSSettingScopeTests"
+
+"${CXX_COMPILER}" -std=c++20 -Wall -Wextra -Werror \
     -I "${SOURCE_ROOT}" -I "${SOURCE_ROOT}/rpcs3" \
     "${SCRIPT_DIR}/RPCS3IOSLocalizationTests.cpp" \
     "${SCRIPT_DIR}/../RPCS3IOSLocalization.cpp" \
