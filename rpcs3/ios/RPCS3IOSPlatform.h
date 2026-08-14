@@ -10,5 +10,6 @@ void enable_display_sleep(bool enable) noexcept;
 std::string preferred_language_identifier();
 std::string localized_application_string(
 	std::string_view language_tag,
+	std::string_view localization_key,
 	std::string_view english_value);
 }
