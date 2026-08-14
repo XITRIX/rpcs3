@@ -622,9 +622,12 @@ EmuCallbacks make_callbacks()
 			return std::string{};
 		}
 		const auto options = setting->to_list();
-		return enum_index < options.size()
-			? rpcs3::ios::localized_setting_string(options[enum_index], g_preferred_language)
-			: std::string{};
+		if (enum_index >= options.size())
+		{
+			return std::string{};
+		}
+		return rpcs3::ios::localized_setting_string(
+			setting->get_name(), enum_index, options[enum_index], g_preferred_language);
 	};
 	callbacks.get_photo_path = [](std::string_view name)
 	{
