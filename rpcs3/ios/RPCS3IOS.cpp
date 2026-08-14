@@ -622,7 +622,9 @@ EmuCallbacks make_callbacks()
 			return std::string{};
 		}
 		const auto options = setting->to_list();
-		return enum_index < options.size() ? options[enum_index] : std::string{};
+		return enum_index < options.size()
+			? rpcs3::ios::localized_setting_string(options[enum_index], g_preferred_language)
+			: std::string{};
 	};
 	callbacks.get_photo_path = [](std::string_view name)
 	{
@@ -719,6 +721,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		g_log_listener = std::make_unique<callback_log_listener>();
 		logs::listener::add(g_log_listener.get());
 		g_preferred_language = rpcs3::ios::preferred_language_identifier();
+		rpcs3::ios::set_localization_resolver(&rpcs3::ios::localized_application_string);
 		emit_log(4, "Using iOS preferred language for native overlays: " + g_preferred_language);
 		rpcs3::ios::shared_pad_state().clear();
 		const auto jit_stats = rpcs3::ios::jit::get_statistics();

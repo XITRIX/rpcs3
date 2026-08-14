@@ -39,12 +39,40 @@ std::string preferred_language_identifier()
 {
 	@autoreleasepool
 	{
-		NSString* language = NSLocale.preferredLanguages.firstObject;
+		NSString* language = NSBundle.mainBundle.preferredLocalizations.firstObject;
+		if (!language.length)
+		{
+			language = NSLocale.preferredLanguages.firstObject;
+		}
 		if (!language.length)
 		{
 			return "en";
 		}
 		return language.UTF8String ?: "en";
+	}
+}
+
+std::string localized_application_string(std::string_view language_tag, std::string_view english_value)
+{
+	@autoreleasepool
+	{
+		// NSBundle owns locale negotiation, including the user's per-app language.
+		// Keep the explicit tag in this boundary so deterministic/test resolvers and
+		// a future runtime language selector do not require a core ABI change.
+		(void)language_tag;
+		NSString* key = [[NSString alloc]
+			initWithBytes:english_value.data()
+			length:english_value.size()
+			encoding:NSUTF8StringEncoding];
+		if (!key)
+		{
+			return std::string{english_value};
+		}
+		NSString* localized = [NSBundle.mainBundle
+			localizedStringForKey:key
+			value:key
+			table:@"RPCS3Core"];
+		return localized.UTF8String ? std::string{localized.UTF8String} : std::string{english_value};
 	}
 }
 }
