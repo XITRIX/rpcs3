@@ -10,6 +10,7 @@
 #include "RPCS3IOSRuntimePatches.h"
 #include "RPCS3IOSResolution.h"
 #include "RPCS3IOSSettings.h"
+#include "RPCS3IOSZcullAccuracy.h"
 #include "FirmwareInstaller.h"
 #include "GameLibrary.h"
 #include "IOSGSFrame.h"
@@ -276,6 +277,33 @@ void normalize_current_game_resolution(u32 resolution_flags)
 	g_cfg.video.resolution.from_string(fallback);
 }
 
+constexpr std::string_view zcull_accuracy_key = "gpu.zcull_accuracy";
+
+std::string zcull_accuracy_value(bool use_default)
+{
+	const auto enabled = [use_default](const cfg::_bool& entry)
+	{
+		return (use_default ? entry.def_to_string() : entry.to_string()) == "true";
+	};
+
+	return std::string{rpcs3::ios::zcull_accuracy_name({
+		enabled(g_cfg.video.precise_zpass_count),
+		enabled(g_cfg.video.relaxed_zcull_sync),
+	})};
+}
+
+bool set_zcull_accuracy(std::string_view value)
+{
+	const auto state = rpcs3::ios::parse_zcull_accuracy(value);
+	if (!state)
+	{
+		return false;
+	}
+	g_cfg.video.precise_zpass_count.from_string(state->precise ? "true" : "false");
+	g_cfg.video.relaxed_zcull_sync.from_string(state->relaxed ? "true" : "false");
+	return true;
+}
+
 void enumerate_current_settings(
 	rpcs3_ios_setting_callback setting_callback,
 	rpcs3_ios_setting_option_callback option_callback,
@@ -290,12 +318,21 @@ void enumerate_current_settings(
 			continue;
 		}
 
-		const std::string value = setting.entry->to_string();
-		const std::string default_value = setting.entry->def_to_string();
+		const bool is_zcull_accuracy = setting.key == zcull_accuracy_key;
+		const std::string value = is_zcull_accuracy
+			? zcull_accuracy_value(false)
+			: setting.entry->to_string();
+		const std::string default_value = is_zcull_accuracy
+			? zcull_accuracy_value(true)
+			: setting.entry->def_to_string();
 		std::vector<std::string> options;
 		if (setting.kind == RPCS3_IOS_SETTING_CHOICE)
 		{
-			if (setting.key == "network.psn_country")
+			if (is_zcull_accuracy)
+			{
+				options = {"Precise", "Approximate", "Relaxed"};
+			}
+			else if (setting.key == "network.psn_country")
 			{
 				options.reserve(countries::g_countries.size());
 				for (const auto& country : countries::g_countries)
@@ -405,30 +442,20 @@ rpcs3_ios_status update_current_setting(
 		set_error(fmt::format("Invalid PSN country code '%s'", value));
 		return RPCS3_IOS_SETTING_INVALID;
 	}
+	if (setting->key == zcull_accuracy_key)
+	{
+		if (!set_zcull_accuracy(value))
+		{
+			set_error(fmt::format("Invalid value '%s' for setting '%s'", value, key));
+			return RPCS3_IOS_SETTING_INVALID;
+		}
+		return RPCS3_IOS_OK;
+	}
 
 	const std::string previous = setting->entry->to_string();
-	cfg::_base* companion = nullptr;
-	std::string companion_previous;
-	if (std::string_view{value} == "true" && setting->key == "gpu.precise_zcull")
-	{
-		companion = &g_cfg.video.relaxed_zcull_sync;
-	}
-	else if (std::string_view{value} == "true" && setting->key == "gpu.relaxed_zcull")
-	{
-		companion = &g_cfg.video.precise_zpass_count;
-	}
-	if (companion)
-	{
-		companion_previous = companion->to_string();
-		companion->from_string("false");
-	}
 	if (!setting->entry->from_string(value))
 	{
 		setting->entry->from_string(previous);
-		if (companion)
-		{
-			companion->from_string(companion_previous);
-		}
 		set_error(fmt::format("Invalid value '%s' for setting '%s'", value, key));
 		return RPCS3_IOS_SETTING_INVALID;
 	}
@@ -441,7 +468,15 @@ void reset_current_settings(rpcs3::ios::setting_context context)
 	{
 		if (rpcs3::ios::setting_is_available(setting.scope, context))
 		{
-			setting.entry->from_default();
+			if (setting.key == zcull_accuracy_key)
+			{
+				g_cfg.video.precise_zpass_count.from_default();
+				g_cfg.video.relaxed_zcull_sync.from_default();
+			}
+			else
+			{
+				setting.entry->from_default();
+			}
 		}
 	}
 }
@@ -1593,7 +1628,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_set_setting(
 			set_error("Unable to atomically save RPCS3 config.yml");
 			return RPCS3_IOS_SETTINGS_SAVE_FAILED;
 		}
-		emit_log(4, fmt::format("Saved setting %s = %s", key, setting->entry->to_string()));
+		emit_log(4, fmt::format("Saved setting %s = %s", key, value));
 		return RPCS3_IOS_OK;
 	}
 	catch (const std::exception& error)
