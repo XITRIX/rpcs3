@@ -7,17 +7,20 @@
 
 namespace
 {
-std::string test_localization_resolver(std::string_view language_tag, std::string_view english_value)
+std::string test_localization_resolver(
+	std::string_view language_tag,
+	std::string_view localization_key,
+	std::string_view english_value)
 {
-	if (language_tag == "ru-RU" && english_value == "Home Menu")
+	if (language_tag == "ru-RU" && localization_key == "core.HOME_MENU_TITLE")
 	{
 		return "Главное меню";
 	}
-	if (language_tag == "ru-RU" && english_value == "Approximate")
+	if (language_tag == "ru-RU" && localization_key == "setting.9b1804f454206d48")
 	{
 		return "Приблизительно";
 	}
-	if (language_tag == "ru-RU" && english_value == "You have earned a bronze trophy.\n%0")
+	if (language_tag == "ru-RU" && localization_key == "core.RSX_OVERLAYS_TROPHY_BRONZE")
 	{
 		return "Получен бронзовый приз.\n%0";
 	}
@@ -61,12 +64,12 @@ int main()
 		"en-US") == "SaveState failed: enable Advanced > Compatible Savestate Mode, restart the game, and try again. This can reduce performance.");
 	assert(localized_overlay_string(localized_string_id::INVALID, "en-US") == "Invalid");
 	assert(localized_overlay_u32string(localized_string_id::HOME_MENU_SETTINGS, "en-US") == U"Settings");
-	assert(localized_setting_string("Approximate", "en-US") == "Approximate");
+	assert(localized_setting_string("VSync Mode", 1, "Adaptive", "en-US") == "Adaptive");
 
 	set_localization_resolver(&test_localization_resolver);
 	assert(localized_overlay_string(localized_string_id::HOME_MENU_TITLE, "ru-RU") == "Главное меню");
 	assert(localized_overlay_string(localized_string_id::RSX_OVERLAYS_TROPHY_BRONZE, "ru-RU", "Готово") == "Получен бронзовый приз.\nГотово");
-	assert(localized_setting_string("Approximate", "ru-RU") == "Приблизительно");
+	assert(localized_setting_string("VSync Mode", 1, "Adaptive", "ru-RU") == "Приблизительно");
 	set_localization_resolver(nullptr);
 	assert(localized_overlay_string(localized_string_id::HOME_MENU_TITLE, "ru-RU") == "Home Menu");
 
