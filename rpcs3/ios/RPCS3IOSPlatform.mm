@@ -52,7 +52,10 @@ std::string preferred_language_identifier()
 	}
 }
 
-std::string localized_application_string(std::string_view language_tag, std::string_view english_value)
+std::string localized_application_string(
+	std::string_view language_tag,
+	std::string_view localization_key,
+	std::string_view english_value)
 {
 	@autoreleasepool
 	{
@@ -61,16 +64,24 @@ std::string localized_application_string(std::string_view language_tag, std::str
 		// a future runtime language selector do not require a core ABI change.
 		(void)language_tag;
 		NSString* key = [[NSString alloc]
-			initWithBytes:english_value.data()
-			length:english_value.size()
+			initWithBytes:localization_key.data()
+			length:localization_key.size()
 			encoding:NSUTF8StringEncoding];
 		if (!key)
 		{
 			return std::string{english_value};
 		}
+		NSString* fallback = [[NSString alloc]
+			initWithBytes:english_value.data()
+			length:english_value.size()
+			encoding:NSUTF8StringEncoding];
+		if (!fallback)
+		{
+			return std::string{english_value};
+		}
 		NSString* localized = [NSBundle.mainBundle
 			localizedStringForKey:key
-			value:key
+			value:fallback
 			table:@"RPCS3Core"];
 		return localized.UTF8String ? std::string{localized.UTF8String} : std::string{english_value};
 	}

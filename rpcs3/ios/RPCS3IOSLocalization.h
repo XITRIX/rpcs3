@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -9,6 +10,7 @@ namespace rpcs3::ios
 {
 using localization_resolver = std::string (*)(
 	std::string_view language_tag,
+	std::string_view localization_key,
 	std::string_view english_value);
 
 // Installs the process-lifetime host bundle lookup used by the iOS frontend.
@@ -32,6 +34,8 @@ std::u32string localized_overlay_u32string(
 // Localizes raw cfg enum values shown by the native Home Menu while retaining
 // the RPCS3 value as the fallback and persistence representation.
 std::string localized_setting_string(
+	std::string_view setting_name,
+	std::uint32_t enum_index,
 	std::string_view value,
 	std::string_view language_tag);
 }
