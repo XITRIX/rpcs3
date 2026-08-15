@@ -5782,6 +5782,7 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 				daz_and_ftz,
 				accurate_vest,
 				arm64_codegen_v2,
+				arm64_codegen_v3,
 
 				__bitset_enum_max
 			};
@@ -5816,6 +5817,7 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 				settings += ppu_settings::accurate_vest;
 #if defined(ARCH_ARM64)
 			settings += ppu_settings::arm64_codegen_v2;
+			settings += ppu_settings::arm64_codegen_v3;
 #endif
 
 			// Write version, hash, CPU, settings
