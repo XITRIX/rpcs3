@@ -113,6 +113,23 @@ struct cfg_root : cfg::node
 
 	} vfs{ this };
 
+#ifdef RPCS3_IOS
+	struct node_ios_experimental : cfg::node
+	{
+		node_ios_experimental(cfg::node* _this) : cfg::node(_this, "iOS Experimental") {}
+
+		cfg::_enum<ios_experimental_mode> neon_byte_swap{ this, "ARM64 Byte-Swap Uploads", ios_experimental_mode::automatic };
+		cfg::_enum<ios_experimental_mode> neon_primitive_restart{ this, "ARM64 Primitive-Restart Uploads", ios_experimental_mode::automatic };
+		cfg::_enum<ios_experimental_mode> precomputed_indices{ this, "Precomputed Non-Native Indices", ios_experimental_mode::automatic };
+		cfg::_enum<ios_experimental_mode> mobile_spu_scheduling{ this, "Mobile SPU Compile Scheduling", ios_experimental_mode::automatic };
+		cfg::_enum<ios_fifo_cache_size> fifo_cache_size{ this, "RSX FIFO Read Cache", ios_fifo_cache_size::_1_kib };
+		cfg::_enum<ios_fifo_idle_mode> fifo_idle_mode{ this, "RSX FIFO Idle Wait", ios_fifo_idle_mode::yield };
+		cfg::_enum<ios_experimental_mode> deferred_get_publishing{ this, "Deferred FIFO GET Publishing", ios_experimental_mode::automatic };
+		cfg::_enum<ios_experimental_mode> getllar_backoff{ this, "GETLLAR Mobile Backoff", ios_experimental_mode::automatic };
+		cfg::_enum<ios_experimental_mode> persistent_spu_object_cache{ this, "Persistent SPU Object Cache", ios_experimental_mode::automatic };
+	} ios_experimental{ this };
+#endif
+
 	struct node_video : cfg::node
 	{
 		node_video(cfg::node* _this) : cfg::node(_this, "Video") {}
