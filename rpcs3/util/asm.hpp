@@ -19,6 +19,18 @@
 
 namespace utils
 {
+	// ARM event wait for polling loops whose producer runs on another core.
+	// SEVL makes the first WFE consume a local event; the second can park until
+	// any event or timer interrupt. Non-ARM hosts retain the ordinary pause.
+	inline void wait_for_event()
+	{
+#if defined(ARCH_ARM64)
+		__asm__ volatile("sevl\n\twfe\n\twfe" ::: "memory");
+#else
+		std::this_thread::yield();
+#endif
+	}
+
 	// Try to prefetch to Level 2 cache since it's not split to data/code on most processors
 	template <typename T>
 	constexpr void prefetch_exec(T func)

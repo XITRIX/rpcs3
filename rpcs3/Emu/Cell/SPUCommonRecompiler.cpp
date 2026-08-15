@@ -29,6 +29,11 @@
 #include "util/simd.hpp"
 #include "util/sysinfo.hpp"
 
+#ifdef RPCS3_IOS
+#include "ios/RPCS3IOSExperimentalPolicy.h"
+#include "rpcs3_version.h"
+#endif
+
 const extern spu_decoder<spu_itype> g_spu_itype;
 const extern spu_decoder<spu_iname> g_spu_iname;
 const extern spu_decoder<spu_iflag> g_spu_iflag;
@@ -1394,6 +1399,85 @@ spu_runtime::spu_runtime()
 		fs::write_file(m_cache_path + "spu.log", fs::rewrite);
 		fs::write_file(m_cache_path + "spu-ir.log", fs::rewrite);
 	}
+
+#ifdef RPCS3_IOS
+	if (rpcs3::ios::get_experimental_policy().persistent_spu_object_cache)
+	{
+		constexpr u32 cache_version = 2;
+		constexpr usz max_files = 12'000;
+		sha1_context ctx;
+		u8 key[20];
+		sha1_starts(&ctx);
+
+		const auto fold = [&](const auto& value)
+		{
+			sha1_update(&ctx, reinterpret_cast<const u8*>(&value), sizeof(value));
+		};
+
+		fold(cache_version);
+		const u32 xfloat = static_cast<u32>(g_cfg.core.spu_xfloat_accuracy.get());
+		const u32 block_size = static_cast<u32>(g_cfg.core.spu_block_size.get());
+		const u32 clocks_scale = static_cast<u32>(g_cfg.core.clocks_scale.get());
+		fold(xfloat);
+		fold(block_size);
+		fold(clocks_scale);
+
+		const u32 flags =
+			(static_cast<u32>(g_cfg.core.use_accurate_dfma.get()) << 0) |
+			(static_cast<u32>(g_cfg.core.spu_accurate_reservations.get()) << 1) |
+			(static_cast<u32>(g_cfg.core.spu_accurate_dma.get()) << 2) |
+			(static_cast<u32>(g_cfg.core.spu_prof.get()) << 3) |
+			(static_cast<u32>(g_cfg.core.spu_verification.get()) << 4) |
+			(static_cast<u32>(g_cfg.core.precise_spu_verification.get()) << 5) |
+			(static_cast<u32>(g_cfg.core.spu_loop_detection.get()) << 6) |
+			(static_cast<u32>(g_cfg.core.mfc_debug.get()) << 7) |
+			(static_cast<u32>(g_cfg.core.rsx_accurate_res_access.get()) << 8) |
+			(static_cast<u32>(g_cfg.savestate.compatible_mode.get()) << 9);
+		fold(flags);
+
+		const u32 hw =
+			(static_cast<u32>(utils::has_i8mm()) << 0) |
+			(static_cast<u32>(utils::has_dotprod()) << 1) |
+			(static_cast<u32>(utils::has_sha3()) << 2);
+		const u64 tsc_freq = utils::get_tsc_freq();
+		fold(hw);
+		fold(tsc_freq);
+
+		const std::string cpu = jit_compiler::cpu(g_cfg.core.llvm_cpu.to_string());
+		sha1_update(&ctx, reinterpret_cast<const u8*>(cpu.data()), cpu.size());
+		const auto [commit, revision] = rpcs3::get_commit_and_hash();
+		sha1_update(&ctx, reinterpret_cast<const u8*>(commit.data()), commit.size());
+		sha1_update(&ctx, reinterpret_cast<const u8*>(revision.data()), revision.size());
+		sha1_finish(&ctx, key);
+
+		m_obj_cache_path = m_cache_path + fmt::format("spuobj-v%u-%s/", cache_version, fmt::base57(key, 16));
+		if (!fs::create_path(m_obj_cache_path))
+		{
+			m_obj_cache_path.clear();
+		}
+		else
+		{
+			usz file_count = 0;
+			for (auto&& entry : fs::dir(m_obj_cache_path))
+			{
+				file_count += !entry.is_directory;
+			}
+
+			if (file_count > max_files)
+			{
+				spu_log.notice("SPU object cache exceeded %u files; rebuilding it.", max_files);
+				fs::remove_all(m_obj_cache_path, false);
+				if (!fs::create_path(m_obj_cache_path))
+				{
+					m_obj_cache_path.clear();
+				}
+				file_count = 0;
+			}
+
+			spu_log.notice("SPU object cache: %s (%u files)", m_obj_cache_path, file_count);
+		}
+	}
+#endif
 }
 
 spu_item* spu_runtime::add_empty(spu_program&& data)

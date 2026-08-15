@@ -9,6 +9,10 @@
 #include "Emu/Cell/lv2/sys_rsx.h"
 #include "NV47/HW/context.h"
 
+#ifdef RPCS3_IOS
+#include "ios/RPCS3IOSExperimentalPolicy.h"
+#endif
+
 #include "util/asm.hpp"
 
 #include <thread>
@@ -27,6 +31,12 @@ namespace rsx
 			m_thread = pctrl;
 			m_ctrl = pctrl->ctrl;
 			m_iotable = &pctrl->iomap_table;
+#ifdef RPCS3_IOS
+			const auto& policy = rpcs3::ios::get_experimental_policy();
+			m_cache_line_count = policy.fifo_cache_bytes / 128;
+			m_deferred_get_publishing = policy.deferred_get_publishing;
+			m_fifo_idle_wfe = policy.fifo_idle_wfe;
+#endif
 		}
 
 		u32 FIFO_control::translate_address(u32 address) const
@@ -36,14 +46,34 @@ namespace rsx
 
 		void FIFO_control::sync_get() const
 		{
-			if (m_fifo_pos - m_cache_addr <= m_cache_size)
+			// Atomic cache refills must publish their frontier before the seq-cst fence.
+			if (!m_cache_size && m_deferred_get_publishing && (++m_get_sync_counter & 7))
 			{
-				// Atomic FIFO only path
-				m_ctrl->get.release(m_cache_addr + m_cache_size);
+				return;
+			}
+
+			m_ctrl->get.release(m_published_get = get_sync_position());
+		}
+
+		void FIFO_control::sync_get_force() const
+		{
+			m_get_sync_counter = 0;
+			const u32 get = get_sync_position();
+			if (m_cache_size || m_published_get != get)
+			{
+				m_ctrl->get.release(m_published_get = get);
+			}
+		}
+
+		void FIFO_control::idle_wait()
+		{
+			if (m_fifo_idle_wfe && m_idle_spins++ >= 8)
+			{
+				utils::wait_for_event();
 			}
 			else
 			{
-				m_ctrl->get.release(m_fifo_pos);
+				std::this_thread::yield();
 			}
 		}
 
@@ -52,6 +82,7 @@ namespace rsx
 			m_cmd = cmd;
 			m_command_inc = ((m_cmd & RSX_METHOD_NON_INCREMENT_CMD_MASK) == RSX_METHOD_NON_INCREMENT_CMD) ? 0 : 4;
 			m_remaining_commands = count;
+			m_published_get = m_ctrl->get;
 			m_fifo_pos = position - (count ? 4 : 0);
 			m_args_ptr = m_iotable->get_addr(m_fifo_pos);
 			m_command_reg = (m_cmd & 0xffff) + m_command_inc * (((m_cmd >> 18) - count) & 0x7ff) - m_command_inc;
@@ -65,7 +96,7 @@ namespace rsx
 			{
 				// NOTE: Only supposed to be invoked to wait for a single arg on command[0] (4 bytes)
 				// Wait for put to allow us to procceed execution
-				sync_get();
+				sync_get_force();
 				invalidate_cache();
 
 				while (read_put() == m_fifo_pos && !Emu.IsStopped())
@@ -93,7 +124,7 @@ namespace rsx
 			}
 		}
 
-		std::pair<bool, u32> FIFO_control::fetch_u32(u32 addr)
+		std::pair<bool, u32> FIFO_control::fetch_u32_refill(u32 addr)
 		{
 			if (addr - m_cache_addr >= m_cache_size)
 			{
@@ -114,7 +145,7 @@ namespace rsx
 					return {false, FIFO_ERROR};
 				}
 
-				m_cache_size = std::min<u32>((put | 0x7f) - m_cache_addr, u32{sizeof(m_cache)} - 1) + 1;
+				m_cache_size = std::min<u32>((put | 0x7f) - m_cache_addr, m_cache_line_count * 128 - 1) + 1;
 
 				if (0x100000 - (m_cache_addr & 0xfffff) < m_cache_size)
 				{
@@ -127,7 +158,10 @@ namespace rsx
 				}
 
 				// Make mask of cache lines to fetch
-				u8 to_fetch = static_cast<u8>((1u << (m_cache_size / 128)) - 1);
+				const u32 lines_to_fetch = m_cache_size / 128;
+				u32 to_fetch = lines_to_fetch >= m_cache_line_count
+					? (m_cache_line_count == 32 ? ~0u : (1u << m_cache_line_count) - 1)
+					: ((1u << lines_to_fetch) - 1);
 
 				if (addr < put && put < m_cache_addr + m_cache_size)
 				{
@@ -144,9 +178,21 @@ namespace rsx
 
 				u64 start_time = 0;
 				u32 bytes_read = 0;
+				const auto next_cache_line = [&](u32 current)
+				{
+					for (u32 offset = 1; offset <= m_cache_line_count; offset++)
+					{
+						const u32 candidate = (current + offset) % m_cache_line_count;
+						if (to_fetch & (1u << candidate))
+						{
+							return candidate;
+						}
+					}
+					return 0u;
+				};
 
 				// Find the next set bit after every iteration
-				for (int i = 0;; i = (std::countr_zero<u32>(std::rotl<u8>(to_fetch, 0 - i - 1)) + i + 1) % 8)
+				for (u32 i = 0;; i = next_cache_line(i))
 				{
 					// If a reservation is being updated, try to load another
 					const auto& res = vm::reservation_acquire(addr1 + i * 128);
@@ -205,7 +251,7 @@ namespace rsx
 
 					if (strict_fetch_ordering)
 					{
-						i = (i - 1) % 8;
+						i = (i + m_cache_line_count - 1) % m_cache_line_count;
 					}
 				}
 
@@ -228,12 +274,12 @@ namespace rsx
 			{
 				m_memwatch_addr = get;
 				m_memwatch_cmp = spin_cmd;
-				m_ctrl->get.release(get);
+				m_ctrl->get.release(m_published_get = get);
 				return;
 			}
 
 			// Update ctrl registers
-			m_ctrl->get.release(m_fifo_pos = get);
+			m_ctrl->get.release(m_published_get = m_fifo_pos = get);
 			m_remaining_commands = 0;
 		}
 
@@ -447,7 +493,7 @@ namespace rsx
 			if (!count)
 			{
 				m_fifo_pos += 4;
-				sync_get();
+				sync_get_force();
 				data.reg = FIFO_NOP;
 				return;
 			}
@@ -684,25 +730,29 @@ namespace rsx
 					performance_counters.state = FIFO::state::nop;
 				}
 
+				fifo_ctrl->sync_get_force();
 				return;
 			}
 			case FIFO::FIFO_EMPTY:
 			{
+				fifo_ctrl->sync_get_force();
+
 				if (performance_counters.state == FIFO::state::running)
 				{
 					performance_counters.FIFO_idle_timestamp = get_system_time();
 					performance_counters.state = FIFO::state::empty;
+					fifo_ctrl->reset_idle_wait();
 				}
 				else
 				{
-					std::this_thread::yield();
+					fifo_ctrl->idle_wait();
 				}
 
 				return;
 			}
 			case FIFO::FIFO_BUSY:
 			{
-				// Do something else
+				fifo_ctrl->sync_get_force();
 				return;
 			}
 			case FIFO::FIFO_ERROR:

@@ -5577,6 +5577,7 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 				contains_symbol_resolver,
 				daz_and_ftz,
 				accurate_vest,
+				arm64_codegen_v2,
 
 				__bitset_enum_max
 			};
@@ -5609,6 +5610,9 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 				settings += ppu_settings::daz_and_ftz;
 			if (g_cfg.core.ppu_set_vest)
 				settings += ppu_settings::accurate_vest;
+#if defined(ARCH_ARM64)
+			settings += ppu_settings::arm64_codegen_v2;
+#endif
 
 			// Write version, hash, CPU, settings
 			fmt::append(obj_name, "v9-kusa-%s-%s-%s.obj", fmt::base57(output, 16), fmt::base57(settings), jit_compiler::cpu(g_cfg.core.llvm_cpu.to_string()));
