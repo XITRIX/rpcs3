@@ -2867,7 +2867,7 @@ namespace rsx
 	void thread::flush_fifo()
 	{
 		// Make sure GET value is exposed before sync points
-		fifo_ctrl->sync_get();
+		fifo_ctrl->sync_get_force();
 		fifo_ctrl->invalidate_cache();
 	}
 

@@ -18,6 +18,9 @@ using kind = rpcs3_ios_setting_kind;
 #define GAME_SETTING(KEY, CATEGORY, SECTION, NAME, DESCRIPTION, KIND, ENTRY, MINIMUM, MAXIMUM, STEP) \
 	setting_record{KEY, CATEGORY, SECTION, NAME, DESCRIPTION, KIND, &ENTRY, MINIMUM, MAXIMUM, STEP, setting_scope::game_only}
 
+#define GLOBAL_SETTING(KEY, CATEGORY, SECTION, NAME, DESCRIPTION, KIND, ENTRY, MINIMUM, MAXIMUM, STEP) \
+	setting_record{KEY, CATEGORY, SECTION, NAME, DESCRIPTION, KIND, &ENTRY, MINIMUM, MAXIMUM, STEP, setting_scope::global_only}
+
 const std::array catalog{
 	// CPU
 	SETTING("cpu.thread_scheduler", "CPU", "General", "Thread scheduler", "Selects whether RPCS3 or iOS schedules emulated CPU threads.", kind::RPCS3_IOS_SETTING_CHOICE, g_cfg.core.thread_scheduler, 0, 0, 0),
@@ -106,6 +109,18 @@ const std::array catalog{
 	GAME_SETTING("advanced.driver_wakeup_delay", "Advanced", "Scheduling", "Driver wake-up delay", "Delays RSX wake-ups to prevent FIFO desynchronization in affected titles; may reduce performance.", kind::RPCS3_IOS_SETTING_INTEGER, g_cfg.video.driver_wakeup_delay, 0, 800, 20),
 	SETTING("advanced.max_preempt_count", "Advanced", "Scheduling", "Max Power Saving CPU-preemptions", "Limits CPU thread preemptions per frame; zero is automatic.", kind::RPCS3_IOS_SETTING_INTEGER, g_cfg.core.max_cpu_preempt_count_per_frame, 0, 400, 10),
 
+	// Experimental choices are resolved once after the effective title config
+	// loads. Render and SPU hot paths never read these cfg entries.
+	SETTING("experimental.neon_byte_swap", "Experimental", "ARM64 Uploads", "ARM64 byte-swap uploads", "Uses a four-lane NEON path for swapped RSX uploads. Takes effect on the next boot.", kind::RPCS3_IOS_SETTING_CHOICE, g_cfg.ios_experimental.neon_byte_swap, 0, 0, 0),
+	SETTING("experimental.neon_primitive_restart", "Experimental", "ARM64 Uploads", "ARM64 primitive-restart uploads", "Uses NEON min/max and restart filtering for index uploads. Takes effect on the next boot.", kind::RPCS3_IOS_SETTING_CHOICE, g_cfg.ios_experimental.neon_primitive_restart, 0, 0, 0),
+	SETTING("experimental.precomputed_indices", "Experimental", "ARM64 Uploads", "Precomputed non-native indices", "Copies cached quad and triangle-fan index patterns instead of regenerating them for each draw. Takes effect on the next boot.", kind::RPCS3_IOS_SETTING_CHOICE, g_cfg.ios_experimental.precomputed_indices, 0, 0, 0),
+	SETTING("experimental.mobile_spu_scheduling", "Experimental", "SPU", "Mobile SPU compile scheduling", "Uses a nonzero compile-throttle floor on low-core mobile CPUs. Automatic currently preserves upstream behavior.", kind::RPCS3_IOS_SETTING_CHOICE, g_cfg.ios_experimental.mobile_spu_scheduling, 0, 0, 0),
+	SETTING("experimental.fifo_cache_size", "Experimental", "RSX FIFO", "RSX FIFO read cache", "Selects a 1 KiB compatibility cache or a 4 KiB cache with fewer refills. Takes effect on the next boot.", kind::RPCS3_IOS_SETTING_CHOICE, g_cfg.ios_experimental.fifo_cache_size, 0, 0, 0),
+	SETTING("experimental.fifo_idle_mode", "Experimental", "RSX FIFO", "RSX FIFO idle wait", "Chooses scheduler yielding or an ARM event wait after a short empty-ring spin window.", kind::RPCS3_IOS_SETTING_CHOICE, g_cfg.ios_experimental.fifo_idle_mode, 0, 0, 0),
+	SETTING("experimental.deferred_get_publishing", "Experimental", "RSX FIFO", "Deferred FIFO GET publishing", "Publishes guest FIFO progress every eighth packet and always before an idle or blocking path. Automatic is disabled.", kind::RPCS3_IOS_SETTING_CHOICE, g_cfg.ios_experimental.deferred_get_publishing, 0, 0, 0),
+	SETTING("experimental.getllar_backoff", "Experimental", "SPU", "GETLLAR mobile backoff", "Memoizes stack classification and stops repeated out-buffer verdicts from suppressing SPU backoff forever. Automatic is disabled.", kind::RPCS3_IOS_SETTING_CHOICE, g_cfg.ios_experimental.getllar_backoff, 0, 0, 0),
+	GLOBAL_SETTING("experimental.persistent_spu_object_cache", "Experimental", "SPU", "Persistent SPU object cache", "Reuses configuration-keyed LLVM objects between launches. Global only; Automatic is disabled.", kind::RPCS3_IOS_SETTING_CHOICE, g_cfg.ios_experimental.persistent_spu_object_cache, 0, 0, 0),
+
 	// Emulator
 	SETTING("emulator.max_llvm_threads", "Emulator", "Compilation", "Max LLVM Compile Threads", "Limits concurrent LLVM compilation threads; zero uses all available cores.", kind::RPCS3_IOS_SETTING_INTEGER, g_cfg.core.llvm_threads, 0, 64, 1),
 	SETTING("emulator.shader_compiler_threads", "Emulator", "Compilation", "Max Shader Compile Threads", "Limits concurrent shader compiler threads; zero is automatic.", kind::RPCS3_IOS_SETTING_INTEGER, g_cfg.video.shader_compiler_threads_count, 0, 16, 1),
@@ -173,6 +188,7 @@ const std::array catalog{
 
 #undef SETTING
 #undef GAME_SETTING
+#undef GLOBAL_SETTING
 }
 
 std::span<const setting_record> settings_catalog() noexcept

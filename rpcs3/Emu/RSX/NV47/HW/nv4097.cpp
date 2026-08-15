@@ -184,8 +184,10 @@ namespace rsx
 				const usz first_index_off = 0;
 				const usz second_index_off = (((rcount / 4) - 1) / 2) * 4;
 
-				const u64 src_op1_2 = read_from_ptr<be_t<u64>>(fifo_span, first_index_off);
-				const u64 src_op2_2 = read_from_ptr<be_t<u64>>(fifo_span, second_index_off);
+				// The destination swaps each u32 without exchanging adjacent words;
+				// be_t<u64> does exchange them, so rotate the probe back.
+				const u64 src_op1_2 = std::rotl<u64>(read_from_ptr<be_t<u64>>(fifo_span, first_index_off), 32);
+				const u64 src_op2_2 = std::rotl<u64>(read_from_ptr<be_t<u64>>(fifo_span, second_index_off), 32);
 
 				// Fast comparison
 				if (src_op1_2 != read_from_ptr_unsafe<u64>(out_ptr, first_index_off) || src_op2_2 != read_from_ptr_unsafe<u64>(out_ptr, second_index_off))

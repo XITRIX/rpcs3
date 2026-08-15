@@ -10,6 +10,9 @@
 #include "BufferUtils_avx512.h"
 #endif
 
+#include <cstring>
+#include <vector>
+
 #if !defined(_MSC_VER)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wold-style-cast"
@@ -102,6 +105,51 @@ namespace
 		}
 	}
 
+#if defined(ARCH_ARM64)
+	template <bool Compare>
+	auto copy_data_swap_u32_neon(u32* dst, const u32* src, u32 count)
+	{
+		u32 result = 0;
+		u32 i = 0;
+		uint32x4_t diff = vdupq_n_u32(0);
+
+		for (; i + 4 <= count; i += 4)
+		{
+			const uint32x4_t data = vreinterpretq_u32_u8(
+				vrev32q_u8(vreinterpretq_u8_u32(vld1q_u32(src + i))));
+
+			if constexpr (Compare)
+			{
+				diff = vorrq_u32(diff, veorq_u32(data, vld1q_u32(dst + i)));
+			}
+
+			vst1q_u32(dst + i, data);
+		}
+
+		if constexpr (Compare)
+		{
+			result |= vmaxvq_u32(diff);
+		}
+
+		for (; i < count; i++)
+		{
+			const u32 data = stx::se_storage<u32>::swap(src[i]);
+
+			if constexpr (Compare)
+			{
+				result |= data ^ dst[i];
+			}
+
+			dst[i] = data;
+		}
+
+		if constexpr (Compare)
+		{
+			return static_cast<bool>(result);
+		}
+	}
+#endif
+
 #if defined(ARCH_X64)
 	template <bool Compare>
 	void build_copy_data_swap_u32(asmjit::simd_builder& c, native_args& args)
@@ -181,11 +229,14 @@ namespace
 }
 
 #if defined(ARCH_X64)
-DECLARE(copy_data_swap_u32) = build_function_asm<void(*)(u32*, const u32*, u32), asmjit::simd_builder>("copy_data_swap_u32", &build_copy_data_swap_u32<false>);
-DECLARE(copy_data_swap_u32_cmp) = build_function_asm<bool(*)(u32*, const u32*, u32), asmjit::simd_builder>("copy_data_swap_u32_cmp", &build_copy_data_swap_u32<true>);
+void(*copy_data_swap_u32)(u32*, const u32*, u32) = build_function_asm<void(*)(u32*, const u32*, u32), asmjit::simd_builder>("copy_data_swap_u32", &build_copy_data_swap_u32<false>);
+bool(*copy_data_swap_u32_cmp)(u32*, const u32*, u32) = build_function_asm<bool(*)(u32*, const u32*, u32), asmjit::simd_builder>("copy_data_swap_u32_cmp", &build_copy_data_swap_u32<true>);
+#elif defined(ARCH_ARM64)
+void(*copy_data_swap_u32)(u32*, const u32*, u32) = copy_data_swap_u32_neon<false>;
+bool(*copy_data_swap_u32_cmp)(u32*, const u32*, u32) = copy_data_swap_u32_neon<true>;
 #else
-DECLARE(copy_data_swap_u32) = copy_data_swap_u32_naive<false>;
-DECLARE(copy_data_swap_u32_cmp) = copy_data_swap_u32_naive<true>;
+void(*copy_data_swap_u32)(u32*, const u32*, u32) = copy_data_swap_u32_naive<false>;
+bool(*copy_data_swap_u32_cmp)(u32*, const u32*, u32) = copy_data_swap_u32_naive<true>;
 #endif
 
 namespace
@@ -327,6 +378,93 @@ namespace
 			return (u64{max_index} << 32) | u64{min_index};
 		}
 
+#if defined(ARCH_ARM64)
+		static inline u64 upload_untouched_neon(const be_t<u16>* src, u16* dst, u32 count, u16 restart_index)
+		{
+			u32 i = 0;
+			u16 min_index = index_limit<u16>();
+			u16 max_index = 0;
+
+			if (count >= 8)
+			{
+				const uint16x8_t vrestart = vdupq_n_u16(restart_index);
+				uint16x8_t vmin = vdupq_n_u16(0xffff);
+				uint16x8_t vmax = vdupq_n_u16(0);
+
+				for (; i + 8 <= count; i += 8)
+				{
+					const uint16x8_t v = vreinterpretq_u16_u8(vrev16q_u8(vreinterpretq_u8_u16(
+						vld1q_u16(reinterpret_cast<const u16*>(src) + i))));
+					const uint16x8_t eq = vceqq_u16(v, vrestart);
+					const uint16x8_t stored = vorrq_u16(v, eq);
+
+					vmin = vminq_u16(vmin, stored);
+					vmax = vmaxq_u16(vmax, vbicq_u16(v, eq));
+					vst1q_u16(dst + i, stored);
+				}
+
+				min_index = vminvq_u16(vmin);
+				max_index = vmaxvq_u16(vmax);
+			}
+
+			for (; i < count; i++)
+			{
+				const u16 index = src[i].value();
+				dst[i] = index == restart_index ? index_limit<u16>() : min_max(min_index, max_index, index);
+			}
+
+			return (u64{max_index} << 32) | u64{min_index};
+		}
+
+		static inline u64 upload_untouched_neon(const be_t<u32>* src, u32* dst, u32 count, u32 restart_index)
+		{
+			u32 i = 0;
+			u32 min_index = index_limit<u32>();
+			u32 max_index = 0;
+
+			if (count >= 4)
+			{
+				const uint32x4_t vrestart = vdupq_n_u32(restart_index);
+				uint32x4_t vmin = vdupq_n_u32(0xffffffffu);
+				uint32x4_t vmax = vdupq_n_u32(0);
+
+				for (; i + 4 <= count; i += 4)
+				{
+					const uint32x4_t v = vreinterpretq_u32_u8(vrev32q_u8(vreinterpretq_u8_u32(
+						vld1q_u32(reinterpret_cast<const u32*>(src) + i))));
+					const uint32x4_t eq = vceqq_u32(v, vrestart);
+					const uint32x4_t stored = vorrq_u32(v, eq);
+
+					vmin = vminq_u32(vmin, stored);
+					vmax = vmaxq_u32(vmax, vbicq_u32(v, eq));
+					vst1q_u32(dst + i, stored);
+				}
+
+				min_index = vminvq_u32(vmin);
+				max_index = vmaxvq_u32(vmax);
+			}
+
+			for (; i < count; i++)
+			{
+				const u32 index = src[i].value();
+				dst[i] = index == restart_index ? index_limit<u32>() : min_max(min_index, max_index, index);
+			}
+
+			return (u64{max_index} << 32) | u64{min_index};
+		}
+
+		using upload_u16 = u64(*)(const be_t<u16>*, u16*, u32, u16);
+		using upload_u32 = u64(*)(const be_t<u32>*, u32*, u32, u32);
+		static inline upload_u16 upload_arm64_u16 = upload_untouched_neon;
+		static inline upload_u32 upload_arm64_u32 = upload_untouched_neon;
+
+		static void configure_arm64(bool enabled) noexcept
+		{
+			upload_arm64_u16 = enabled ? static_cast<upload_u16>(upload_untouched_neon) : upload_untouched_naive<u16>;
+			upload_arm64_u32 = enabled ? static_cast<upload_u32>(upload_untouched_neon) : upload_untouched_naive<u32>;
+		}
+#endif
+
 #ifdef ARCH_X64
 		template <typename T>
 		static void build_upload_untouched(asmjit::simd_builder& c, native_args& args)
@@ -405,6 +543,11 @@ namespace
 				r = upload_xi16(src.data(), dst.data(), count, restart_index);
 			else
 				r = upload_xi32(src.data(), dst.data(), count, restart_index);
+#elif defined(ARCH_ARM64)
+			if constexpr (sizeof(T) == 2)
+				r = upload_arm64_u16(src.data(), dst.data(), count, restart_index);
+			else
+				r = upload_arm64_u32(src.data(), dst.data(), count, restart_index);
 #else
 			r = upload_untouched_naive(src.data(), dst.data(), count, restart_index);
 #endif
@@ -695,7 +838,9 @@ u32 get_index_type_size(rsx::index_array_type type)
 	fmt::throw_exception("Wrong index type");
 }
 
-void write_index_array_for_non_indexed_non_native_primitive_to_buffer(char* dst, rsx::primitive_type draw_mode, unsigned count)
+namespace
+{
+void write_non_native_indices_naive(char* dst, rsx::primitive_type draw_mode, unsigned count)
 {
 	auto typedDst = reinterpret_cast<u16*>(dst);
 	switch (draw_mode)
@@ -736,6 +881,82 @@ void write_index_array_for_non_indexed_non_native_primitive_to_buffer(char* dst,
 	}
 
 	fmt::throw_exception("Tried to load invalid primitive type");
+}
+
+constexpr u32 max_precomputed_vertices = 65536;
+
+const std::vector<u16>& quad_index_table()
+{
+	static const std::vector<u16> table = []
+	{
+		std::vector<u16> result(max_precomputed_vertices / 4 * 6);
+		for (u32 i = 0; i < max_precomputed_vertices / 4; i++)
+		{
+			result[6 * i + 0] = static_cast<u16>(4 * i + 0);
+			result[6 * i + 1] = static_cast<u16>(4 * i + 1);
+			result[6 * i + 2] = static_cast<u16>(4 * i + 2);
+			result[6 * i + 3] = static_cast<u16>(4 * i + 2);
+			result[6 * i + 4] = static_cast<u16>(4 * i + 3);
+			result[6 * i + 5] = static_cast<u16>(4 * i + 0);
+		}
+		return result;
+	}();
+
+	return table;
+}
+
+const std::vector<u16>& fan_index_table()
+{
+	static const std::vector<u16> table = []
+	{
+		std::vector<u16> result((max_precomputed_vertices - 2) * 3);
+		for (u32 i = 0; i < max_precomputed_vertices - 2; i++)
+		{
+			result[3 * i + 0] = 0;
+			result[3 * i + 1] = static_cast<u16>(i + 1);
+			result[3 * i + 2] = static_cast<u16>(i + 2);
+		}
+		return result;
+	}();
+
+	return table;
+}
+
+void write_non_native_indices_precomputed(char* dst, rsx::primitive_type draw_mode, unsigned count)
+{
+	auto* typed_dst = reinterpret_cast<u16*>(dst);
+
+	switch (draw_mode)
+	{
+	case rsx::primitive_type::triangle_fan:
+	case rsx::primitive_type::polygon:
+		if (count >= 2 && count <= max_precomputed_vertices) [[likely]]
+		{
+			std::memcpy(typed_dst, fan_index_table().data(), (count - 2) * 3 * sizeof(u16));
+			return;
+		}
+		break;
+	case rsx::primitive_type::quads:
+		if (count <= max_precomputed_vertices) [[likely]]
+		{
+			std::memcpy(typed_dst, quad_index_table().data(), (count / 4) * 6 * sizeof(u16));
+			return;
+		}
+		break;
+	default:
+		break;
+	}
+
+	write_non_native_indices_naive(dst, draw_mode, count);
+}
+
+using write_non_native_indices_fn = void(*)(char*, rsx::primitive_type, unsigned);
+write_non_native_indices_fn s_write_non_native_indices = write_non_native_indices_precomputed;
+}
+
+void write_index_array_for_non_indexed_non_native_primitive_to_buffer(char* dst, rsx::primitive_type draw_mode, unsigned count)
+{
+	s_write_non_native_indices(dst, draw_mode, count);
 }
 
 
@@ -796,4 +1017,18 @@ std::tuple<u32, u32, u32> write_index_array_data_to_buffer(std::span<std::byte> 
 	default:
 		fmt::throw_exception("Unreachable");
 	}
+}
+
+void configure_buffer_optimizations(bool neon_byte_swap, bool neon_primitive_restart, bool precomputed_indices) noexcept
+{
+#if defined(ARCH_ARM64)
+	copy_data_swap_u32 = neon_byte_swap ? copy_data_swap_u32_neon<false> : copy_data_swap_u32_naive<false>;
+	copy_data_swap_u32_cmp = neon_byte_swap ? copy_data_swap_u32_neon<true> : copy_data_swap_u32_naive<true>;
+	primitive_restart_impl::configure_arm64(neon_primitive_restart);
+#else
+	(void)neon_byte_swap;
+	(void)neon_primitive_restart;
+#endif
+
+	s_write_non_native_indices = precomputed_indices ? write_non_native_indices_precomputed : write_non_native_indices_naive;
 }
