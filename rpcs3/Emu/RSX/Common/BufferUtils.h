@@ -39,7 +39,11 @@ std::tuple<u32, u32, u32> write_index_array_data_to_buffer(std::span<std::byte> 
 void write_index_array_for_non_indexed_non_native_primitive_to_buffer(char* dst, rsx::primitive_type draw_mode, unsigned count);
 
 // Copy and swap data in 32-bit units
-extern void(*const copy_data_swap_u32)(u32* dst, const u32* src, u32 count);
+extern void(*copy_data_swap_u32)(u32* dst, const u32* src, u32 count);
 
 // Copy and swap data in 32-bit units, return true if changed
-extern bool(*const copy_data_swap_u32_cmp)(u32* dst, const u32* src, u32 count);
+extern bool(*copy_data_swap_u32_cmp)(u32* dst, const u32* src, u32 count);
+
+// Selects implementations once during serialized boot. Calls in the render hot
+// path never read a cfg entry or cross the application/core ABI.
+void configure_buffer_optimizations(bool neon_byte_swap, bool neon_primitive_restart, bool precomputed_indices) noexcept;

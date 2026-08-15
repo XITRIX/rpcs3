@@ -1,6 +1,7 @@
 #pragma once
 
 #include "util/types.hpp"
+#include "util/endian.hpp"
 #include "Emu/RSX/gcm_enums.h"
 
 #include <span>
@@ -145,7 +146,14 @@ namespace rsx
 
 			u32 m_cache_addr = 0;
 			u32 m_cache_size = 0;
-			alignas(64) std::byte m_cache[8][128];
+			static constexpr u32 max_cache_line_count = 32;
+			alignas(64) std::byte m_cache[max_cache_line_count][128];
+			u32 m_cache_line_count = 8;
+			bool m_deferred_get_publishing = false;
+			bool m_fifo_idle_wfe = false;
+			mutable u32 m_get_sync_counter = 0;
+			mutable u32 m_published_get = umax;
+			u32 m_idle_spins = 0;
 
 		public:
 			FIFO_control(rsx::thread* pctrl);
@@ -153,12 +161,24 @@ namespace rsx
 
 			u32 translate_address(u32 addr) const;
 
-			std::pair<bool, u32> fetch_u32(u32 addr);
+			std::pair<bool, u32> fetch_u32_refill(u32 addr);
+			inline std::pair<bool, u32> fetch_u32(u32 addr)
+			{
+				if (addr - m_cache_addr >= m_cache_size) [[unlikely]]
+				{
+					return fetch_u32_refill(addr);
+				}
+
+				return {true, read_from_ptr_unsafe<be_t<u32>>(+m_cache[0], addr - m_cache_addr)};
+			}
 			void invalidate_cache() { m_cache_size = 0; }
 
 			u32 get_pos() const { return m_internal_get; }
 			u32 last_cmd() const { return m_cmd; }
 			void sync_get() const;
+			void sync_get_force() const;
+			void reset_idle_wait() { m_idle_spins = 0; }
+			void idle_wait();
 			std::span<const u32> get_current_arg_ptr(u32 length_in_words) const;
 			u32 get_remaining_args_count() const { return m_remaining_commands; }
 			void restore_state(u32 cmd, u32 count);

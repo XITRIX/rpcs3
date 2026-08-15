@@ -90,6 +90,8 @@ public:
 
 	atomic_t<u8> cached = false;
 	atomic_t<u8> logged = false;
+	// 0 = unclaimed, 1 = compiling, 2 = complete, 3 = failed.
+	atomic_t<u32> llvm_compile_state = 0;
 
 	spu_item(spu_program&& data)
 		: data(std::move(data))
@@ -109,6 +111,7 @@ class spu_runtime
 
 	// Debug module output location
 	std::string m_cache_path;
+	std::string m_obj_cache_path;
 
 public:
 	// Trampoline to spu_recompiler_base::dispatch
@@ -133,6 +136,11 @@ public:
 	const std::string& get_cache_path() const
 	{
 		return m_cache_path;
+	}
+
+	const std::string& get_obj_cache_path() const
+	{
+		return m_obj_cache_path;
 	}
 
 	// Rebuild ubertrampoline for given identifier (first instruction)
