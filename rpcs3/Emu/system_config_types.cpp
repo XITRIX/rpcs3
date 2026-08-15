@@ -767,3 +767,49 @@ void fmt_class_string<vsync_mode>::format(std::string& out, u64 arg)
 		return unknown;
 	});
 }
+
+template <>
+void fmt_class_string<ios_experimental_mode>::format(std::string& out, u64 arg)
+{
+	format_enum(out, arg, [](ios_experimental_mode value)
+	{
+		switch (value)
+		{
+		case ios_experimental_mode::automatic: return "Automatic";
+		case ios_experimental_mode::enabled: return "Enabled";
+		case ios_experimental_mode::disabled: return "Disabled";
+		}
+
+		return unknown;
+	});
+}
+
+template <>
+void fmt_class_string<ios_fifo_cache_size>::format(std::string& out, u64 arg)
+{
+	format_enum(out, arg, [](ios_fifo_cache_size value)
+	{
+		switch (value)
+		{
+		case ios_fifo_cache_size::_1_kib: return "1 KiB";
+		case ios_fifo_cache_size::_4_kib: return "4 KiB";
+		}
+
+		return unknown;
+	});
+}
+
+template <>
+void fmt_class_string<ios_fifo_idle_mode>::format(std::string& out, u64 arg)
+{
+	format_enum(out, arg, [](ios_fifo_idle_mode value)
+	{
+		switch (value)
+		{
+		case ios_fifo_idle_mode::yield: return "Yield";
+		case ios_fifo_idle_mode::wait_for_event: return "Wait for event";
+		}
+
+		return unknown;
+	});
+}

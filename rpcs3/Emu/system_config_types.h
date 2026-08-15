@@ -378,3 +378,25 @@ enum class vsync_mode
 	adaptive,
 	full,
 };
+
+// iOS-only runtime policy choices are declared unconditionally so the shared
+// config formatter remains a normal part of rpcs3_emu. The owning config node
+// is still compiled only for RPCS3_FRONTEND=IOS.
+enum class ios_experimental_mode
+{
+	automatic,
+	enabled,
+	disabled,
+};
+
+enum class ios_fifo_cache_size
+{
+	_1_kib,
+	_4_kib,
+};
+
+enum class ios_fifo_idle_mode
+{
+	yield,
+	wait_for_event,
+};

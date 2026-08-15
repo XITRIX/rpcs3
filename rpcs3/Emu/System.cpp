@@ -33,6 +33,10 @@
 #include "Emu/RSX/Overlays/overlay_message.h"
 #include "Emu/RSX/Overlays/BigPicture/overlay_big_picture.h"
 
+#ifdef RPCS3_IOS
+#include "ios/RPCS3IOSExperimentalPolicy.h"
+#endif
+
 #include "Loader/PSF.h"
 #include "Loader/TAR.h"
 #include "Loader/ISO.h"
@@ -1724,6 +1728,12 @@ game_boot_result Emulator::Load(const std::string& title_id, bool is_disc_patch,
 		sys_log.notice("Version: APP_VER=%s VERSION=%s", version_app, version_disc);
 
 		{
+#ifdef RPCS3_IOS
+			// This one setting is global-only. Custom title files are complete cfg
+			// snapshots, so preserve config.yml's value before applying one.
+			const auto ios_global_persistent_spu_cache = g_cfg.ios_experimental.persistent_spu_object_cache.get();
+#endif
+
 			if (m_config_mode == cfg_mode::database_config || m_config_mode == cfg_mode::custom)
 			{
 				if (!m_db_config)
@@ -1826,6 +1836,11 @@ game_boot_result Emulator::Load(const std::string& title_id, bool is_disc_patch,
 			{
 				g_cfg.audio.provider.set(audio_provider::cell_audio);
 			}
+
+#ifdef RPCS3_IOS
+			g_cfg.ios_experimental.persistent_spu_object_cache.set(ios_global_persistent_spu_cache);
+			rpcs3::ios::resolve_experimental_policy();
+#endif
 
 			// Backup config
 			g_backup_cfg.from_string(g_cfg.to_string());
