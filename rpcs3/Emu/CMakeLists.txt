@@ -108,6 +108,8 @@ if(RPCS3_FRONTEND STREQUAL "IOS")
         ../../Utilities/JITIOS.h
         ../../Utilities/JITIOSLayoutPolicy.h
         ../ios/FrontendSupport.cpp
+		../ios/RPCS3IOSExperimentalPolicy.cpp
+		../ios/RPCS3IOSExperimentalPolicy.h
         ../ios/UPnPStubs.cpp
         ../ios/USBStubs.c
         ../Input/mouse_gyro_handler.cpp

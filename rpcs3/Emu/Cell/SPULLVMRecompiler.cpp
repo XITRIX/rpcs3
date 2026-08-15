@@ -1676,14 +1676,47 @@ public:
 
 		if (func.entry_point != start0)
 		{
-			// Wait for the duplicate
+			// A relocated duplicate can be published by either LLVM or spu_fast.
 			while (!add_loc->compiled)
 			{
-				add_loc->compiled.wait(nullptr);
+				if (add_loc->llvm_compile_state == 3)
+				{
+					return nullptr;
+				}
+
+				add_loc->compiled.wait(nullptr, atomic_wait_timeout{10'000'000});
 			}
 
 			return add_loc->compiled;
 		}
+
+		// Identical programs at the same entry point share this item. Claim it
+		// before creating an LLVM module so cold-boot workers do not compile and
+		// publish the same block concurrently.
+		if (add_loc->llvm_compile_state.compare_and_swap(0, 1) != 0)
+		{
+			while (add_loc->llvm_compile_state == 1)
+			{
+				add_loc->llvm_compile_state.wait(1, atomic_wait_timeout{10'000'000});
+			}
+
+			return add_loc->llvm_compile_state == 2 ? add_loc->compiled.load() : nullptr;
+		}
+
+		struct compile_claim_guard
+		{
+			spu_item* item;
+
+			~compile_claim_guard()
+			{
+				if (item->llvm_compile_state == 1)
+				{
+					item->llvm_compile_state.release(3);
+					item->llvm_compile_state.notify_all();
+					item->compiled.notify_all();
+				}
+			}
+		} claim_guard{add_loc};
 
 		bool add_to_file = false;
 
@@ -1882,7 +1915,10 @@ public:
 			{
 #ifdef ARCH_ARM64
 				// Loop if there is at least 288 bytes of data to checksum on ARM.
-				// Each ARM checksum block consumes 6 NEON vectors: 2 direct adds and 2 UABD accumulates.
+				// Each ARM checksum block consumes 6 NEON vectors: 2 direct adds and
+				// 2 paired-add accumulates. Keep the compile-time reference below in
+				// exact lockstep with the generated operations: a mismatch makes every
+				// compiled SPU block fail verification and recompile indefinitely.
 				constexpr u32 checksum_block_size = 96;
 #else
 				// Loop if there is atleast (16 * stride) bytes of data to checksum to save some instruction cache
@@ -2044,9 +2080,9 @@ public:
 				// Very cursed "checksumming" code
 				// 96 bytes per ARM checksum step
 				//vls[0] -> add
-				//vls[1], vls[2] -> uaba
+				//vls[1], vls[2] -> paired add
 				//vls[3] -> add
-				//vls[4], vls[5] -> uaba
+				//vls[4], vls[5] -> paired add
 				//This allows us to save on some ALU ops relative to load instructions
 				const auto acc_init = ConstantAggregateZero::get(get_type<u32[4]>());
 				llvm::Value* checksum_parts[4] = {acc_init, acc_init, acc_init, acc_init};
@@ -2057,9 +2093,9 @@ public:
 					for (u32 i = 0; i < 4; i++)
 					{
 						checksum[i] += words[i];
-						checksum[4 + i] += words[4 + i] > words[8 + i] ? words[4 + i] - words[8 + i] : words[8 + i] - words[4 + i];
+						checksum[4 + i] += words[4 + i] + words[8 + i];
 						checksum[8 + i] += words[12 + i];
-						checksum[12 + i] += words[16 + i] > words[20 + i] ? words[16 + i] - words[20 + i] : words[20 + i] - words[16 + i];
+						checksum[12 + i] += words[16 + i] + words[20 + i];
 					}
 				};
 
@@ -2108,9 +2144,9 @@ public:
 						}
 
 						next_acc[0] = m_ir->CreateAdd(next_acc[0], vls[0]);
-						next_acc[1] = m_ir->CreateAdd(next_acc[1], m_ir->CreateCall(get_intrinsic<u32[4]>(llvm::Intrinsic::aarch64_neon_uabd), {vls[1], vls[2]}));
+						next_acc[1] = m_ir->CreateAdd(next_acc[1], m_ir->CreateAdd(vls[1], vls[2]));
 						next_acc[2] = m_ir->CreateAdd(next_acc[2], vls[3]);
-						next_acc[3] = m_ir->CreateAdd(next_acc[3], m_ir->CreateCall(get_intrinsic<u32[4]>(llvm::Intrinsic::aarch64_neon_uabd), {vls[4], vls[5]}));
+						next_acc[3] = m_ir->CreateAdd(next_acc[3], m_ir->CreateAdd(vls[4], vls[5]));
 					}
 
 					const auto next_offset = m_ir->CreateAdd(offset, m_ir->getInt32(checksum_loop_size));
@@ -2184,9 +2220,9 @@ public:
 					}
 
 					checksum_parts[0] = m_ir->CreateAdd(checksum_parts[0], vls[0]);
-					checksum_parts[1] = m_ir->CreateAdd(checksum_parts[1], m_ir->CreateCall(get_intrinsic<u32[4]>(llvm::Intrinsic::aarch64_neon_uabd), {vls[1], vls[2]}));
+					checksum_parts[1] = m_ir->CreateAdd(checksum_parts[1], m_ir->CreateAdd(vls[1], vls[2]));
 					checksum_parts[2] = m_ir->CreateAdd(checksum_parts[2], vls[3]);
-					checksum_parts[3] = m_ir->CreateAdd(checksum_parts[3], m_ir->CreateCall(get_intrinsic<u32[4]>(llvm::Intrinsic::aarch64_neon_uabd), {vls[4], vls[5]}));
+					checksum_parts[3] = m_ir->CreateAdd(checksum_parts[3], m_ir->CreateAdd(vls[4], vls[5]));
 
 					update_checksum(words);
 
@@ -3935,6 +3971,10 @@ public:
 					// Testing only
 					added = m_jit.try_add(std::move(_module), m_spurt->get_cache_path() + "llvm/", llvm_error);
 				}
+				else if (!m_spurt->get_obj_cache_path().empty())
+				{
+					added = m_jit.try_add(std::move(_module), m_spurt->get_obj_cache_path(), llvm_error);
+				}
 				else
 				{
 					added = m_jit.try_add(std::move(_module), llvm_error);
@@ -3957,6 +3997,10 @@ public:
 					// Testing only
 					m_jit.add(std::move(_module), m_spurt->get_cache_path() + "llvm/");
 				}
+				else if (!m_spurt->get_obj_cache_path().empty())
+				{
+					m_jit.add(std::move(_module), m_spurt->get_obj_cache_path());
+				}
 				else
 				{
 					m_jit.add(std::move(_module));
@@ -3969,6 +4013,10 @@ public:
 			{
 				// Testing only
 				m_jit.add(std::move(_module), m_spurt->get_cache_path() + "llvm/");
+			}
+			else if (!m_spurt->get_obj_cache_path().empty())
+			{
+				m_jit.add(std::move(_module), m_spurt->get_obj_cache_path());
 			}
 			else
 			{
@@ -3996,10 +4044,17 @@ public:
 				}
 			}
 
+			// The function is already published and usable; only this trampoline
+			// rebuild attempt failed. Do not permanently fail duplicate waiters.
+			add_loc->llvm_compile_state.release(2);
+			add_loc->llvm_compile_state.notify_all();
+			add_loc->compiled.notify_all();
 			return nullptr;
 		}
 
 		add_loc->compiled.notify_all();
+		add_loc->llvm_compile_state.release(2);
+		add_loc->llvm_compile_state.notify_all();
 
 		if (g_cfg.core.spu_debug)
 		{
@@ -4424,6 +4479,10 @@ public:
 		{
 			// Testing only
 			m_jit.add(std::move(_module), m_spurt->get_cache_path() + "llvm/");
+		}
+		else if (!m_spurt->get_obj_cache_path().empty())
+		{
+			m_jit.add(std::move(_module), m_spurt->get_obj_cache_path());
 		}
 		else
 		{

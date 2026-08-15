@@ -23,6 +23,10 @@
 #include "Emu/Cell/SPURecompiler.h"
 #include "Emu/Cell/timers.hpp"
 
+#ifdef RPCS3_IOS
+#include "ios/RPCS3IOSExperimentalPolicy.h"
+#endif
+
 #include "Emu/RSX/Core/RSXReservationLock.hpp"
 
 #include <cmath>
@@ -1826,6 +1830,11 @@ spu_thread::spu_thread(lv2_spu_group* group, u32 index, std::string_view name, u
 {
 	init_spu_decoder();
 
+#ifdef RPCS3_IOS
+	ios_getllar_backoff = rpcs3::ios::get_experimental_policy().getllar_backoff;
+	ios_mobile_spu_scheduling = rpcs3::ios::get_experimental_policy().mobile_spu_scheduling;
+#endif
+
 	if (g_cfg.core.mfc_debug)
 	{
 		utils::memory_commit(vm::g_stat_addr + vm_offset(), SPU_LS_SIZE);
@@ -1887,6 +1896,11 @@ spu_thread::spu_thread(utils::serial& ar, lv2_spu_group* group)
 	, spu_tname(make_single<std::string>(ar.operator std::string()))
 {
 	init_spu_decoder();
+
+#ifdef RPCS3_IOS
+	ios_getllar_backoff = rpcs3::ios::get_experimental_policy().getllar_backoff;
+	ios_mobile_spu_scheduling = rpcs3::ios::get_experimental_policy().mobile_spu_scheduling;
+#endif
 
 	if (g_cfg.core.mfc_debug)
 	{
@@ -4323,6 +4337,7 @@ bool spu_thread::process_mfc_cmd()
 								// Seemingly not
 								getllar_busy_waiting_switch = umax;
 								getllar_spin_count = 0;
+								getllar_outbuf_hits = 0;
 								return true;
 							}
 
@@ -4330,19 +4345,45 @@ bool spu_thread::process_mfc_cmd()
 							{
 								getllar_busy_waiting_switch = umax;
 								getllar_spin_count = 0;
+								getllar_outbuf_hits = 0;
 								return true;
 							}
 
 							// Check if LSA points to an OUT buffer on the stack from a caller - unlikely to be a loop
 							if (last_getllar_lsa >= SPU_LS_SIZE - 0x10000 && last_getllar_lsa > last_getllar_gpr1)
 							{
-								auto cs = dump_callstack_list();
-
-								if (!cs.empty() && last_getllar_lsa > cs[0].second)
+								if (ios_getllar_backoff)
 								{
-									getllar_busy_waiting_switch = umax;
-									getllar_spin_count = 0;
-									return true;
+									const u32 cs_sp = gpr[1]._u32[3];
+									const u32 cs_lr = gpr[0]._u32[3];
+
+									if (getllar_cs_pc != pc || getllar_cs_sp != cs_sp || getllar_cs_lr != cs_lr)
+									{
+										getllar_cs_pc = pc;
+										getllar_cs_sp = cs_sp;
+										getllar_cs_lr = cs_lr;
+										const auto cs = dump_callstack_list();
+										getllar_cs_first = cs.empty() ? umax : cs[0].second;
+									}
+
+									if (getllar_cs_first != umax && last_getllar_lsa > getllar_cs_first && getllar_outbuf_hits < 32)
+									{
+										getllar_outbuf_hits++;
+										getllar_busy_waiting_switch = umax;
+										getllar_spin_count = 0;
+										return true;
+									}
+								}
+								else
+								{
+									const auto cs = dump_callstack_list();
+
+									if (!cs.empty() && last_getllar_lsa > cs[0].second)
+									{
+										getllar_busy_waiting_switch = umax;
+										getllar_spin_count = 0;
+										return true;
+									}
 								}
 							}
 
@@ -5825,7 +5866,10 @@ s64 spu_thread::get_ch_value(u32 ch)
 				{
 					if (u32 work_count = g_spu_work_count)
 					{
-						const u32 true_free = utils::sub_saturate<u32>(utils::get_thread_count(), 10);
+						const u32 hw_threads = utils::get_thread_count();
+						const u32 true_free = ios_mobile_spu_scheduling && hw_threads <= 10
+							? std::max<u32>(1, hw_threads / 2)
+							: utils::sub_saturate<u32>(hw_threads, 10);
 
 						if (work_count > true_free)
 						{
