@@ -2420,6 +2420,10 @@ error_code sys_fs_unlink(ppu_thread& ppu, vm::cptr<char> path)
 		{
 			return {mp == &g_mp_sys_dev_hdd1 ? sys_fs.warning : sys_fs.error, CELL_ENOENT, path};
 		}
+		case fs::error::readonly:
+		{
+			return {CELL_EROFS, path};
+		}
 		default:
 		{
 			if (has_non_directory_components(local_path, ends_with_delim_dot_or_dotdot(vpath)))
@@ -2683,7 +2687,7 @@ error_code sys_fs_fcntl(ppu_thread& ppu, u32 fd, u32 op, vm::ptr<void> _arg, u32
 		// Load mountpoint (doesn't support multiple // at the start)
 		std::string_view vpath{arg->name.get_ptr(), arg->name_size};
 
-		sys_fs.notice("sys_fs_fcntl(0xc0000006): %s", vpath);
+		sys_fs.trace("sys_fs_fcntl(0xc0000006): %s", vpath);
 
 		// Check only mountpoint
 		vpath = vpath.substr(0, vpath.find_first_of('\0'));
@@ -3345,6 +3349,10 @@ error_code sys_fs_truncate(ppu_thread& ppu, vm::cptr<char> path, u64 size)
 		{
 			return {mp == &g_mp_sys_dev_hdd1 ? sys_fs.warning : sys_fs.error, CELL_ENOENT, path};
 		}
+		case fs::error::readonly:
+		{
+			return {CELL_EROFS, path};
+		}
 		default:
 		{
 			if (has_non_directory_components(local_path, ends_with_delim_dot_or_dotdot(vpath)))
@@ -3569,8 +3577,8 @@ error_code sys_fs_utime(ppu_thread& ppu, vm::cptr<char> path, vm::cptr<CellFsUti
 {
 	lv2_obj::sleep(ppu);
 
-	sys_fs.warning("sys_fs_utime(path=%s, timep=*0x%x)", path, timep);
-	sys_fs.warning("** actime=%u, modtime=%u", timep->actime, timep->modtime);
+	sys_fs.trace("sys_fs_utime(path=%s, timep=*0x%x)", path, timep);
+	sys_fs.trace("** actime=%u, modtime=%u", timep->actime, timep->modtime);
 
 	const auto [path_error, vpath] = translate_to_str(path);
 
@@ -3611,6 +3619,10 @@ error_code sys_fs_utime(ppu_thread& ppu, vm::cptr<char> path, vm::cptr<CellFsUti
 		case fs::error::noent:
 		{
 			return {mp == &g_mp_sys_dev_hdd1 ? sys_fs.warning : sys_fs.error, CELL_ENOENT, path};
+		}
+		case fs::error::readonly:
+		{
+			return {CELL_EROFS, path};
 		}
 		default:
 		{
