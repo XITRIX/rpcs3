@@ -8,10 +8,14 @@ int main()
 {
 	using namespace rpcs3::ios;
 
-	static_assert(RPCS3_IOS_ABI_VERSION == 17);
+	static_assert(RPCS3_IOS_ABI_VERSION == 18);
+	static_assert(pad_player_count == 7);
 	static_assert(sizeof(rpcs3_ios_pad_state) == 40);
 	static_assert(sizeof(rpcs3_ios_pad_feedback) == 16);
 	static_assert(pad_button_mask == (UINT64_C(1) << 17) - 1);
+	assert(validate_pad_player_index(0));
+	assert(validate_pad_player_index(6));
+	assert(!validate_pad_player_index(7));
 
 	assert(!validate_pad_state_contract(nullptr));
 	rpcs3_ios_pad_state state = disconnected_pad_state();
@@ -30,6 +34,14 @@ int main()
 	state.right_stick_x = 0.5f;
 	state.right_stick_y = -0.5f;
 	state.left_trigger = 0.25f;
+
+	pad_state_registries registries;
+	assert(registries.update(7, &state) == RPCS3_IOS_INVALID_ARGUMENT);
+	assert(registries.update(1, &state) == RPCS3_IOS_OK);
+	assert(!registries.snapshot(0).connected);
+	assert(registries.snapshot(1).buttons == state.buttons);
+	registries.clear();
+	assert(!registries.snapshot(1).connected);
 	state.right_trigger = 1.f;
 	assert(validate_pad_state_contract(&state));
 	state.left_stick_x = 1.01f;
@@ -81,6 +93,14 @@ int main()
 	feedback = feedback_registry.snapshot();
 	assert(feedback.large_motor == 0);
 	assert(feedback.small_motor == 0);
+
+	pad_feedback_registries feedback_registries;
+	feedback_registries.update(3, 91, 173);
+	assert(feedback_registries.snapshot(0).large_motor == 0);
+	assert(feedback_registries.snapshot(3).large_motor == 91);
+	assert(feedback_registries.snapshot(3).small_motor == 173);
+	feedback_registries.clear(3);
+	assert(feedback_registries.snapshot(3).small_motor == 0);
 
 	return 0;
 }

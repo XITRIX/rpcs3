@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 17u
+#define RPCS3_IOS_ABI_VERSION 18u
 
 typedef enum rpcs3_ios_status
 {
@@ -151,7 +151,7 @@ typedef enum rpcs3_ios_pad_button
     RPCS3_IOS_PAD_BUTTON_PS = UINT64_C(1) << 16
 } rpcs3_ios_pad_button;
 
-// A replaceable host-input snapshot for player one. Axes use [-1, 1], with
+// A replaceable host-input snapshot for one player. Axes use [-1, 1], with
 // positive Y pointing up; triggers use [0, 1]. The core copies this structure
 // synchronously, so the caller may release it as soon as the function returns.
 typedef struct rpcs3_ios_pad_state
@@ -167,7 +167,7 @@ typedef struct rpcs3_ios_pad_state
     float right_trigger;
 } rpcs3_ios_pad_state;
 
-// A lock-independent player-one output snapshot. Motor values use RPCS3's
+// A lock-independent per-player output snapshot. Motor values use RPCS3's
 // adjusted [0, 255] range after the active pad configuration's threshold,
 // multiplier, and motor-swap settings have been applied.
 typedef struct rpcs3_ios_pad_feedback
@@ -412,12 +412,16 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_remove_game_settings(
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_display_surface(
     const rpcs3_ios_display_surface* surface) RPCS3_IOS_NOEXCEPT;
 // This setter is safe while boot/compilation owns the serialized lifecycle
-// lock. Pass connected=0 to release every input and disconnect player one.
+// lock. player_index uses RPCS3's zero-based pad-port numbering (0...6).
+// Pass connected=0 to release every input and disconnect that player.
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_pad_state(
+    uint32_t player_index,
     const rpcs3_ios_pad_state* state) RPCS3_IOS_NOEXCEPT;
 // Observational and safe to poll while boot or emulation owns the serialized
-// lifecycle lock. Both motor values are zero when no rumble is requested.
+// lifecycle lock. player_index uses zero-based pad-port numbering (0...6).
+// Both motor values are zero when no rumble is requested.
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_get_pad_feedback(
+    uint32_t player_index,
     rpcs3_ios_pad_feedback* feedback) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_boot_vsh(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_boot_game(

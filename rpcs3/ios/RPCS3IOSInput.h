@@ -3,6 +3,7 @@
 #include "RPCS3IOS.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -10,6 +11,13 @@
 
 namespace rpcs3::ios
 {
+inline constexpr uint32_t pad_player_count = 7;
+
+inline bool validate_pad_player_index(uint32_t player_index) noexcept
+{
+	return player_index < pad_player_count;
+}
+
 inline constexpr uint64_t pad_button_mask =
 	RPCS3_IOS_PAD_BUTTON_DPAD_UP |
 	RPCS3_IOS_PAD_BUTTON_DPAD_DOWN |
@@ -128,6 +136,77 @@ public:
 
 private:
 	std::atomic<uint16_t> m_motors{0};
+};
+
+class pad_state_registries final
+{
+public:
+	rpcs3_ios_status update(
+		uint32_t player_index,
+		const rpcs3_ios_pad_state* state) noexcept
+	{
+		if (!validate_pad_player_index(player_index))
+		{
+			return RPCS3_IOS_INVALID_ARGUMENT;
+		}
+		return m_registries[player_index].update(state);
+	}
+
+	rpcs3_ios_pad_state snapshot(uint32_t player_index) const noexcept
+	{
+		return validate_pad_player_index(player_index)
+			? m_registries[player_index].snapshot()
+			: disconnected_pad_state();
+	}
+
+	void clear() noexcept
+	{
+		for (auto& registry : m_registries)
+		{
+			registry.clear();
+		}
+	}
+
+private:
+	std::array<pad_state_registry, pad_player_count> m_registries;
+};
+
+class pad_feedback_registries final
+{
+public:
+	void update(uint32_t player_index, uint8_t large_motor, uint8_t small_motor) noexcept
+	{
+		if (validate_pad_player_index(player_index))
+		{
+			m_registries[player_index].update(large_motor, small_motor);
+		}
+	}
+
+	rpcs3_ios_pad_feedback snapshot(uint32_t player_index) const noexcept
+	{
+		return validate_pad_player_index(player_index)
+			? m_registries[player_index].snapshot()
+			: rpcs3_ios_pad_feedback{sizeof(rpcs3_ios_pad_feedback), 0, 0, 0};
+	}
+
+	void clear(uint32_t player_index) noexcept
+	{
+		if (validate_pad_player_index(player_index))
+		{
+			m_registries[player_index].clear();
+		}
+	}
+
+	void clear() noexcept
+	{
+		for (auto& registry : m_registries)
+		{
+			registry.clear();
+		}
+	}
+
+private:
+	std::array<pad_feedback_registry, pad_player_count> m_registries;
 };
 
 inline uint16_t pad_button_value(uint64_t buttons, uint64_t button) noexcept

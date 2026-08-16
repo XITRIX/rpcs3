@@ -5,14 +5,14 @@
 
 namespace rpcs3::ios
 {
-pad_state_registry& shared_pad_state() noexcept;
-pad_feedback_registry& shared_pad_feedback() noexcept;
+pad_state_registries& shared_pad_states() noexcept;
+pad_feedback_registries& shared_pad_feedback() noexcept;
 }
 
 class ios_pad_handler final : public PadHandlerBase
 {
 public:
-	static constexpr std::string_view device_name = "iOS Game Controller";
+	static std::string device_name(u32 player_index);
 
 	ios_pad_handler();
 	~ios_pad_handler() override;
