@@ -815,6 +815,17 @@ std::shared_ptr<rpcn::rpcn_client> rpcn_connection(bool reconnect)
 	return g_rpcn_client;
 }
 
+void prepare_rpcn_for_guest_boot()
+{
+	// The iOS RPCN manager deliberately retains the singleton across sessions.
+	// Keep its signaling worker asleep while BootGame rebuilds fixed objects;
+	// np_handler activates it only after the guest P2P context is initialized.
+	if (g_rpcn_client)
+	{
+		g_rpcn_client->set_guest_signaling_active(false);
+	}
+}
+
 rpcs3_ios_status connect_rpcn(bool authenticate, bool reconnect)
 {
 	auto client = rpcn_connection(reconnect);
@@ -2886,6 +2897,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_boot_vsh(void) noexcept
 		}
 
 		emit_log(4, "Booting the PlayStation 3 XMB from installed firmware");
+		prepare_rpcn_for_guest_boot();
 		Emu.SetForceBoot(true);
 		const game_boot_result result = Emu.BootGame(vsh_path);
 		if (result != game_boot_result::no_errors)
@@ -2951,6 +2963,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_boot_game(const char* title_id) noexcept
 		}
 
 		emit_log(4, fmt::format("Booting installed game %s (%s)", game->title, game->title_id));
+		prepare_rpcn_for_guest_boot();
 		Emu.SetForceBoot(true);
 		const game_boot_result result = Emu.BootGame(game->path, game->title_id);
 		if (result != game_boot_result::no_errors)
