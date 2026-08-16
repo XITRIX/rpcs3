@@ -224,6 +224,7 @@ namespace rpcn
 		atomic_t<bool> authentified = false;
 		atomic_t<bool> want_conn    = false;
 		atomic_t<bool> want_auth    = false;
+		atomic_t<bool> guest_signaling_active = false;
 		u32 binding_address = 0;
 		std::binary_semaphore sem_connected, sem_authentified;
 		std::mutex mutex_connected, mutex_authentified;
@@ -291,6 +292,7 @@ namespace rpcn
 		bool terminate_connection();
 		void reset_state();
 		void reconnect();
+		void set_guest_signaling_active(bool active);
 
 		void get_friends(friend_data& friend_infos);
 		void get_friends_and_register_cb(friend_data& friend_infos, friend_cb_func cb_func, void* cb_param);
