@@ -2,6 +2,8 @@
 
 #include "Utilities/Config.h"
 
+#include <mutex>
+
 struct cfg_rpcn : cfg::node
 {
 	cfg::uint32 version{this, "Version", 2};
@@ -13,7 +15,7 @@ struct cfg_rpcn : cfg::node
 	cfg::_bool ipv6_support{this, "Experimental IPv6 support", false};
 
 	void load();
-	void save() const;
+	bool save() const;
 
 	std::string get_host() const;
 	std::string get_npid(); // not const because it can save if npid is requested and it has never been set
@@ -26,6 +28,8 @@ struct cfg_rpcn : cfg::node
 	void set_npid(std::string_view npid);
 	void set_password(std::string_view password);
 	void set_token(std::string_view token);
+	void set_runtime_credentials(std::string password, std::string token);
+	void clear_runtime_credentials();
 	void set_ipv6_support(bool ipv6_support);
 	bool add_host(std::string_view description, std::string_view host);
 	bool del_host(std::string_view description, std::string_view host);
@@ -34,6 +38,10 @@ private:
 	static std::string get_path();
 	static std::string generate_npid();
 	void set_hosts(const std::vector<std::pair<std::string, std::string>>& vec_hosts);
+
+	mutable std::mutex m_runtime_credentials_mutex;
+	std::optional<std::string> m_runtime_password;
+	std::optional<std::string> m_runtime_token;
 };
 
 std::optional<std::pair<std::string, u16>> parse_rpcn_host(std::string_view host);
