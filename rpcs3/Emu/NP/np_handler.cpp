@@ -434,6 +434,7 @@ namespace np
 
 			std::lock_guard lock(mutex_rpcn);
 			rpcn = rpcn::rpcn_client::get_instance(bind_ip);
+			rpcn->set_guest_signaling_active(true);
 		}
 	}
 
