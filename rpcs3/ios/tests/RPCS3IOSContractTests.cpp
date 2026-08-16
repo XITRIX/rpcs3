@@ -6,7 +6,7 @@
 int main()
 {
 	using namespace rpcs3::ios;
-	static_assert(RPCS3_IOS_ABI_VERSION == 17);
+	static_assert(RPCS3_IOS_ABI_VERSION == 18);
 	static_assert(RPCS3_IOS_FOLDER_INVALID == 22);
 	static_assert(RPCS3_IOS_FOLDER_INSTALL_FAILED == 23);
 	static_assert(RPCS3_IOS_PATCH_INVALID == 24);
