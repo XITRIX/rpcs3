@@ -400,6 +400,14 @@ namespace rpcn
 		server_infos_updated();
 	}
 
+	void rpcn_client::set_guest_signaling_active(bool active)
+	{
+		if (!guest_signaling_active.exchange(active) && active)
+		{
+			sem_rpcn.release();
+		}
+	}
+
 	// RPCN thread
 	void rpcn_client::rpcn_reader_thread()
 	{
@@ -509,7 +517,7 @@ namespace rpcn
 					}
 				}
 
-				if (authentified && !Emu.IsStopped())
+				if (authentified && guest_signaling_active && !Emu.IsStopped())
 				{
 					// Ping the UDP Signaling Server if we're authentified & ingame
 					const auto now = steady_clock::now();
@@ -621,6 +629,13 @@ namespace rpcn
 					if (!sem_rpcn.try_acquire_for(duration))
 					{
 					}
+				}
+				else
+				{
+					// Account management may keep the shared RPCN client authenticated
+					// while no guest P2P context exists. Sleep until guest networking is
+					// explicitly activated instead of touching that fixed object early.
+					break;
 				}
 			}
 		}
