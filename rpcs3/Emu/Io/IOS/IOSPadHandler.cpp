@@ -10,6 +10,12 @@ pad_state_registry& shared_pad_state() noexcept
 	static pad_state_registry registry;
 	return registry;
 }
+
+pad_feedback_registry& shared_pad_feedback() noexcept
+{
+	static pad_feedback_registry registry;
+	return registry;
+}
 }
 
 ios_pad_handler::ios_pad_handler()
@@ -56,8 +62,13 @@ ios_pad_handler::ios_pad_handler()
 	b_has_pressure_intensity_button = false;
 	b_has_analog_limiter_button = false;
 	b_has_orientation = false;
-	b_has_rumble = false;
+	b_has_rumble = true;
 	init_configs();
+}
+
+ios_pad_handler::~ios_pad_handler()
+{
+	rpcs3::ios::shared_pad_feedback().clear();
 }
 
 void ios_pad_handler::init_config(cfg_pad* cfg)
@@ -123,7 +134,28 @@ PadHandlerBase::connection ios_pad_handler::update_connection(const std::shared_
 	}
 
 	ios_device->state = rpcs3::ios::shared_pad_state().snapshot();
-	return ios_device->state.connected ? connection::connected : connection::disconnected;
+	if (!ios_device->state.connected)
+	{
+		rpcs3::ios::shared_pad_feedback().clear();
+		return connection::disconnected;
+	}
+
+	return connection::connected;
+}
+
+void ios_pad_handler::apply_pad_data(const pad_ensemble& binding)
+{
+	const auto& device = binding.device;
+	const auto& pad = binding.pad;
+	if (!device || !device->config || !pad)
+	{
+		rpcs3::ios::shared_pad_feedback().clear();
+		return;
+	}
+
+	const u8 large_motor = device->config->get_large_motor_speed(pad->m_vibrate_motors);
+	const u8 small_motor = device->config->get_small_motor_speed(pad->m_vibrate_motors);
+	rpcs3::ios::shared_pad_feedback().update(large_motor, small_motor);
 }
 
 std::unordered_map<u32, u16> ios_pad_handler::get_button_values(const std::shared_ptr<PadDevice>& pad_device)
