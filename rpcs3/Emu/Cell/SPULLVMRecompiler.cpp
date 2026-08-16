@@ -1750,6 +1750,7 @@ public:
 
 #ifdef ARCH_ARM64
 		m_use_tbl2 = !g_spu_llvm_compile_context || g_spu_llvm_compile_context->use_tbl2;
+		m_use_fma = !g_spu_llvm_compile_context || g_spu_llvm_compile_context->use_fma;
 
 		if (g_spu_llvm_compile_context)
 		{

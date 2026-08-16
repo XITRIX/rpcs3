@@ -23,6 +23,8 @@
 #include "Emu/Cell/SPURecompiler.h"
 #include "Emu/Cell/timers.hpp"
 
+#include <unordered_set>
+
 #ifdef RPCS3_IOS
 #include "ios/RPCS3IOSExperimentalPolicy.h"
 #endif
@@ -1564,6 +1566,14 @@ void spu_thread::cpu_task()
 			{
 				if (spu_thread::stop_and_signal(0x0))
 					pc += 4;
+				continue;
+			}
+
+			if (interp_fallback) [[unlikely]]
+			{
+				allow_interrupts_in_cpu_work = true;
+				spu_recompiler_base::old_interpreter(*this, _ptr<u8>(0), nullptr);
+				allow_interrupts_in_cpu_work = false;
 				continue;
 			}
 
@@ -7015,7 +7025,25 @@ void spu_thread::halt()
 		spu_runtime::g_escape(this);
 	}
 
-	spu_log.fatal("Halt");
+	// A guest can repeatedly re-enter the same HALT. Preserve the first useful
+	// diagnostic without allowing it to dominate the complete session log.
+	static shared_mutex s_halt_log_mutex;
+	static std::unordered_set<u32> s_logged_halt_pcs;
+	bool should_log = false;
+
+	{
+		std::lock_guard lock(s_halt_log_mutex);
+
+		if (s_logged_halt_pcs.size() < 256)
+		{
+			should_log = s_logged_halt_pcs.insert(pc).second;
+		}
+	}
+
+	if (should_log)
+	{
+		spu_log.fatal("Halt at 0x%05x; further halts at this address will not be reported", pc);
+	}
 	spu_runtime::g_escape(this);
 }
 

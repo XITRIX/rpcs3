@@ -1173,7 +1173,12 @@ namespace vm
 
 		if (!utils::memory_lock(g_sudo_addr + addr, size))
 		{
-			vm_log.error("Failed to lock sudo memory (addr=0x%x, size=0x%x). Consider increasing your system limits.", addr, size);
+			static atomic_t<bool> s_reported{false};
+
+			if (!s_reported.exchange(true))
+			{
+				vm_log.error("Failed to lock sudo memory (addr=0x%x, size=0x%x). Consider increasing your system limits. Further failures will not be reported.", addr, size);
+			}
 		}
 	}
 
