@@ -93,10 +93,11 @@ constexpr const char s_spu_llvm_reg_scavenge_error[] = "Cannot scavenge register
 class spu_llvm_compile_scope
 {
 public:
-	spu_llvm_compile_scope(spu_llvm_compile_context& context, bool use_tbl2) noexcept
+	spu_llvm_compile_scope(spu_llvm_compile_context& context, bool use_tbl2, bool use_fma = true) noexcept
 	{
 		context = {};
 		context.use_tbl2 = use_tbl2;
+		context.use_fma = use_fma;
 		spu_llvm_set_compile_context(&context);
 	}
 
@@ -131,23 +132,32 @@ static spu_function_t compile_spu_llvm_with_retry(std::unique_ptr<spu_recompiler
 		}
 	}
 
-	if (context.llvm_error.find(s_spu_llvm_reg_scavenge_error) == std::string::npos)
+	if (context.llvm_error.empty())
 	{
-		if (!context.llvm_error.empty())
-		{
-			spu_log.error("LLVM failed to compile SPU block 0x%x: %s", program.entry_point, context.llvm_error);
-		}
-
 		return nullptr;
 	}
 
-	spu_log.warning("LLVM failed to compile SPU block 0x%x with TBL2/TBX2: %s. Retrying without TBL2/TBX2.", program.entry_point, context.llvm_error);
+	const bool scavenge_failure = context.llvm_error.find(s_spu_llvm_reg_scavenge_error) != std::string::npos;
+
+	if (scavenge_failure)
+	{
+		spu_log.warning("LLVM failed to compile SPU block 0x%x with TBL2/TBX2: %s. Retrying without TBL2/TBX2.", program.entry_point, context.llvm_error);
+	}
+	else
+	{
+		spu_log.error("LLVM failed to compile SPU block 0x%x: %s. Discarding the poisoned JIT instance.", program.entry_point, context.llvm_error);
+	}
 
 	// LLVM fatal recovery does not unwind MCJIT state. Abandon the failed
-	// compiler and retry from a fresh analysis/JIT instance.
+	// compiler even when this error is not eligible for a lower-pressure retry.
 	static_cast<void>(compiler.release());
 	compiler = spu_recompiler_base::make_llvm_recompiler();
 	compiler->init();
+
+	if (!scavenge_failure)
+	{
+		return nullptr;
+	}
 
 	const auto retry_program = analyse_spu_llvm_program(*compiler, program);
 
@@ -157,21 +167,78 @@ static spu_function_t compile_spu_llvm_with_retry(std::unique_ptr<spu_recompiler
 		return nullptr;
 	}
 
-	spu_llvm_compile_context retry_context;
-	spu_llvm_compile_scope scope(retry_context, false);
+	// The failed first attempt published state 3 for this exact program. Make it
+	// claimable again only after a fresh analyser reproduced identical input;
+	// otherwise the retry would observe its own old failure and never codegen.
+	if (auto* item = compiler->get_runtime().add_empty(spu_program{retry_program}); item)
+	{
+		item->llvm_compile_state.compare_and_swap(3, 0);
+	}
 
-	const auto result = compiler->compile(spu_program{retry_program});
+	spu_llvm_compile_context retry_context;
+	spu_function_t result = nullptr;
+
+	{
+		spu_llvm_compile_scope scope(retry_context, false);
+		result = compiler->compile(spu_program{retry_program});
+	}
 
 	if (result)
 	{
 		spu_log.notice("SPU LLVM block 0x%x compiled successfully without TBL2/TBX2.", program.entry_point);
-	}
-	else if (!retry_context.llvm_error.empty())
-	{
-		spu_log.error("LLVM failed to compile SPU block 0x%x without TBL2/TBX2: %s", program.entry_point, retry_context.llvm_error);
+		return result;
 	}
 
-	return result;
+	if (!retry_context.llvm_error.empty())
+	{
+		spu_log.error("LLVM failed to compile SPU block 0x%x without TBL2/TBX2: %s. Discarding the poisoned JIT instance.", program.entry_point, retry_context.llvm_error);
+	}
+	else
+	{
+		spu_log.error("LLVM produced no code for SPU block 0x%x without TBL2/TBX2 and reported no error.", program.entry_point);
+	}
+
+	// A strict vector FMA can still exhaust AArch64 registers even after TBL2
+	// is disabled. Retry this exceptional block through the existing f64 path
+	// before accepting the interpreter fallback.
+	static_cast<void>(compiler.release());
+	compiler = spu_recompiler_base::make_llvm_recompiler();
+	compiler->init();
+
+	const auto fma_program = analyse_spu_llvm_program(*compiler, program);
+
+	if (fma_program != program)
+	{
+		spu_log.error("[0x%05x] SPU analyser failed during strict-FMA retry, %u vs %u", fma_program.entry_point, fma_program.data.size(), program.data.size());
+		return nullptr;
+	}
+
+	if (auto* item = compiler->get_runtime().add_empty(spu_program{fma_program}); item)
+	{
+		item->llvm_compile_state.compare_and_swap(3, 0);
+	}
+
+	spu_llvm_compile_context fma_context;
+	spu_function_t fma_result = nullptr;
+
+	{
+		spu_llvm_compile_scope scope(fma_context, false, false);
+		fma_result = compiler->compile(spu_program{fma_program});
+	}
+
+	if (fma_result)
+	{
+		spu_log.notice("SPU LLVM block 0x%x compiled successfully without TBL2/TBX2 or strict FMA.", program.entry_point);
+	}
+	else if (!fma_context.llvm_error.empty())
+	{
+		spu_log.error("LLVM failed to compile SPU block 0x%x without strict FMA: %s. Discarding the poisoned JIT instance.", program.entry_point, fma_context.llvm_error);
+		static_cast<void>(compiler.release());
+		compiler = spu_recompiler_base::make_llvm_recompiler();
+		compiler->init();
+	}
+
+	return fma_result;
 }
 #endif
 
@@ -1326,11 +1393,9 @@ void spu_cache::initialize(bool build_existing_cache)
 
 	if (fail_flag)
 	{
-		spu_log.fatal("SPU Runtime: Cache building failed (out of memory).");
-		return;
+		spu_log.error("SPU Runtime: cache precompilation stopped after building %u programs. Compiled programs remain available and remaining blocks compile on demand.", built_total);
 	}
-
-	if ((g_cfg.core.spu_decoder == spu_decoder_type::asmjit || g_cfg.core.spu_decoder == spu_decoder_type::llvm) && !func_list.empty())
+	else if ((g_cfg.core.spu_decoder == spu_decoder_type::asmjit || g_cfg.core.spu_decoder == spu_decoder_type::llvm) && !func_list.empty())
 	{
 		spu_log.success("SPU Runtime: Built %u functions.", func_list.size());
 	}
@@ -2305,6 +2370,18 @@ void spu_recompiler_base::dispatch(spu_thread& spu, void*, u8* rip)
 #endif
 	auto program = spu.jit->analyse(spu._ptr<u32>(0), spu.pc);
 #ifdef ARCH_ARM64
+	if (program.data.empty())
+	{
+#if defined(__APPLE__)
+		jit_write_protect(true);
+#endif
+		spu.interp_fallback_begin = spu.pc;
+		spu.interp_fallback_end = spu.pc + 4;
+		spu.interp_fallback = true;
+		spu_runtime::g_escape(&spu);
+		return;
+	}
+
 	const auto func = compile_spu_llvm_with_retry(spu.jit, program);
 #else
 	const auto func = spu.jit->compile(std::move(program));
@@ -2312,6 +2389,17 @@ void spu_recompiler_base::dispatch(spu_thread& spu, void*, u8* rip)
 
 	if (!func)
 	{
+#ifdef ARCH_ARM64
+#if defined(__APPLE__)
+		jit_write_protect(true);
+#endif
+		spu.interp_fallback_begin = program.lower_bound;
+		spu.interp_fallback_end = program.lower_bound + ::size32(program.data) * 4;
+		spu.interp_fallback = true;
+		spu_runtime::g_escape(&spu);
+		return;
+#endif
+
 		spu_log.fatal("[0x%05x] Compilation failed.", spu.pc);
 		return;
 	}
@@ -2434,7 +2522,7 @@ void spu_recompiler_base::branch(spu_thread& spu, void*, u8* rip)
 
 void spu_recompiler_base::old_interpreter(spu_thread& spu, void* ls, u8* /*rip*/)
 {
-	if (g_cfg.core.spu_decoder != spu_decoder_type::_static)
+	if (g_cfg.core.spu_decoder != spu_decoder_type::_static && !spu.interp_fallback)
 	{
 		fmt::throw_exception("Invalid SPU decoder");
 	}
@@ -2451,6 +2539,13 @@ void spu_recompiler_base::old_interpreter(spu_thread& spu, void* ls, u8* /*rip*/
 		{
 			if (spu.check_state())
 				break;
+		}
+
+		if (spu.interp_fallback &&
+			(spu.pc < spu.interp_fallback_begin || spu.pc >= spu.interp_fallback_end)) [[unlikely]]
+		{
+			spu.interp_fallback = false;
+			break;
 		}
 
 		const u32 op = *reinterpret_cast<const be_t<u32>*>(base + spu.pc);

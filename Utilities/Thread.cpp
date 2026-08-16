@@ -2187,7 +2187,15 @@ bool handle_access_violation(u32 addr, bool is_writing, bool is_exec, ucontext_t
 			if (g_tls_access_violation_recovered != addr)
 			{
 				vm_log.notice("\n%s", dump_useful_thread_info());
-				vm_log.always()("[%s] Access violation %s location 0x%x (%s)", cpu->get_name(), is_writing ? "writing" : "reading", addr, (is_writing && vm::check_addr(addr)) ? "read-only memory" : "unmapped memory");
+
+				if (addr >= 0xffdead00 && addr < 0xffdeae00)
+				{
+					vm_log.always()("[%s] SPU guest HALT trap at 0x%x", cpu->get_name(), addr);
+				}
+				else
+				{
+					vm_log.always()("[%s] Access violation %s location 0x%x (%s)", cpu->get_name(), is_writing ? "writing" : "reading", addr, (is_writing && vm::check_addr(addr)) ? "read-only memory" : "unmapped memory");
+				}
 			}
 
 			// TODO:
@@ -2540,12 +2548,24 @@ static void signal_handler(int /*sig*/, siginfo_t* info, void* uct) noexcept
 	const bool is_executing = err & 0x10;
 	const bool is_writing = err & 0x2;
 #elif defined(ARCH_ARM64)
-	const bool is_executing = uptr(info->si_addr) == uptr(RIP(context));
+	// Fall back to an address comparison only when the signal frame does not
+	// carry a decodable ARM64 exception syndrome.
+	bool is_executing = uptr(info->si_addr) == uptr(RIP(context));
 
 #if defined(__linux__) || defined(__APPLE__)
 	// Current CPU state decoder is reverse-engineered from the linux kernel and may not work on other platforms.
 	const auto decoded_reason = aarch64::decode_fault_reason(context);
 	const bool is_writing = (decoded_reason == aarch64::fault_reason::data_write);
+
+	if (decoded_reason == aarch64::fault_reason::data_read ||
+		decoded_reason == aarch64::fault_reason::data_write)
+	{
+		is_executing = false;
+	}
+	else if (decoded_reason == aarch64::fault_reason::instruction_execute)
+	{
+		is_executing = true;
+	}
 
 	if (decoded_reason != aarch64::fault_reason::data_write &&
 		decoded_reason != aarch64::fault_reason::data_read)
