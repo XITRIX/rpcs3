@@ -3,6 +3,7 @@
 #include "RPCS3IOS.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <mutex>
@@ -98,6 +99,35 @@ public:
 private:
 	mutable std::mutex m_mutex;
 	rpcs3_ios_pad_state m_state = disconnected_pad_state();
+};
+
+class pad_feedback_registry final
+{
+public:
+	void update(uint8_t large_motor, uint8_t small_motor) noexcept
+	{
+		const uint16_t packed = static_cast<uint16_t>(large_motor) |
+			(static_cast<uint16_t>(small_motor) << 8);
+		m_motors.store(packed, std::memory_order_release);
+	}
+
+	rpcs3_ios_pad_feedback snapshot() const noexcept
+	{
+		const uint16_t packed = m_motors.load(std::memory_order_acquire);
+		rpcs3_ios_pad_feedback feedback{};
+		feedback.struct_size = sizeof(feedback);
+		feedback.large_motor = packed & 0xff;
+		feedback.small_motor = packed >> 8;
+		return feedback;
+	}
+
+	void clear() noexcept
+	{
+		m_motors.store(0, std::memory_order_release);
+	}
+
+private:
+	std::atomic<uint16_t> m_motors{0};
 };
 
 inline uint16_t pad_button_value(uint64_t buttons, uint64_t button) noexcept
