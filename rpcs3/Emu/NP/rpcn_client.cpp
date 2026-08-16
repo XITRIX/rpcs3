@@ -387,6 +387,19 @@ namespace rpcn
 		sem_rpcn.release();
 	}
 
+	void rpcn_client::reconnect()
+	{
+		{
+			std::lock_guard lock(mutex_friends);
+			friend_infos = {};
+		}
+
+		want_conn = false;
+		want_auth = false;
+		state = rpcn_state::failure_no_failure;
+		server_infos_updated();
+	}
+
 	// RPCN thread
 	void rpcn_client::rpcn_reader_thread()
 	{
@@ -1562,6 +1575,62 @@ namespace rpcn
 		}
 
 		rpcn_log.success("You have successfully removed \"%s\" from your friendlist", friend_username);
+		return true;
+	}
+
+	std::optional<ErrorType> rpcn_client::add_block(std::string_view username)
+	{
+		std::vector<u8> data;
+		std::copy(username.begin(), username.end(), std::back_inserter(data));
+		data.push_back(0);
+
+		const u64 req_id = rpcn_request_counter.fetch_add(1);
+		std::vector<u8> packet_data;
+		if (!forge_send_reply(CommandType::AddBlock, req_id, data, packet_data))
+		{
+			return std::nullopt;
+		}
+
+		vec_stream reply(packet_data);
+		const auto error = static_cast<ErrorType>(reply.get<u8>());
+		if (error == ErrorType::NoError)
+		{
+			std::lock_guard lock(mutex_friends);
+			friend_infos.friends.erase(std::string{username});
+			friend_infos.requests_sent.erase(std::string{username});
+			friend_infos.requests_received.erase(std::string{username});
+			friend_infos.blocked.emplace(username);
+			rpcn_log.success("add_block(\"%s\") succeeded", username);
+		}
+		else
+		{
+			rpcn_log.error("add_block(\"%s\") failed with error: %s", username, error);
+		}
+		return error;
+	}
+
+	bool rpcn_client::remove_block(std::string_view username)
+	{
+		std::vector<u8> data;
+		std::copy(username.begin(), username.end(), std::back_inserter(data));
+		data.push_back(0);
+
+		const u64 req_id = rpcn_request_counter.fetch_add(1);
+		std::vector<u8> packet_data;
+		if (!forge_send_reply(CommandType::RemoveBlock, req_id, data, packet_data))
+		{
+			return false;
+		}
+
+		vec_stream reply(packet_data);
+		if (static_cast<ErrorType>(reply.get<u8>()) != ErrorType::NoError)
+		{
+			return false;
+		}
+
+		std::lock_guard lock(mutex_friends);
+		friend_infos.blocked.erase(std::string{username});
+		rpcn_log.success("remove_block(\"%s\") succeeded", username);
 		return true;
 	}
 

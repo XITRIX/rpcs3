@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 18u
+#define RPCS3_IOS_ABI_VERSION 19u
 
 typedef enum rpcs3_ios_status
 {
@@ -51,7 +51,11 @@ typedef enum rpcs3_ios_status
     RPCS3_IOS_PATCH_REPOSITORY_INVALID = 27,
     RPCS3_IOS_PATCH_REPOSITORY_INSTALL_FAILED = 28,
     RPCS3_IOS_RUNTIME_PATCH_NOT_FOUND = 29,
-    RPCS3_IOS_RUNTIME_PATCH_SAVE_FAILED = 30
+    RPCS3_IOS_RUNTIME_PATCH_SAVE_FAILED = 30,
+    RPCS3_IOS_RPCN_ERROR = 31,
+    RPCS3_IOS_RPCN_NOT_CONFIGURED = 32,
+    RPCS3_IOS_RPCN_SERVER_EXISTS = 33,
+    RPCS3_IOS_RPCN_SERVER_NOT_FOUND = 34
 } rpcs3_ios_status;
 
 typedef enum rpcs3_ios_state
@@ -278,6 +282,79 @@ typedef void (*rpcs3_ios_setting_option_callback)(
     void* user_context,
     const rpcs3_ios_setting_option* option);
 
+// RPCN passwords never leave the core after being submitted. The iOS wrapper
+// persists its copy in Keychain, while rpcn.yml retains only public profile and
+// server-list data. Strings below are valid only during their callback.
+typedef struct rpcs3_ios_rpcn_config_info
+{
+    uint32_t struct_size;
+    uint32_t has_password;
+    uint32_t has_token;
+    uint32_t ipv6_support;
+    uint32_t connected;
+    uint32_t authenticated;
+    const char* username;
+    const char* host;
+    const char* online_name;
+    const char* avatar_url;
+} rpcs3_ios_rpcn_config_info;
+
+typedef void (*rpcs3_ios_rpcn_config_callback)(
+    void* user_context,
+    const rpcs3_ios_rpcn_config_info* config);
+
+typedef struct rpcs3_ios_rpcn_server_info
+{
+    uint32_t struct_size;
+    uint32_t selected;
+    uint32_t removable;
+    uint32_t reserved;
+    const char* description;
+    const char* host;
+} rpcs3_ios_rpcn_server_info;
+
+typedef void (*rpcs3_ios_rpcn_server_callback)(
+    void* user_context,
+    const rpcs3_ios_rpcn_server_info* server);
+
+typedef enum rpcs3_ios_rpcn_social_kind
+{
+    RPCS3_IOS_RPCN_SOCIAL_FRIEND = 0,
+    RPCS3_IOS_RPCN_SOCIAL_REQUEST_RECEIVED = 1,
+    RPCS3_IOS_RPCN_SOCIAL_REQUEST_SENT = 2,
+    RPCS3_IOS_RPCN_SOCIAL_BLOCKED = 3,
+    RPCS3_IOS_RPCN_SOCIAL_RECENT_PLAYER = 4
+} rpcs3_ios_rpcn_social_kind;
+
+typedef struct rpcs3_ios_rpcn_social_info
+{
+    uint32_t struct_size;
+    uint32_t kind;
+    uint32_t online;
+    uint32_t reserved;
+    uint64_t timestamp;
+    const char* username;
+    const char* presence_title;
+    const char* presence_status;
+    const char* presence_comment;
+    const char* history_description;
+} rpcs3_ios_rpcn_social_info;
+
+typedef void (*rpcs3_ios_rpcn_social_callback)(
+    void* user_context,
+    const rpcs3_ios_rpcn_social_info* entry);
+
+typedef enum rpcs3_ios_rpcn_social_action
+{
+    RPCS3_IOS_RPCN_SOCIAL_ADD_FRIEND = 0,
+    RPCS3_IOS_RPCN_SOCIAL_REMOVE_FRIEND = 1,
+    RPCS3_IOS_RPCN_SOCIAL_ACCEPT_REQUEST = 2,
+    RPCS3_IOS_RPCN_SOCIAL_REJECT_REQUEST = 3,
+    RPCS3_IOS_RPCN_SOCIAL_CANCEL_REQUEST = 4,
+    RPCS3_IOS_RPCN_SOCIAL_BLOCK_USER = 5,
+    RPCS3_IOS_RPCN_SOCIAL_UNBLOCK_USER = 6
+} rpcs3_ios_rpcn_social_action;
+
 typedef enum rpcs3_ios_performance_metric_validity
 {
     RPCS3_IOS_PERFORMANCE_FPS_VALID = 1u << 0,
@@ -407,6 +484,50 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_reset_game_settings(
 // Removes the title's custom configuration so it inherits global settings.
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_remove_game_settings(
     const char* title_id) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_get_rpcn_config(
+    rpcs3_ios_rpcn_config_callback callback,
+    void* user_context) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_rpcn_servers(
+    rpcs3_ios_rpcn_server_callback callback,
+    void* user_context) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_rpcn_server(
+    const char* host) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_add_rpcn_server(
+    const char* description,
+    const char* host) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_remove_rpcn_server(
+    const char* description,
+    const char* host) RPCS3_IOS_NOEXCEPT;
+// password is the user's original password and is synchronously transformed
+// with RPCN's PBKDF2-SHA3-256 contract before this call returns.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_rpcn_credentials(
+    const char* username,
+    const char* password,
+    const char* token,
+    uint32_t ipv6_support) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_create_rpcn_account(
+    const char* username,
+    const char* password,
+    const char* email) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_test_rpcn_account(void) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_resend_rpcn_token(void) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_request_rpcn_password_reset(
+    const char* username,
+    const char* email) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_reset_rpcn_password(
+    const char* username,
+    const char* reset_token,
+    const char* new_password) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_delete_rpcn_account(void) RPCS3_IOS_NOEXCEPT;
+// Social management is available while a title is running and reuses the
+// same authenticated RPCN client as guest matchmaking, presence, scores,
+// messaging, TUS, signaling, and clan operations.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_rpcn_social(
+    rpcs3_ios_rpcn_social_callback callback,
+    void* user_context) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_perform_rpcn_social_action(
+    uint32_t action,
+    const char* username) RPCS3_IOS_NOEXCEPT;
 // Pass NULL to detach. Detach and layer replacement require stopped
 // emulation; dimensions for the currently attached layer may change live.
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_display_surface(

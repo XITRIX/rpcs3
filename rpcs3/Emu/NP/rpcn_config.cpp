@@ -30,13 +30,14 @@ void cfg_rpcn::load()
 	}
 }
 
-void cfg_rpcn::save() const
+bool cfg_rpcn::save() const
 {
 #ifdef _WIN32
 	const std::string path_to_cfg = fs::get_config_dir(true);
 	if (!fs::create_path(path_to_cfg))
 	{
 		rpcn_log.error("Could not create path: %s", path_to_cfg);
+		return false;
 	}
 #endif
 
@@ -45,7 +46,10 @@ void cfg_rpcn::save() const
 	if (!cfg::node::save(path))
 	{
 		rpcn_log.error("Could not save config: %s (error=%s)", path, fs::g_tls_error);
+		return false;
 	}
+
+	return true;
 }
 
 std::string cfg_rpcn::get_path()
@@ -116,12 +120,14 @@ std::string cfg_rpcn::get_npid()
 
 std::string cfg_rpcn::get_password() const
 {
-	return password.to_string();
+	std::lock_guard lock(m_runtime_credentials_mutex);
+	return m_runtime_password.value_or(password.to_string());
 }
 
 std::string cfg_rpcn::get_token() const
 {
-	return token.to_string();
+	std::lock_guard lock(m_runtime_credentials_mutex);
+	return m_runtime_token.value_or(token.to_string());
 }
 
 bool cfg_rpcn::get_ipv6_support() const
@@ -147,6 +153,20 @@ void cfg_rpcn::set_password(std::string_view password)
 void cfg_rpcn::set_token(std::string_view token)
 {
 	this->token.from_string(token);
+}
+
+void cfg_rpcn::set_runtime_credentials(std::string password, std::string token)
+{
+	std::lock_guard lock(m_runtime_credentials_mutex);
+	m_runtime_password = std::move(password);
+	m_runtime_token = std::move(token);
+}
+
+void cfg_rpcn::clear_runtime_credentials()
+{
+	std::lock_guard lock(m_runtime_credentials_mutex);
+	m_runtime_password.reset();
+	m_runtime_token.reset();
 }
 
 void cfg_rpcn::set_ipv6_support(bool ipv6_support)
