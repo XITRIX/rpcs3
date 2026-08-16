@@ -6,7 +6,7 @@
 int main()
 {
 	using namespace rpcs3::ios;
-	static_assert(RPCS3_IOS_ABI_VERSION == 16);
+	static_assert(RPCS3_IOS_ABI_VERSION == 17);
 	static_assert(RPCS3_IOS_FOLDER_INVALID == 22);
 	static_assert(RPCS3_IOS_FOLDER_INSTALL_FAILED == 23);
 	static_assert(RPCS3_IOS_PATCH_INVALID == 24);
@@ -16,6 +16,7 @@ int main()
 	static_assert(RPCS3_IOS_RUNTIME_PATCH_SAVE_FAILED == 30);
 	static_assert(sizeof(rpcs3_ios_display_surface) == 24);
 	static_assert(sizeof(rpcs3_ios_pad_state) == 40);
+	static_assert(sizeof(rpcs3_ios_pad_feedback) == 16);
 	static_assert(sizeof(rpcs3_ios_game_info) == 48);
 	static_assert(sizeof(rpcs3_ios_game_patch_info) == 32);
 	static_assert(sizeof(rpcs3_ios_runtime_patch_info) == 80);
