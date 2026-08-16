@@ -8,8 +8,9 @@ int main()
 {
 	using namespace rpcs3::ios;
 
-	static_assert(RPCS3_IOS_ABI_VERSION == 16);
+	static_assert(RPCS3_IOS_ABI_VERSION == 17);
 	static_assert(sizeof(rpcs3_ios_pad_state) == 40);
+	static_assert(sizeof(rpcs3_ios_pad_feedback) == 16);
 	static_assert(pad_button_mask == (UINT64_C(1) << 17) - 1);
 
 	assert(!validate_pad_state_contract(nullptr));
@@ -66,6 +67,20 @@ int main()
 	assert(pad_axis_positive(0.5f) == 128);
 	assert(pad_trigger_value(0.5f, false) == 128);
 	assert(pad_trigger_value(0.f, true) == 255);
+
+	pad_feedback_registry feedback_registry;
+	auto feedback = feedback_registry.snapshot();
+	assert(feedback.struct_size == sizeof(feedback));
+	assert(feedback.large_motor == 0);
+	assert(feedback.small_motor == 0);
+	feedback_registry.update(37, 219);
+	feedback = feedback_registry.snapshot();
+	assert(feedback.large_motor == 37);
+	assert(feedback.small_motor == 219);
+	feedback_registry.clear();
+	feedback = feedback_registry.snapshot();
+	assert(feedback.large_motor == 0);
+	assert(feedback.small_motor == 0);
 
 	return 0;
 }
