@@ -290,6 +290,7 @@ namespace rpcn
 		rpcn_state wait_for_authentified();
 		bool terminate_connection();
 		void reset_state();
+		void reconnect();
 
 		void get_friends(friend_data& friend_infos);
 		void get_friends_and_register_cb(friend_data& friend_infos, friend_cb_func cb_func, void* cb_param);
@@ -304,6 +305,8 @@ namespace rpcn
 		ErrorType delete_trophies(std::string_view communication_id = {});
 		std::optional<ErrorType> add_friend(std::string_view friend_username);
 		bool remove_friend(std::string_view friend_username);
+		std::optional<ErrorType> add_block(std::string_view username);
+		bool remove_block(std::string_view username);
 
 		u32 get_num_friends() const;
 		u32 get_num_blocks() const;

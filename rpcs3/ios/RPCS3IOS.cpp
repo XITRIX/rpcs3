@@ -30,6 +30,9 @@
 #include "Emu/Io/Null/null_camera_handler.h"
 #include "Emu/Io/Null/null_music_handler.h"
 #include "Emu/NP/rpcn_countries.h"
+#include "Emu/NP/np_handler.h"
+#include "Emu/NP/rpcn_client.h"
+#include "Emu/NP/rpcn_config.h"
 #ifdef HAVE_VULKAN
 #include "Emu/RSX/VK/VKGSRender.h"
 #endif
@@ -44,6 +47,17 @@
 #include "util/logs.hpp"
 #include "util/asm.hpp"
 #include "util/video_source.h"
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wold-style-cast"
+#pragma clang diagnostic ignored "-Wextern-c-compat"
+#pragma clang diagnostic ignored "-Wunsafe-buffer-usage"
+#endif
+#include <wolfssl/openssl/evp.h>
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 #ifdef LLVM_AVAILABLE
 #pragma GCC diagnostic push
@@ -60,6 +74,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cctype>
@@ -85,6 +100,8 @@ bool g_emu_started = false;
 std::atomic_bool g_accept_display_surfaces = false;
 std::atomic_bool g_accept_pad_state = false;
 rpcs3::ios::display_surface_registry g_display_surface;
+std::shared_ptr<rpcn::rpcn_client> g_rpcn_client;
+bool g_rpcn_config_loaded = false;
 
 struct boot_progress_snapshot
 {
@@ -662,6 +679,180 @@ rpcs3_ios_status validate_config(const rpcs3_ios_config* config)
 
 	return RPCS3_IOS_OK;
 }
+
+void load_rpcn_config()
+{
+	if (!g_rpcn_config_loaded)
+	{
+		g_cfg_rpcn.load();
+		std::string legacy_password = g_cfg_rpcn.get_password();
+		std::string legacy_token = g_cfg_rpcn.get_token();
+		if (!legacy_password.empty() || !legacy_token.empty())
+		{
+			g_cfg_rpcn.set_password({});
+			g_cfg_rpcn.set_token({});
+			if (!g_cfg_rpcn.save())
+			{
+				emit_log(1, "Could not scrub legacy RPCN credentials from rpcn.yml");
+			}
+			g_cfg_rpcn.set_runtime_credentials(std::move(legacy_password), std::move(legacy_token));
+			emit_log(4, "Migrated legacy RPCN credentials to process-lifetime memory");
+		}
+		g_rpcn_config_loaded = true;
+	}
+}
+
+bool valid_rpcn_username(std::string_view username)
+{
+	return username.size() >= 3 && username.size() <= 16 &&
+		std::ranges::all_of(username, [](unsigned char value)
+		{
+			return std::isalnum(value) || value == '-' || value == '_';
+		});
+}
+
+bool valid_rpcn_email(std::string_view email)
+{
+	if (email.empty() || email.size() > 254 || email.find(' ') != std::string_view::npos ||
+		email.find('\t') != std::string_view::npos)
+	{
+		return false;
+	}
+	const auto separator = email.find('@');
+	return separator != std::string_view::npos && separator > 0 && separator + 1 < email.size() &&
+		email.find('@', separator + 1) == std::string_view::npos;
+}
+
+bool valid_rpcn_token(std::string_view token)
+{
+	return token.empty() || (token.size() == 16 && std::ranges::all_of(token, [](unsigned char value)
+	{
+		return std::isdigit(value) || (value >= 'A' && value <= 'Z');
+	}));
+}
+
+std::optional<std::string> derive_rpcn_password(std::string_view password)
+{
+	if (password.empty() || password.size() > 1024)
+	{
+		return std::nullopt;
+	}
+
+	constexpr std::string_view salt = "No matter where you go, everybody's connected.";
+	std::array<u8, SHA3_256_DIGEST_LENGTH> digest{};
+	if (wc_PBKDF2(digest.data(), reinterpret_cast<const u8*>(password.data()), ::narrow<s32>(password.size()),
+		reinterpret_cast<const u8*>(salt.data()), ::narrow<s32>(salt.size()), 200'000,
+		SHA3_256_DIGEST_LENGTH, WC_SHA3_256) != 0)
+	{
+		return std::nullopt;
+	}
+
+	constexpr std::string_view hex = "0123456789ABCDEF";
+	std::string derived(SHA3_256_DIGEST_LENGTH * 2, '0');
+	for (usz index = 0; index < digest.size(); index++)
+	{
+		derived[index * 2] = hex[digest[index] >> 4];
+		derived[index * 2 + 1] = hex[digest[index] & 0x0f];
+	}
+	return derived;
+}
+
+rpcs3_ios_status validate_rpcn_operation(bool require_stopped)
+{
+	if (g_lifecycle.state() != RPCS3_IOS_STATE_READY)
+	{
+		set_error("RPCS3Core must be ready before managing RPCN");
+		return RPCS3_IOS_INVALID_STATE;
+	}
+	if (require_stopped && current_emulation_state() != RPCS3_IOS_EMULATION_STATE_STOPPED)
+	{
+		set_error("Stop emulation before changing RPCN account or server information");
+		return RPCS3_IOS_INVALID_STATE;
+	}
+	load_rpcn_config();
+	return RPCS3_IOS_OK;
+}
+
+std::string rpcn_error_detail(rpcn::ErrorType error)
+{
+	switch (error)
+	{
+	case rpcn::ErrorType::NoError: return {};
+	case rpcn::ErrorType::Malformed: return "The RPCN server returned a malformed response";
+	case rpcn::ErrorType::Invalid: return "The RPCN server does not support this operation";
+	case rpcn::ErrorType::InvalidInput: return "RPCN rejected the supplied input";
+	case rpcn::ErrorType::TooSoon: return "RPCN rate-limited this operation; try again later";
+	case rpcn::ErrorType::LoginError: return "The RPCN username or credential is invalid";
+	case rpcn::ErrorType::LoginAlreadyLoggedIn: return "The RPCN account is already logged in";
+	case rpcn::ErrorType::LoginInvalidUsername: return "The RPCN username is invalid";
+	case rpcn::ErrorType::LoginInvalidPassword: return "The RPCN password is invalid";
+	case rpcn::ErrorType::LoginInvalidToken: return "The RPCN verification token is invalid";
+	case rpcn::ErrorType::CreationExistingUsername: return "An RPCN account already uses that username";
+	case rpcn::ErrorType::CreationBannedEmailProvider: return "The RPCN server does not accept that email provider";
+	case rpcn::ErrorType::CreationExistingEmail: return "An RPCN account already uses that email address";
+	case rpcn::ErrorType::CreationError: return "RPCN could not create the account";
+	case rpcn::ErrorType::Unauthorized: return "The RPCN account is not authorized for this operation";
+	case rpcn::ErrorType::DbFail: return "The RPCN server database operation failed";
+	case rpcn::ErrorType::EmailFail: return "The RPCN server could not send the email";
+	case rpcn::ErrorType::NotFound: return "The RPCN user was not found";
+	case rpcn::ErrorType::Blocked: return "One of these RPCN users has blocked the other";
+	case rpcn::ErrorType::AlreadyFriend: return "That RPCN user is already a friend";
+	case rpcn::ErrorType::Unsupported: return "The RPCN server does not support this operation";
+	default: return fmt::format("RPCN rejected the operation (error %u)", static_cast<u8>(error));
+	}
+}
+
+std::shared_ptr<rpcn::rpcn_client> rpcn_connection(bool reconnect)
+{
+	if (!g_rpcn_client)
+	{
+		g_rpcn_client = rpcn::rpcn_client::get_instance(0);
+	}
+	else if (reconnect)
+	{
+		g_rpcn_client->reconnect();
+	}
+	return g_rpcn_client;
+}
+
+rpcs3_ios_status connect_rpcn(bool authenticate, bool reconnect)
+{
+	auto client = rpcn_connection(reconnect);
+	if (const auto state = client->wait_for_connection(); state != rpcn::rpcn_state::failure_no_failure)
+	{
+		set_error("Unable to connect to RPCN: " + rpcn::rpcn_state_to_string(state));
+		return RPCS3_IOS_RPCN_ERROR;
+	}
+	if (authenticate)
+	{
+		if (g_cfg_rpcn.get_npid().empty() || g_cfg_rpcn.get_password().empty())
+		{
+			set_error("Configure an RPCN username and password first");
+			return RPCS3_IOS_RPCN_NOT_CONFIGURED;
+		}
+		if (const auto state = client->wait_for_authentified(); state != rpcn::rpcn_state::failure_no_failure)
+		{
+			set_error("Unable to authenticate with RPCN: " + rpcn::rpcn_state_to_string(state));
+			return RPCS3_IOS_RPCN_ERROR;
+		}
+	}
+	return RPCS3_IOS_OK;
+}
+
+bool persist_rpcn_profile(std::string_view username, std::string password, std::string token, bool ipv6_support)
+{
+	// Remove legacy plaintext credentials before saving public RPCN metadata.
+	g_cfg_rpcn.set_npid(username);
+	g_cfg_rpcn.set_password({});
+	g_cfg_rpcn.set_token({});
+	g_cfg_rpcn.set_ipv6_support(ipv6_support);
+	if (!g_cfg_rpcn.save())
+	{
+		return false;
+	}
+	g_cfg_rpcn.set_runtime_credentials(std::move(password), std::move(token));
+	return true;
+}
 }
 
 extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
@@ -671,7 +862,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":18,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-iso-zip-folder-updates-runtime-patches-library\",\"settings\":\"global-and-per-game-cfg-root-catalog\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop\",\"media_codecs\":true}";
+	return "{\"abi\":19,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-iso-zip-folder-updates-runtime-patches-library\",\"settings\":\"global-and-per-game-cfg-root-catalog\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop\",\"media_codecs\":true}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -713,6 +904,8 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		g_config = *config;
 		g_config.application_support_path = g_application_support_path.c_str();
 		g_config.cache_path = g_cache_path.c_str();
+		g_rpcn_config_loaded = false;
+		g_rpcn_client.reset();
 
 		if (!fs::set_config_dir(g_config.application_support_path) || !fs::set_cache_dir(g_config.cache_path))
 		{
@@ -1886,6 +2079,727 @@ extern "C" rpcs3_ios_status rpcs3_ios_remove_game_settings(const char* title_id)
 	return RPCS3_IOS_INTERNAL_ERROR;
 }
 
+extern "C" rpcs3_ios_status rpcs3_ios_get_rpcn_config(
+	rpcs3_ios_rpcn_config_callback callback,
+	void* user_context) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!callback)
+	{
+		set_error("RPCN configuration retrieval requires a callback");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = validate_rpcn_operation(false); result != RPCS3_IOS_OK)
+	{
+		return result;
+	}
+
+	try
+	{
+		const std::string username = g_cfg_rpcn.get_npid();
+		const std::string host = g_cfg_rpcn.get_host();
+		const std::string password = g_cfg_rpcn.get_password();
+		const std::string token = g_cfg_rpcn.get_token();
+		const std::string online_name = g_rpcn_client && g_rpcn_client->is_authentified()
+			? g_rpcn_client->get_online_name() : std::string{};
+		const std::string avatar_url = g_rpcn_client && g_rpcn_client->is_authentified()
+			? g_rpcn_client->get_avatar_url() : std::string{};
+		const rpcs3_ios_rpcn_config_info info{
+			sizeof(rpcs3_ios_rpcn_config_info),
+			password.empty() ? 0u : 1u,
+			token.empty() ? 0u : 1u,
+			g_cfg_rpcn.get_ipv6_support() ? 1u : 0u,
+			g_rpcn_client && g_rpcn_client->is_connected() ? 1u : 0u,
+			g_rpcn_client && g_rpcn_client->is_authentified() ? 1u : 0u,
+			username.c_str(),
+			host.c_str(),
+			online_name.c_str(),
+			avatar_url.c_str(),
+		};
+		callback(user_context, &info);
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while reading RPCN configuration");
+	}
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_enumerate_rpcn_servers(
+	rpcs3_ios_rpcn_server_callback callback,
+	void* user_context) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!callback)
+	{
+		set_error("RPCN server enumeration requires a callback");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = validate_rpcn_operation(false); result != RPCS3_IOS_OK)
+	{
+		return result;
+	}
+
+	try
+	{
+		const std::string selected_host = g_cfg_rpcn.get_host();
+		for (const auto& [description, host] : g_cfg_rpcn.get_hosts())
+		{
+			const bool official = description == "Official RPCN Server" && host == "np.rpcs3.net";
+			const rpcs3_ios_rpcn_server_info info{
+				sizeof(rpcs3_ios_rpcn_server_info),
+				host == selected_host ? 1u : 0u,
+				official ? 0u : 1u,
+				0,
+				description.c_str(),
+				host.c_str(),
+			};
+			callback(user_context, &info);
+		}
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while enumerating RPCN servers");
+	}
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_set_rpcn_server(const char* host) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!host || !host[0])
+	{
+		set_error("An RPCN server host is required");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = validate_rpcn_operation(true); result != RPCS3_IOS_OK)
+	{
+		return result;
+	}
+
+	try
+	{
+		const auto hosts = g_cfg_rpcn.get_hosts();
+		if (std::ranges::none_of(hosts, [host](const auto& item) { return item.second == host; }))
+		{
+			set_error("The selected RPCN server is not in the configured server list");
+			return RPCS3_IOS_RPCN_SERVER_NOT_FOUND;
+		}
+		g_cfg_rpcn.set_host(host);
+		if (!g_cfg_rpcn.save())
+		{
+			set_error("Unable to save the selected RPCN server");
+			return RPCS3_IOS_SETTINGS_SAVE_FAILED;
+		}
+		if (g_rpcn_client)
+		{
+			g_rpcn_client->reconnect();
+		}
+		emit_log(4, fmt::format("Selected RPCN server %s", host));
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while selecting an RPCN server");
+	}
+	return RPCS3_IOS_RPCN_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_add_rpcn_server(
+	const char* description,
+	const char* host) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!description || !description[0] || !host || !host[0])
+	{
+		set_error("RPCN server description and host are required");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = validate_rpcn_operation(true); result != RPCS3_IOS_OK)
+	{
+		return result;
+	}
+
+	try
+	{
+		const std::string_view description_view{description};
+		if (description_view.size() > 80 || description_view.find('|') != std::string_view::npos || !parse_rpcn_host(host))
+		{
+			set_error("The RPCN server description or host is invalid");
+			return RPCS3_IOS_INVALID_ARGUMENT;
+		}
+		if (!g_cfg_rpcn.add_host(description, host))
+		{
+			set_error("That RPCN server already exists");
+			return RPCS3_IOS_RPCN_SERVER_EXISTS;
+		}
+		if (!g_cfg_rpcn.save())
+		{
+			set_error("Unable to save the RPCN server list");
+			return RPCS3_IOS_SETTINGS_SAVE_FAILED;
+		}
+		emit_log(4, fmt::format("Added RPCN server %s (%s)", description, host));
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while adding an RPCN server");
+	}
+	return RPCS3_IOS_RPCN_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_remove_rpcn_server(
+	const char* description,
+	const char* host) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!description || !description[0] || !host || !host[0])
+	{
+		set_error("RPCN server description and host are required");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = validate_rpcn_operation(true); result != RPCS3_IOS_OK)
+	{
+		return result;
+	}
+	if (std::string_view{description} == "Official RPCN Server" && std::string_view{host} == "np.rpcs3.net")
+	{
+		set_error("The official RPCN server cannot be removed");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+
+	try
+	{
+		if (!g_cfg_rpcn.del_host(description, host))
+		{
+			set_error("The RPCN server was not found");
+			return RPCS3_IOS_RPCN_SERVER_NOT_FOUND;
+		}
+		if (g_cfg_rpcn.get_host() == host)
+		{
+			g_cfg_rpcn.set_host("np.rpcs3.net");
+		}
+		if (!g_cfg_rpcn.save())
+		{
+			set_error("Unable to save the RPCN server list");
+			return RPCS3_IOS_SETTINGS_SAVE_FAILED;
+		}
+		if (g_rpcn_client)
+		{
+			g_rpcn_client->reconnect();
+		}
+		emit_log(4, fmt::format("Removed RPCN server %s (%s)", description, host));
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while removing an RPCN server");
+	}
+	return RPCS3_IOS_RPCN_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_set_rpcn_credentials(
+	const char* username,
+	const char* password,
+	const char* token,
+	uint32_t ipv6_support) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!username || !password || !token || ipv6_support > 1 ||
+		!valid_rpcn_username(username) || !valid_rpcn_token(token))
+	{
+		set_error("RPCN credentials require a valid username, password, token, and IPv6 state");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = validate_rpcn_operation(true); result != RPCS3_IOS_OK)
+	{
+		return result;
+	}
+
+	try
+	{
+		auto derived = derive_rpcn_password(password);
+		if (!derived)
+		{
+			set_error("The RPCN password is empty, too long, or could not be transformed");
+			return RPCS3_IOS_INVALID_ARGUMENT;
+		}
+		if (!persist_rpcn_profile(username, std::move(*derived), token, ipv6_support != 0))
+		{
+			set_error("Unable to save the public RPCN profile");
+			return RPCS3_IOS_SETTINGS_SAVE_FAILED;
+		}
+		if (g_rpcn_client)
+		{
+			g_rpcn_client->reconnect();
+		}
+		emit_log(4, fmt::format("Saved RPCN credentials for %s; the password remains in memory only", username));
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while saving RPCN credentials");
+	}
+	return RPCS3_IOS_RPCN_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_create_rpcn_account(
+	const char* username,
+	const char* password,
+	const char* email) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!username || !password || !email || !valid_rpcn_username(username) || !valid_rpcn_email(email))
+	{
+		set_error("RPCN account creation requires a valid username, password, and email address");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = validate_rpcn_operation(true); result != RPCS3_IOS_OK)
+	{
+		return result;
+	}
+
+	try
+	{
+		auto derived = derive_rpcn_password(password);
+		if (!derived)
+		{
+			set_error("The RPCN password is empty, too long, or could not be transformed");
+			return RPCS3_IOS_INVALID_ARGUMENT;
+		}
+		if (const auto result = connect_rpcn(false, true); result != RPCS3_IOS_OK)
+		{
+			return result;
+		}
+		constexpr std::string_view avatar = "https://rpcs3.net/cdn/netplay/DefaultAvatar.png";
+		const auto error = g_rpcn_client->create_user(username, *derived, username, avatar, email);
+		if (error != rpcn::ErrorType::NoError)
+		{
+			set_error(rpcn_error_detail(error));
+			return RPCS3_IOS_RPCN_ERROR;
+		}
+		if (!persist_rpcn_profile(username, std::move(*derived), {}, g_cfg_rpcn.get_ipv6_support()))
+		{
+			set_error("The RPCN account was created, but its public profile could not be saved");
+			return RPCS3_IOS_SETTINGS_SAVE_FAILED;
+		}
+		g_rpcn_client->reconnect();
+		emit_log(4, fmt::format("Created RPCN account %s", username));
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while creating an RPCN account");
+	}
+	return RPCS3_IOS_RPCN_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_test_rpcn_account(void) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (const auto result = validate_rpcn_operation(false); result != RPCS3_IOS_OK)
+	{
+		return result;
+	}
+	try
+	{
+		if (const auto result = connect_rpcn(true, false); result != RPCS3_IOS_OK)
+		{
+			return result;
+		}
+		emit_log(4, fmt::format("Authenticated with RPCN as %s", g_cfg_rpcn.get_npid()));
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while testing the RPCN account");
+	}
+	return RPCS3_IOS_RPCN_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_resend_rpcn_token(void) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (const auto result = validate_rpcn_operation(true); result != RPCS3_IOS_OK)
+	{
+		return result;
+	}
+	if (g_cfg_rpcn.get_npid().empty() || g_cfg_rpcn.get_password().empty())
+	{
+		set_error("Configure an RPCN username and password first");
+		return RPCS3_IOS_RPCN_NOT_CONFIGURED;
+	}
+	try
+	{
+		if (const auto result = connect_rpcn(false, true); result != RPCS3_IOS_OK)
+		{
+			return result;
+		}
+		const auto error = g_rpcn_client->resend_token(g_cfg_rpcn.get_npid(), g_cfg_rpcn.get_password());
+		if (error != rpcn::ErrorType::NoError)
+		{
+			set_error(rpcn_error_detail(error));
+			return RPCS3_IOS_RPCN_ERROR;
+		}
+		emit_log(4, "Requested a new RPCN verification token");
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while resending the RPCN token");
+	}
+	return RPCS3_IOS_RPCN_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_request_rpcn_password_reset(
+	const char* username,
+	const char* email) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!username || !email || !valid_rpcn_username(username) || !valid_rpcn_email(email))
+	{
+		set_error("RPCN password reset requires a valid username and email address");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = validate_rpcn_operation(true); result != RPCS3_IOS_OK)
+	{
+		return result;
+	}
+	try
+	{
+		if (const auto result = connect_rpcn(false, true); result != RPCS3_IOS_OK)
+		{
+			return result;
+		}
+		const auto error = g_rpcn_client->send_reset_token(username, email);
+		if (error != rpcn::ErrorType::NoError)
+		{
+			set_error(rpcn_error_detail(error));
+			return RPCS3_IOS_RPCN_ERROR;
+		}
+		emit_log(4, fmt::format("Requested an RPCN password-reset token for %s", username));
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while requesting an RPCN password reset");
+	}
+	return RPCS3_IOS_RPCN_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_reset_rpcn_password(
+	const char* username,
+	const char* reset_token,
+	const char* new_password) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!username || !reset_token || !new_password || !valid_rpcn_username(username) ||
+		!valid_rpcn_token(reset_token) || !reset_token[0])
+	{
+		set_error("RPCN password reset requires a valid username, 16-character token, and new password");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = validate_rpcn_operation(true); result != RPCS3_IOS_OK)
+	{
+		return result;
+	}
+	try
+	{
+		auto derived = derive_rpcn_password(new_password);
+		if (!derived)
+		{
+			set_error("The new RPCN password is empty, too long, or could not be transformed");
+			return RPCS3_IOS_INVALID_ARGUMENT;
+		}
+		if (const auto result = connect_rpcn(false, true); result != RPCS3_IOS_OK)
+		{
+			return result;
+		}
+		const auto error = g_rpcn_client->reset_password(username, reset_token, *derived);
+		if (error != rpcn::ErrorType::NoError)
+		{
+			set_error(rpcn_error_detail(error));
+			return RPCS3_IOS_RPCN_ERROR;
+		}
+		if (g_cfg_rpcn.get_npid() == username &&
+			!persist_rpcn_profile(username, std::move(*derived), g_cfg_rpcn.get_token(), g_cfg_rpcn.get_ipv6_support()))
+		{
+			set_error("The RPCN password changed, but the local public profile could not be saved");
+			return RPCS3_IOS_SETTINGS_SAVE_FAILED;
+		}
+		g_rpcn_client->reconnect();
+		emit_log(4, fmt::format("Reset the RPCN password for %s", username));
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while resetting the RPCN password");
+	}
+	return RPCS3_IOS_RPCN_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_delete_rpcn_account(void) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (const auto result = validate_rpcn_operation(true); result != RPCS3_IOS_OK)
+	{
+		return result;
+	}
+	if (g_cfg_rpcn.get_npid().empty() || g_cfg_rpcn.get_password().empty())
+	{
+		set_error("Configure an RPCN username and password first");
+		return RPCS3_IOS_RPCN_NOT_CONFIGURED;
+	}
+	try
+	{
+		if (const auto result = connect_rpcn(false, true); result != RPCS3_IOS_OK)
+		{
+			return result;
+		}
+		const auto error = g_rpcn_client->delete_account();
+		if (error != rpcn::ErrorType::NoError)
+		{
+			set_error(rpcn_error_detail(error));
+			return RPCS3_IOS_RPCN_ERROR;
+		}
+		g_cfg_rpcn.clear_runtime_credentials();
+		g_cfg_rpcn.set_npid({});
+		g_cfg_rpcn.set_password({});
+		g_cfg_rpcn.set_token({});
+		if (!g_cfg_rpcn.save())
+		{
+			set_error("The RPCN account was deleted, but the local profile could not be cleared");
+			return RPCS3_IOS_SETTINGS_SAVE_FAILED;
+		}
+		g_rpcn_client.reset();
+		emit_log(4, "Deleted the RPCN account and cleared its local profile");
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while deleting the RPCN account");
+	}
+	return RPCS3_IOS_RPCN_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_enumerate_rpcn_social(
+	rpcs3_ios_rpcn_social_callback callback,
+	void* user_context) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!callback)
+	{
+		set_error("RPCN social enumeration requires a callback");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = validate_rpcn_operation(false); result != RPCS3_IOS_OK)
+	{
+		return result;
+	}
+	try
+	{
+		if (const auto result = connect_rpcn(true, false); result != RPCS3_IOS_OK)
+		{
+			return result;
+		}
+
+		rpcn::friend_data data;
+		g_rpcn_client->get_friends(data);
+		const auto emit_entry = [callback, user_context](uint32_t kind, std::string_view username,
+			bool online = false, u64 timestamp = 0, std::string_view presence_title = {},
+			std::string_view presence_status = {}, std::string_view presence_comment = {},
+			std::string_view history_description = {})
+		{
+			const std::string username_copy{username};
+			const std::string title_copy{presence_title};
+			const std::string status_copy{presence_status};
+			const std::string comment_copy{presence_comment};
+			const std::string description_copy{history_description};
+			const rpcs3_ios_rpcn_social_info info{
+				sizeof(rpcs3_ios_rpcn_social_info), kind, online ? 1u : 0u, 0, timestamp,
+				username_copy.c_str(), title_copy.c_str(), status_copy.c_str(), comment_copy.c_str(), description_copy.c_str(),
+			};
+			callback(user_context, &info);
+		};
+
+		for (const auto& [username, presence] : data.friends)
+		{
+			emit_entry(RPCS3_IOS_RPCN_SOCIAL_FRIEND, username, presence.online, presence.timestamp,
+				presence.pr_title, presence.pr_status, presence.pr_comment);
+		}
+		for (const auto& username : data.requests_received)
+		{
+			emit_entry(RPCS3_IOS_RPCN_SOCIAL_REQUEST_RECEIVED, username);
+		}
+		for (const auto& username : data.requests_sent)
+		{
+			emit_entry(RPCS3_IOS_RPCN_SOCIAL_REQUEST_SENT, username);
+		}
+		for (const auto& username : data.blocked)
+		{
+			emit_entry(RPCS3_IOS_RPCN_SOCIAL_BLOCKED, username);
+		}
+		for (const auto& [username, history] : np::load_players_history())
+		{
+			if (!data.friends.contains(username) && !data.requests_received.contains(username) &&
+				!data.requests_sent.contains(username) && !data.blocked.contains(username))
+			{
+				emit_entry(RPCS3_IOS_RPCN_SOCIAL_RECENT_PLAYER, username, false,
+					history.timestamp, {}, {}, {}, history.description);
+			}
+		}
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while enumerating RPCN social data");
+	}
+	return RPCS3_IOS_RPCN_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_perform_rpcn_social_action(
+	uint32_t action,
+	const char* username) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!username || !valid_rpcn_username(username) || action > RPCS3_IOS_RPCN_SOCIAL_UNBLOCK_USER)
+	{
+		set_error("RPCN social actions require a valid action and username");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = validate_rpcn_operation(false); result != RPCS3_IOS_OK)
+	{
+		return result;
+	}
+	try
+	{
+		if (const auto result = connect_rpcn(true, false); result != RPCS3_IOS_OK)
+		{
+			return result;
+		}
+
+		switch (action)
+		{
+		case RPCS3_IOS_RPCN_SOCIAL_ADD_FRIEND:
+		case RPCS3_IOS_RPCN_SOCIAL_ACCEPT_REQUEST:
+		{
+			const auto error = g_rpcn_client->add_friend(username);
+			if (!error)
+			{
+				set_error("RPCN did not return a friend-request result");
+				return RPCS3_IOS_RPCN_ERROR;
+			}
+			if (*error != rpcn::ErrorType::NoError)
+			{
+				set_error(rpcn_error_detail(*error));
+				return RPCS3_IOS_RPCN_ERROR;
+			}
+			break;
+		}
+		case RPCS3_IOS_RPCN_SOCIAL_REMOVE_FRIEND:
+		case RPCS3_IOS_RPCN_SOCIAL_REJECT_REQUEST:
+		case RPCS3_IOS_RPCN_SOCIAL_CANCEL_REQUEST:
+			if (!g_rpcn_client->remove_friend(username))
+			{
+				set_error("RPCN could not remove the friend or request");
+				return RPCS3_IOS_RPCN_ERROR;
+			}
+			break;
+		case RPCS3_IOS_RPCN_SOCIAL_BLOCK_USER:
+		{
+			const auto error = g_rpcn_client->add_block(username);
+			if (!error)
+			{
+				set_error("RPCN did not return a block result");
+				return RPCS3_IOS_RPCN_ERROR;
+			}
+			if (*error != rpcn::ErrorType::NoError)
+			{
+				set_error(rpcn_error_detail(*error));
+				return RPCS3_IOS_RPCN_ERROR;
+			}
+			break;
+		}
+		case RPCS3_IOS_RPCN_SOCIAL_UNBLOCK_USER:
+			if (!g_rpcn_client->remove_block(username))
+			{
+				set_error("RPCN could not unblock the user");
+				return RPCS3_IOS_RPCN_ERROR;
+			}
+			break;
+		default:
+			set_error("Unknown RPCN social action");
+			return RPCS3_IOS_INVALID_ARGUMENT;
+		}
+
+		emit_log(4, fmt::format("Completed RPCN social action %u for %s", action, username));
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while performing an RPCN social action");
+	}
+	return RPCS3_IOS_RPCN_ERROR;
+}
+
 extern "C" rpcs3_ios_status rpcs3_ios_set_display_surface(
 	const rpcs3_ios_display_surface* surface) noexcept
 {
@@ -2314,6 +3228,8 @@ extern "C" rpcs3_ios_status rpcs3_ios_shutdown(void) noexcept
 			jit_runtime::finalize();
 			g_emu_started = false;
 		}
+		g_rpcn_client.reset();
+		g_cfg_rpcn.clear_runtime_credentials();
 		g_display_surface.clear();
 		const auto jit_stats = rpcs3::ios::jit::get_statistics();
 		emit_log(4, fmt::format(
