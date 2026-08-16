@@ -6,6 +6,7 @@
 namespace rpcs3::ios
 {
 pad_state_registry& shared_pad_state() noexcept;
+pad_feedback_registry& shared_pad_feedback() noexcept;
 }
 
 class ios_pad_handler final : public PadHandlerBase
@@ -14,6 +15,7 @@ public:
 	static constexpr std::string_view device_name = "iOS Game Controller";
 
 	ios_pad_handler();
+	~ios_pad_handler() override;
 
 	void init_config(cfg_pad* cfg) override;
 	std::vector<pad_list_entry> list_devices() override;
@@ -56,6 +58,7 @@ private:
 
 	std::shared_ptr<PadDevice> get_device(const std::string& name) override;
 	connection update_connection(const std::shared_ptr<PadDevice>& pad_device) override;
+	void apply_pad_data(const pad_ensemble& binding) override;
 	std::unordered_map<u32, u16> get_button_values(const std::shared_ptr<PadDevice>& pad_device) override;
 	pad_preview_values get_preview_values(
 		const std::unordered_map<u32, u16>& data,
