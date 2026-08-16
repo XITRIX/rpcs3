@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 16u
+#define RPCS3_IOS_ABI_VERSION 17u
 
 typedef enum rpcs3_ios_status
 {
@@ -166,6 +166,17 @@ typedef struct rpcs3_ios_pad_state
     float left_trigger;
     float right_trigger;
 } rpcs3_ios_pad_state;
+
+// A lock-independent player-one output snapshot. Motor values use RPCS3's
+// adjusted [0, 255] range after the active pad configuration's threshold,
+// multiplier, and motor-swap settings have been applied.
+typedef struct rpcs3_ios_pad_feedback
+{
+    uint32_t struct_size;
+    uint32_t large_motor;
+    uint32_t small_motor;
+    uint32_t reserved;
+} rpcs3_ios_pad_feedback;
 
 // Strings are UTF-8 and remain valid only for the duration of the synchronous
 // enumeration callback. icon_path is empty when the title has no ICON0.PNG.
@@ -404,6 +415,10 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_display_surface(
 // lock. Pass connected=0 to release every input and disconnect player one.
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_pad_state(
     const rpcs3_ios_pad_state* state) RPCS3_IOS_NOEXCEPT;
+// Observational and safe to poll while boot or emulation owns the serialized
+// lifecycle lock. Both motor values are zero when no rumble is requested.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_get_pad_feedback(
+    rpcs3_ios_pad_feedback* feedback) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_boot_vsh(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_boot_game(
     const char* title_id) RPCS3_IOS_NOEXCEPT;
