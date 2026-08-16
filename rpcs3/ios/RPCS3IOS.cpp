@@ -671,7 +671,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":17,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-rumble\",\"games\":\"pkg-iso-zip-folder-updates-runtime-patches-library\",\"settings\":\"global-and-per-game-cfg-root-catalog\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop\",\"media_codecs\":true}";
+	return "{\"abi\":18,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-iso-zip-folder-updates-runtime-patches-library\",\"settings\":\"global-and-per-game-cfg-root-catalog\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop\",\"media_codecs\":true}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -726,7 +726,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		g_preferred_language = rpcs3::ios::preferred_language_identifier();
 		rpcs3::ios::set_localization_resolver(&rpcs3::ios::localized_application_string);
 		emit_log(4, "Using iOS preferred language for native overlays: " + g_preferred_language);
-		rpcs3::ios::shared_pad_state().clear();
+		rpcs3::ios::shared_pad_states().clear();
 		rpcs3::ios::shared_pad_feedback().clear();
 		const auto jit_stats = rpcs3::ios::jit::get_statistics();
 		emit_log(4, fmt::format(
@@ -760,7 +760,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 
 	g_accept_display_surfaces = false;
 	g_accept_pad_state = false;
-	rpcs3::ios::shared_pad_state().clear();
+	rpcs3::ios::shared_pad_states().clear();
 	rpcs3::ios::shared_pad_feedback().clear();
 	g_lifecycle.finish_initialize(false);
 	return RPCS3_IOS_CORE_INIT_FAILED;
@@ -1913,6 +1913,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_set_display_surface(
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_set_pad_state(
+	uint32_t player_index,
 	const rpcs3_ios_pad_state* state) noexcept
 {
 	// Boot owns g_api_mutex during lengthy firmware compilation. Input must
@@ -1923,7 +1924,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_set_pad_state(
 		return RPCS3_IOS_INVALID_STATE;
 	}
 
-	const auto result = rpcs3::ios::shared_pad_state().update(state);
+	const auto result = rpcs3::ios::shared_pad_states().update(player_index, state);
 	if (result != RPCS3_IOS_OK)
 	{
 		set_error("The iOS pad-state contract is invalid");
@@ -1932,15 +1933,17 @@ extern "C" rpcs3_ios_status rpcs3_ios_set_pad_state(
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_get_pad_feedback(
+	uint32_t player_index,
 	rpcs3_ios_pad_feedback* feedback) noexcept
 {
-	if (!feedback || feedback->struct_size < sizeof(rpcs3_ios_pad_feedback))
+	if (!rpcs3::ios::validate_pad_player_index(player_index) || !feedback ||
+		feedback->struct_size < sizeof(rpcs3_ios_pad_feedback))
 	{
 		set_error("Pad feedback requires a compatible output structure");
 		return RPCS3_IOS_INVALID_ARGUMENT;
 	}
 
-	*feedback = rpcs3::ios::shared_pad_feedback().snapshot();
+	*feedback = rpcs3::ios::shared_pad_feedback().snapshot(player_index);
 	return RPCS3_IOS_OK;
 }
 
@@ -2292,7 +2295,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_shutdown(void) noexcept
 	}
 	g_accept_display_surfaces = false;
 	g_accept_pad_state = false;
-	rpcs3::ios::shared_pad_state().clear();
+	rpcs3::ios::shared_pad_states().clear();
 	rpcs3::ios::shared_pad_feedback().clear();
 	try
 	{
