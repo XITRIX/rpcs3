@@ -5,15 +5,15 @@
 
 namespace rpcs3::ios
 {
-pad_state_registry& shared_pad_state() noexcept
+pad_state_registries& shared_pad_states() noexcept
 {
-	static pad_state_registry registry;
+	static pad_state_registries registry;
 	return registry;
 }
 
-pad_feedback_registry& shared_pad_feedback() noexcept
+pad_feedback_registries& shared_pad_feedback() noexcept
 {
-	static pad_feedback_registry registry;
+	static pad_feedback_registries registry;
 	return registry;
 }
 }
@@ -56,8 +56,8 @@ ios_pad_handler::ios_pad_handler()
 	trigger_max = 255;
 	m_thumb_threshold = thumb_max / 2;
 	m_trigger_threshold = trigger_max / 2;
-	m_name_string = std::string{device_name};
-	m_max_devices = 1;
+	m_name_string = "iOS Game Controller";
+	m_max_devices = rpcs3::ios::pad_player_count;
 	b_has_deadzones = true;
 	b_has_pressure_intensity_button = false;
 	b_has_analog_limiter_button = false;
@@ -117,12 +117,30 @@ void ios_pad_handler::init_config(cfg_pad* cfg)
 
 std::vector<pad_list_entry> ios_pad_handler::list_devices()
 {
-	return {pad_list_entry{std::string{device_name}, false}};
+	std::vector<pad_list_entry> devices;
+	devices.reserve(rpcs3::ios::pad_player_count);
+	for (u32 player_index = 0; player_index < rpcs3::ios::pad_player_count; player_index++)
+	{
+		devices.emplace_back(device_name(player_index), false);
+	}
+	return devices;
+}
+
+std::string ios_pad_handler::device_name(u32 player_index)
+{
+	return fmt::format("iOS Game Controller %u", player_index + 1);
 }
 
 std::shared_ptr<PadDevice> ios_pad_handler::get_device(const std::string& name)
 {
-	return name == device_name ? std::make_shared<device>() : nullptr;
+	for (u32 player_index = 0; player_index < rpcs3::ios::pad_player_count; player_index++)
+	{
+		if (name == device_name(player_index))
+		{
+			return std::make_shared<device>();
+		}
+	}
+	return nullptr;
 }
 
 PadHandlerBase::connection ios_pad_handler::update_connection(const std::shared_ptr<PadDevice>& pad_device)
@@ -133,10 +151,10 @@ PadHandlerBase::connection ios_pad_handler::update_connection(const std::shared_
 		return connection::disconnected;
 	}
 
-	ios_device->state = rpcs3::ios::shared_pad_state().snapshot();
+	ios_device->state = rpcs3::ios::shared_pad_states().snapshot(ios_device->player_id);
 	if (!ios_device->state.connected)
 	{
-		rpcs3::ios::shared_pad_feedback().clear();
+		rpcs3::ios::shared_pad_feedback().clear(ios_device->player_id);
 		return connection::disconnected;
 	}
 
@@ -149,13 +167,16 @@ void ios_pad_handler::apply_pad_data(const pad_ensemble& binding)
 	const auto& pad = binding.pad;
 	if (!device || !device->config || !pad)
 	{
-		rpcs3::ios::shared_pad_feedback().clear();
+		if (device)
+		{
+			rpcs3::ios::shared_pad_feedback().clear(device->player_id);
+		}
 		return;
 	}
 
 	const u8 large_motor = device->config->get_large_motor_speed(pad->m_vibrate_motors);
 	const u8 small_motor = device->config->get_small_motor_speed(pad->m_vibrate_motors);
-	rpcs3::ios::shared_pad_feedback().update(large_motor, small_motor);
+	rpcs3::ios::shared_pad_feedback().update(device->player_id, large_motor, small_motor);
 }
 
 std::unordered_map<u32, u16> ios_pad_handler::get_button_values(const std::shared_ptr<PadDevice>& pad_device)

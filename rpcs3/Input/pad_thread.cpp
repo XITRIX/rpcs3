@@ -158,19 +158,15 @@ void pad_thread::Init()
 	}
 
 #ifdef RPCS3_IOS
-	// The native wrapper owns player-one input selection for this frontend.
-	// Discard desktop profiles that may have been created before the iOS pad
-	// backend existed, and keep all other ports disconnected for now.
-	g_cfg_input.player[0]->handler.from_string(fmt::format("%s", pad_handler::ios));
-	g_cfg_input.player[0]->device.from_string(ios_pad_handler::device_name);
+	// The native wrapper owns ordered input allocation for every PS3 pad port.
+	// Discard desktop profiles and bind each port to its fixed iOS registry;
+	// disconnected registries remain ordinary disconnected pads.
+	std::shared_ptr<PadHandlerBase> ios_handler;
+	for (usz i = 0; i < g_cfg_input.player.size(); i++)
 	{
-		std::shared_ptr<PadHandlerBase> ios_handler;
-		pad_thread::InitPadConfig(g_cfg_input.player[0]->config, pad_handler::ios, ios_handler);
-	}
-	for (usz i = 1; i < g_cfg_input.player.size(); i++)
-	{
-		g_cfg_input.player[i]->handler.from_string(fmt::format("%s", pad_handler::null));
-		g_cfg_input.player[i]->device.from_string("Null");
+		g_cfg_input.player[i]->handler.from_string(fmt::format("%s", pad_handler::ios));
+		g_cfg_input.player[i]->device.from_string(ios_pad_handler::device_name(i));
+		pad_thread::InitPadConfig(g_cfg_input.player[i]->config, pad_handler::ios, ios_handler);
 	}
 #endif
 
