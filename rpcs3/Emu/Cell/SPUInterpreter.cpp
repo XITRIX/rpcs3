@@ -12,6 +12,7 @@
 #include "util/sysinfo.hpp"
 
 #include <cmath>
+#include <unordered_set>
 
 #if !defined(_MSC_VER)
 #pragma GCC diagnostic push
@@ -125,9 +126,28 @@ namespace asmjit
 }
 
 template <spu_exec_bit... Flags>
-bool UNK(spu_thread&, spu_opcode_t op)
+bool UNK(spu_thread& spu, spu_opcode_t op)
 {
-	spu_log.fatal("Unknown/Illegal instruction (0x%08x)", op.opcode);
+	// Invalid guest code can execute the same word continuously. Bound both the
+	// diagnostics and the memory used to remember them.
+	static shared_mutex s_unknown_log_mutex;
+	static std::unordered_set<u64> s_logged_unknowns;
+	const u64 key = (u64{op.opcode} << 32) | spu.pc;
+	bool should_log = false;
+
+	{
+		std::lock_guard lock(s_unknown_log_mutex);
+
+		if (s_logged_unknowns.size() < 256)
+		{
+			should_log = s_logged_unknowns.insert(key).second;
+		}
+	}
+
+	if (should_log)
+	{
+		spu_log.fatal("Unknown/Illegal instruction (0x%08x) at 0x%05x; further occurrences here will not be reported", op.opcode, spu.pc);
+	}
 	return false;
 }
 
