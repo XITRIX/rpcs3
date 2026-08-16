@@ -59,6 +59,8 @@ namespace np
 		std::string description;
 	};
 
+	std::map<std::string, player_history> load_players_history();
+
 	class ticket
 	{
 	public:
