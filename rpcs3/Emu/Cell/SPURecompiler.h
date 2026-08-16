@@ -70,6 +70,7 @@ struct spu_program
 struct spu_llvm_compile_context
 {
 	bool use_tbl2 = true;
+	bool use_fma = true;
 	std::string llvm_error;
 };
 
