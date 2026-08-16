@@ -791,6 +791,12 @@ public:
 
 	std::unique_ptr<class spu_recompiler_base> jit; // Recompiler instance
 
+	// A failed ARM64 block runs through the legacy interpreter only for its
+	// analysed local-store range, then returns to the configured recompiler.
+	bool interp_fallback = false;
+	u32 interp_fallback_begin = 0;
+	u32 interp_fallback_end = 0;
+
 	u64 block_counter = 0;
 	u64 block_recover = 0;
 	u64 block_failure = 0;
