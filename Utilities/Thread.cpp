@@ -2767,8 +2767,174 @@ thread_local DECLARE(thread_ctrl::g_tls_error_callback) = nullptr;
 
 DECLARE(thread_ctrl::g_native_core_layout) { native_core_arrangement::undefined };
 
+#ifdef RPCS3_IOS
+namespace
+{
+	struct ios_thread_worker_pool;
+
+	ios_thread_worker_pool& get_ios_thread_worker_pool();
+}
+
+struct ios_thread_worker
+{
+	atomic_t<u64> native_handle{0};
+	atomic_t<thread_base*> job{nullptr};
+	atomic_t<u32> released{1};
+
+	struct job_context
+	{
+		ios_thread_worker* worker;
+		thread_base* thread;
+	};
+
+	static void publish_completion(thread_base* thread) noexcept
+	{
+		thread->m_native_finished = 1;
+		thread->m_native_finished.notify_all();
+	}
+
+	static void abandon(void* opaque) noexcept
+	{
+		// An RPCS3 fatal recovery may leave through pthread_exit(). C++ TLS
+		// destructors still need the thread object, so ask its owner to join this
+		// otherwise process-lifetime worker before releasing that object.
+		auto* context = static_cast<job_context*>(opaque);
+		context->thread->m_native_finished = 2;
+		context->thread->m_native_finished.notify_all();
+	}
+
+	static void* run(void* opaque) noexcept;
+};
+
+namespace
+{
+	struct ios_thread_worker_pool
+	{
+		std::mutex mutex;
+		std::vector<ios_thread_worker*> idle;
+
+		ios_thread_worker* acquire()
+		{
+			{
+				std::lock_guard lock(mutex);
+
+				if (!idle.empty())
+				{
+					auto* worker = idle.back();
+					idle.pop_back();
+					return worker;
+				}
+			}
+
+			auto* worker = new ios_thread_worker;
+			pthread_attr_t attrs;
+			pthread_t thread_id{};
+
+			ensure(pthread_attr_init(&attrs) == 0);
+			ensure(pthread_attr_setstacksize(&attrs, 0x800000) == 0);
+			ensure(pthread_attr_set_qos_class_np(&attrs, QOS_CLASS_USER_INTERACTIVE, 0) == 0);
+
+			const int create_error = pthread_create(&thread_id, &attrs, &ios_thread_worker::run, worker);
+			ensure(pthread_attr_destroy(&attrs) == 0);
+			ensure(create_error == 0);
+
+			u64 handle = 0;
+			std::memcpy(&handle, &thread_id, sizeof(thread_id));
+			worker->native_handle = handle;
+			worker->native_handle.notify_all();
+			return worker;
+		}
+
+		void recycle(ios_thread_worker* worker)
+		{
+			std::lock_guard lock(mutex);
+			idle.push_back(worker);
+		}
+	};
+
+	ios_thread_worker_pool& get_ios_thread_worker_pool()
+	{
+		// The core dylib is intentionally never unloaded. Retaining the pool and
+		// its sleeping pthreads prevents native-list churn during guest activity.
+		static auto* pool = new ios_thread_worker_pool;
+		return *pool;
+	}
+}
+
+void* ios_thread_worker::run(void* opaque) noexcept
+{
+	auto* worker = static_cast<ios_thread_worker*>(opaque);
+
+	while (!worker->native_handle)
+	{
+		worker->native_handle.wait(0);
+	}
+
+	for (;;)
+	{
+		thread_base* thread = nullptr;
+
+		while (!(thread = worker->job.exchange(nullptr)))
+		{
+			worker->job.wait(nullptr);
+		}
+
+		job_context context{worker, thread};
+		pthread_cleanup_push(&ios_thread_worker::abandon, &context);
+		thread->entry_point(thread);
+		pthread_cleanup_pop(0);
+
+		// This is the first point at which all RPCS3 trampoline code has
+		// returned. The owner keeps this worker reserved until it has observed
+		// completion, so its native handle cannot be reassigned underneath it.
+		// Restore the default affinity that a newly created pthread would have
+		// before making this native worker available to a different job class.
+		thread_ctrl::set_thread_affinity_mask(0);
+		publish_completion(thread);
+
+		while (!worker->released)
+		{
+			worker->released.wait(0);
+		}
+
+		get_ios_thread_worker_pool().recycle(worker);
+	}
+}
+#endif
+
 void thread_base::start()
 {
+#ifdef RPCS3_IOS
+	// A standby named_thread can be restarted. Release its previous retained
+	// worker only after the native trampoline has returned to the worker loop.
+	while (!m_native_finished)
+	{
+		m_native_finished.wait(0);
+	}
+
+	if (m_native_worker)
+	{
+		if (m_native_finished == 2)
+		{
+			pthread_t thread_id{};
+			const u64 handle = m_native_worker->native_handle;
+			std::memcpy(&thread_id, &handle, sizeof(thread_id));
+			ensure(pthread_join(thread_id, nullptr) == 0);
+			delete m_native_worker;
+		}
+		else
+		{
+			m_native_worker->released = 1;
+			m_native_worker->released.notify_one();
+		}
+
+		m_native_worker = nullptr;
+	}
+
+	m_native_finished = 0;
+	m_thread = 0;
+#endif
+
 	m_sync.atomic_op([&](u32& v)
 	{
 		v &= ~static_cast<u32>(thread_state::mask);
@@ -2779,25 +2945,33 @@ void thread_base::start()
 	m_thread = ::_beginthreadex(nullptr, 0, entry_point, this, CREATE_SUSPENDED, nullptr);
 	ensure(m_thread);
 	ensure(::ResumeThread(reinterpret_cast<HANDLE>(+m_thread)) != static_cast<DWORD>(-1));
+#elif defined(RPCS3_IOS)
+	m_native_worker = get_ios_thread_worker_pool().acquire();
+	m_native_worker->released = 0;
+	m_thread = m_native_worker->native_handle.load();
+	m_native_worker->job = this;
+	m_native_worker->job.notify_one();
 #elif defined(__APPLE__)
 	pthread_attr_t attrs;
 	pthread_t thread_id{};
 	struct sched_param sp;
 	memset(&sp, 0, sizeof(struct sched_param));
 	sp.sched_priority=99;
-	pthread_attr_init(&attrs);
-	pthread_attr_setstacksize(&attrs, 0x800000);
-	
+	ensure(pthread_attr_init(&attrs) == 0);
+	ensure(pthread_attr_setstacksize(&attrs, 0x800000) == 0);
+
 	pthread_attr_set_qos_class_np(&attrs, QOS_CLASS_USER_INTERACTIVE, 0);
 	pthread_attr_setschedpolicy(&attrs, SCHED_RR);
 	pthread_attr_setschedparam(&attrs, &sp);
-	ensure(pthread_create(&thread_id, &attrs, entry_point, this) == 0);
+	const int create_error = pthread_create(&thread_id, &attrs, entry_point, this);
+	ensure(pthread_attr_destroy(&attrs) == 0);
+	ensure(create_error == 0);
 #else
 	pthread_t thread_id{};
 	ensure(pthread_create(&thread_id, nullptr, entry_point, this) == 0);
 #endif
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(RPCS3_IOS)
 	// Update m_thread atomically
 	u64 dest_id = 0;
 	std::memcpy(&dest_id, &thread_id, sizeof(thread_id));
@@ -2997,6 +3171,13 @@ thread_base::native_entry thread_base::finalize(u64 _self) noexcept
 	g_tls_access_violation_recovered = umax;
 
 	g_tls_log_prefix = []() -> std::string { return {}; };
+
+#ifdef RPCS3_IOS
+	// The retained worker publishes completion only after this trampoline has
+	// returned. Clear the RPCS3 owner before handing control back to it.
+	thread_ctrl::g_tls_this_thread = nullptr;
+	return nullptr;
+#endif
 
 	if (_self == umax)
 	{
@@ -3272,6 +3453,33 @@ thread_base::~thread_base() noexcept
 		const HANDLE handle0 = reinterpret_cast<HANDLE>(m_thread.load());
 		WaitForSingleObject(handle0, INFINITE);
 		CloseHandle(handle0);
+#elif defined(RPCS3_IOS)
+		// The retained worker publishes only after all named-thread trampoline
+		// code has returned. Release it for a later guest thread without joining
+		// or terminating the native pthread.
+		while (!m_native_finished)
+		{
+			m_native_finished.wait(0);
+		}
+
+		if (m_native_worker)
+		{
+			if (m_native_finished == 2)
+			{
+				pthread_t thread_id{};
+				const u64 handle = m_native_worker->native_handle;
+				std::memcpy(&thread_id, &handle, sizeof(thread_id));
+				ensure(pthread_join(thread_id, nullptr) == 0);
+				delete m_native_worker;
+			}
+			else
+			{
+				m_native_worker->released = 1;
+				m_native_worker->released.notify_one();
+			}
+
+			m_native_worker = nullptr;
+		}
 #elif defined(ANDROID)
 		pthread_join(m_thread.load(), nullptr);
 #else
@@ -3853,6 +4061,17 @@ void thread_ctrl::set_native_priority(int priority)
 	if (!SetThreadPriority(_this_thread, native_priority))
 	{
 		sig_log.error("SetThreadPriority() failed: %s", fmt::win_error{GetLastError(), nullptr});
+	}
+#elif defined(RPCS3_IOS)
+	// iOS schedules work through QoS classes. Do not inherit the macOS
+	// SCHED_RR policy or query POSIX scheduling state: Metal performs the same
+	// query while compiling shaders, and physical iOS 27 incidents faulted in
+	// that path after RPCS3 created real-time-priority pthreads.
+	const qos_class_t qos = priority < 0 ? QOS_CLASS_UTILITY : QOS_CLASS_USER_INTERACTIVE;
+
+	if (const int err = pthread_set_qos_class_self_np(qos, 0))
+	{
+		sig_log.error("pthread_set_qos_class_self_np() failed: %d", err);
 	}
 #else
 	int policy;
