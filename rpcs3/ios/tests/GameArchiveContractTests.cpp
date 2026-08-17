@@ -1,6 +1,7 @@
 #include "../GameArchiveContract.h"
 #include "../GameFolderContract.h"
 #include "../GamePatchContract.h"
+#include "../RAPLicenseContract.h"
 
 #include <cassert>
 #include <string>
@@ -86,6 +87,16 @@ int main()
 		game_patch_validation_error::invalid_patch);
 	assert(validate_game_patch_contract("BLUS12345", "BLUS12345", "GD", false) ==
 		game_patch_validation_error::invalid_patch);
+
+	assert(normalized_rap_license_filename(
+		"/private/input/EP0001-NPEB00001_00-GAMELICENSE000001.rap") ==
+		"EP0001-NPEB00001_00-GAMELICENSE000001.rap");
+	assert(normalized_rap_license_filename(
+		"/private/input/UP0001-NPUB00001_00-GAMELICENSE000001.RAP") ==
+		"UP0001-NPUB00001_00-GAMELICENSE000001.rap");
+	assert(!normalized_rap_license_filename("relative/license.rap"));
+	assert(!normalized_rap_license_filename("/private/input/.rap"));
+	assert(!normalized_rap_license_filename("/private/input/license.pkg"));
 
 	return 0;
 }
