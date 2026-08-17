@@ -39,6 +39,10 @@ class named_thread;
 
 class thread_base;
 
+#ifdef RPCS3_IOS
+struct ios_thread_worker;
+#endif
+
 template <typename Ctx, typename... Args>
 struct result_storage
 {
@@ -135,6 +139,16 @@ private:
 	// Thread handle (platform-specific)
 	atomic_t<u64> m_thread{0};
 
+#ifdef RPCS3_IOS
+	// iOS runs named threads on retained native workers. Zero means running,
+	// one means the trampoline returned, and two requests an abnormal join.
+	atomic_t<u32> m_native_finished{1};
+
+	// Retained until destruction or a standby restart releases the completed
+	// job. The worker itself has process lifetime and is then reusable.
+	ios_thread_worker* m_native_worker{};
+#endif
+
 	// Thread cycles
 	atomic_t<u64> m_cycles{0};
 
@@ -168,6 +182,10 @@ private:
 
 	template <class Context>
 	friend class named_thread;
+
+#ifdef RPCS3_IOS
+	friend struct ios_thread_worker;
+#endif
 
 protected:
 	thread_base(native_entry, std::string name) noexcept;

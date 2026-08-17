@@ -732,12 +732,17 @@ void cpu_thread::operator()()
 			{
 				cleanup();
 
+				// Darwin may run this TLS destructor while holding libpthread's
+				// thread-list lock. Creating the logger thread here would attempt
+				// to acquire that lock recursively; the fatal path has already logged.
+#ifndef RPCS3_IOS
 				auto log_thread = named_thread("CPU Thread Cleanup Logger", [name = name]()
 				{
 					sys_log.warning("CPU Thread '%s' terminated abnormally!", name);
 				});
 
 				log_thread();
+#endif
 			}
 		}
 	} cleanup;
