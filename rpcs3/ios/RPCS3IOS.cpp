@@ -7,6 +7,7 @@
 #include "RPCS3IOSPath.h"
 #include "RPCS3IOSPlatform.h"
 #include "RPCS3IOSPerformance.h"
+#include "RAPLicenseContract.h"
 #include "RPCS3IOSRuntimePatches.h"
 #include "RPCS3IOSResolution.h"
 #include "RPCS3IOSSettings.h"
@@ -38,6 +39,7 @@
 #endif
 #include "Emu/system_config.h"
 #include "Emu/system_progress.hpp"
+#include "Emu/system_utils.hpp"
 #include "Emu/vfs_config.h"
 #include "Input/pad_thread.h"
 #include "Utilities/File.h"
@@ -873,7 +875,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":19,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-iso-zip-folder-updates-runtime-patches-library\",\"settings\":\"global-and-per-game-cfg-root-catalog\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop\",\"media_codecs\":true}";
+	return "{\"abi\":20,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library\",\"settings\":\"global-and-per-game-cfg-root-catalog\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop\",\"media_codecs\":true}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -1194,6 +1196,121 @@ extern "C" rpcs3_ios_status rpcs3_ios_install_package(
 
 	g_lifecycle.finish_content_install();
 	return RPCS3_IOS_PACKAGE_INSTALL_FAILED;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_install_rap(const char* rap_path) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!rap_path || !rap_path[0])
+	{
+		set_error("The RAP license path is empty");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+
+	const auto filename = rpcs3::ios::normalized_rap_license_filename(rap_path);
+	if (!filename)
+	{
+		set_error("Select a RAP license with a .rap filename extension");
+		return RPCS3_IOS_RAP_INVALID;
+	}
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("Stop emulation before installing a RAP license");
+		return result;
+	}
+	if (const auto result = g_lifecycle.begin_content_install(); result != RPCS3_IOS_OK)
+	{
+		set_error("RPCS3Core must be ready before installing a RAP license");
+		return result;
+	}
+
+	auto finish_with_error = [](rpcs3_ios_status status, std::string message)
+	{
+		set_error(message);
+		emit_log(2, message);
+		g_lifecycle.finish_content_install();
+		return status;
+	};
+
+	try
+	{
+		fs::file source{rap_path};
+		if (!source)
+		{
+			return finish_with_error(
+				RPCS3_IOS_RAP_INSTALL_FAILED,
+				"RPCS3 could not open the selected RAP license");
+		}
+
+		const u64 source_size = source.size();
+		if (source_size < 0x10)
+		{
+			return finish_with_error(
+				RPCS3_IOS_RAP_INVALID,
+				"The selected RAP license is shorter than the required 16 bytes");
+		}
+
+		const std::string directory = rpcs3::utils::get_hdd0_dir() +
+			"home/" + Emu.GetUsr() + "/exdata/";
+		if (!fs::create_path(directory))
+		{
+			return finish_with_error(
+				RPCS3_IOS_RAP_INSTALL_FAILED,
+				"RPCS3 could not create the active user's exdata directory");
+		}
+
+		fs::pending_file destination{directory + *filename};
+		if (!destination.file)
+		{
+			return finish_with_error(
+				RPCS3_IOS_RAP_INSTALL_FAILED,
+				"RPCS3 could not create the destination RAP license");
+		}
+
+		std::array<u8, 64 * 1024> buffer{};
+		u64 remaining = source_size;
+		while (remaining)
+		{
+			const u64 size = std::min<u64>(remaining, buffer.size());
+			if (source.read(buffer.data(), size) != size ||
+				destination.file.write(buffer.data(), size) != size)
+			{
+				return finish_with_error(
+					RPCS3_IOS_RAP_INSTALL_FAILED,
+					"RPCS3 could not copy the selected RAP license");
+			}
+			remaining -= size;
+		}
+
+		if (source.size() != source_size || destination.file.size() != source_size)
+		{
+			return finish_with_error(
+				RPCS3_IOS_RAP_INSTALL_FAILED,
+				"The selected RAP license changed while RPCS3 was copying it");
+		}
+		if (!destination.commit())
+		{
+			return finish_with_error(
+				RPCS3_IOS_RAP_INSTALL_FAILED,
+				"RPCS3 could not atomically save the RAP license");
+		}
+
+		g_lifecycle.finish_content_install();
+		emit_log(4, fmt::format("Successfully installed RAP license: %s", *filename));
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception during RAP license installation");
+	}
+
+	g_lifecycle.finish_content_install();
+	return RPCS3_IOS_RAP_INSTALL_FAILED;
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_install_iso(
