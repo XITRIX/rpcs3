@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 19u
+#define RPCS3_IOS_ABI_VERSION 20u
 
 typedef enum rpcs3_ios_status
 {
@@ -55,7 +55,9 @@ typedef enum rpcs3_ios_status
     RPCS3_IOS_RPCN_ERROR = 31,
     RPCS3_IOS_RPCN_NOT_CONFIGURED = 32,
     RPCS3_IOS_RPCN_SERVER_EXISTS = 33,
-    RPCS3_IOS_RPCN_SERVER_NOT_FOUND = 34
+    RPCS3_IOS_RPCN_SERVER_NOT_FOUND = 34,
+    RPCS3_IOS_RAP_INVALID = 35,
+    RPCS3_IOS_RAP_INSTALL_FAILED = 36
 } rpcs3_ios_status;
 
 typedef enum rpcs3_ios_state
@@ -391,6 +393,10 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_package(
     const char* package_path,
     rpcs3_ios_package_progress_callback progress_callback,
     void* user_context) RPCS3_IOS_NOEXCEPT;
+// Installs a RAP license for the active PS3 user. The source filename is
+// retained as the content ID and its extension is normalized to lowercase.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_rap(
+    const char* rap_path) RPCS3_IOS_NOEXCEPT;
 // key_path may be NULL for decrypted and self-keyed images. Redump images
 // require their matching .dkey or .key path to be supplied by the wrapper.
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_iso(
