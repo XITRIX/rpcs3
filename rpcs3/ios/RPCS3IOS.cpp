@@ -16,6 +16,7 @@
 #include "GameLibrary.h"
 #include "GameUpdateManifest.h"
 #include "IOSGSFrame.h"
+#include "TrophyLibrary.h"
 #include "Emu/Io/IOS/IOSPadHandler.h"
 
 #include "Emu/System.h"
@@ -876,7 +877,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":23,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete\",\"settings\":\"global-and-per-game-cfg-root-catalog\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop\",\"media_codecs\":true}";
+	return "{\"abi\":24,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-trophies\",\"settings\":\"global-and-per-game-cfg-root-catalog\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop\",\"media_codecs\":true}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -1771,6 +1772,59 @@ extern "C" rpcs3_ios_status rpcs3_ios_enumerate_games(
 	catch (...)
 	{
 		set_error("Unknown exception while enumerating installed games");
+	}
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_enumerate_trophies(
+	const char* title_id,
+	rpcs3_ios_trophy_callback callback,
+	void* user_context) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!title_id || !title_id[0] || !callback)
+	{
+		set_error("Trophy enumeration requires a title ID and callback");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("Stop emulation before enumerating trophies");
+		return result;
+	}
+
+	try
+	{
+		for (const auto& trophy : rpcs3::ios::installed_trophies(title_id))
+		{
+			const rpcs3_ios_trophy_info info{
+				sizeof(rpcs3_ios_trophy_info),
+				trophy.trophy_id,
+				trophy.display_order,
+				static_cast<std::uint32_t>(trophy.grade),
+				trophy.earned ? 1u : 0u,
+				trophy.hidden ? 1u : 0u,
+				0,
+				0,
+				trophy.unlock_timestamp,
+				trophy.trophy_set_id.c_str(),
+				trophy.game_title.c_str(),
+				trophy.name.c_str(),
+				trophy.description.c_str(),
+				trophy.icon_path.c_str(),
+			};
+			callback(user_context, &info);
+		}
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while enumerating trophies");
 	}
 	return RPCS3_IOS_INTERNAL_ERROR;
 }
