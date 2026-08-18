@@ -51,6 +51,18 @@ int main()
 		"en-US",
 		"25%") == "Trophy Progress: 25%");
 	assert(localized_overlay_string(
+		localized_string_id::HOME_MENU_TROPHY_SYNC_TROPHIES,
+		"en-US") == "Sync trophies");
+	assert(localized_overlay_string(
+		localized_string_id::HOME_MENU_TROPHY_SYNCING_TROPHIES,
+		"en-US") == "Syncing...");
+	assert(localized_overlay_string(
+		localized_string_id::HOME_MENU_TROPHY_SYNC_SUCCESS,
+		"en-US") == "Synced!");
+	assert(localized_overlay_string(
+		localized_string_id::HOME_MENU_TROPHY_SYNC_FAILED,
+		"en-US") == "Sync failed");
+	assert(localized_overlay_string(
 		localized_string_id::SAVESTATE_FAILED_DUE_TO_VDEC,
 		"en-US") == "SaveState failed: a video or cutscene is active. Wait for it to finish and try again.");
 	assert(localized_overlay_string(
