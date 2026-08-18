@@ -876,7 +876,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":21,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library\",\"settings\":\"global-and-per-game-cfg-root-catalog\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop\",\"media_codecs\":true}";
+	return "{\"abi\":23,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete\",\"settings\":\"global-and-per-game-cfg-root-catalog\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop\",\"media_codecs\":true}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -1773,6 +1773,49 @@ extern "C" rpcs3_ios_status rpcs3_ios_enumerate_games(
 		set_error("Unknown exception while enumerating installed games");
 	}
 	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_delete_game(const char* title_id) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!title_id || !title_id[0])
+	{
+		set_error("Game deletion requires a title ID");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("Stop emulation before deleting a game");
+		return result;
+	}
+
+	try
+	{
+		const auto result = rpcs3::ios::delete_installed_game(title_id);
+		switch (result.error)
+		{
+		case rpcs3::ios::game_delete_error::none:
+			emit_log(4, fmt::format("Deleted installed game %s (%s); save data and savestates were retained",
+				result.title, result.title_id));
+			return RPCS3_IOS_OK;
+		case rpcs3::ios::game_delete_error::not_found:
+			set_error(std::move(result.detail));
+			return RPCS3_IOS_GAME_NOT_FOUND;
+		case rpcs3::ios::game_delete_error::deletion_failed:
+			set_error(std::move(result.detail));
+			return RPCS3_IOS_GAME_DELETE_FAILED;
+		}
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while deleting the installed game");
+	}
+	return RPCS3_IOS_GAME_DELETE_FAILED;
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_enumerate_game_patches(
