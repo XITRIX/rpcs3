@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 23u
+#define RPCS3_IOS_ABI_VERSION 24u
 
 typedef enum rpcs3_ios_status
 {
@@ -194,7 +194,7 @@ typedef struct rpcs3_ios_pad_feedback
 // Strings are UTF-8 and remain valid only for the duration of the synchronous
 // enumeration callback. icon_path is empty when the title has no ICON0.PNG.
 // size_on_disk is UINT64_MAX when the size could not be determined. New fields
-// are appended so ABI v23 clients can use struct_size for forward compatibility.
+// are appended so ABI v24 clients can use struct_size for forward compatibility.
 typedef struct rpcs3_ios_game_info
 {
     uint32_t struct_size;
@@ -217,6 +217,40 @@ typedef struct rpcs3_ios_game_info
 typedef void (*rpcs3_ios_game_callback)(
     void* user_context,
     const rpcs3_ios_game_info* game);
+
+typedef enum rpcs3_ios_trophy_grade
+{
+    RPCS3_IOS_TROPHY_GRADE_UNKNOWN = 0,
+    RPCS3_IOS_TROPHY_GRADE_PLATINUM = 1,
+    RPCS3_IOS_TROPHY_GRADE_GOLD = 2,
+    RPCS3_IOS_TROPHY_GRADE_SILVER = 3,
+    RPCS3_IOS_TROPHY_GRADE_BRONZE = 4
+} rpcs3_ios_trophy_grade;
+
+// Strings and icon_path remain valid only for the duration of the callback.
+// unlock_timestamp is the PS3 RTC value stored in TROPUSR.DAT, in microseconds
+// since 0001-01-01. hidden is metadata, independent of earned state.
+typedef struct rpcs3_ios_trophy_info
+{
+    uint32_t struct_size;
+    uint32_t trophy_id;
+    uint32_t display_order;
+    uint32_t grade;
+    uint32_t earned;
+    uint32_t hidden;
+    uint32_t reserved0;
+    uint32_t reserved1;
+    uint64_t unlock_timestamp;
+    const char* trophy_set_id;
+    const char* game_title;
+    const char* name;
+    const char* description;
+    const char* icon_path;
+} rpcs3_ios_trophy_info;
+
+typedef void (*rpcs3_ios_trophy_callback)(
+    void* user_context,
+    const rpcs3_ios_trophy_info* trophy);
 
 // PS3 update packages are cumulative in dev_hdd0/game, so enumeration reports
 // the currently installed update state for the requested title ID. The ABI
@@ -462,6 +496,12 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_download_game_update_package(
     void* user_context) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_games(
     rpcs3_ios_game_callback callback,
+    void* user_context) RPCS3_IOS_NOEXCEPT;
+// Enumerates registered trophy data for one installed title and the active PS3
+// user. The read-only path never generates or repairs TROPUSR.DAT.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_trophies(
+    const char* title_id,
+    rpcs3_ios_trophy_callback callback,
     void* user_context) RPCS3_IOS_NOEXCEPT;
 // Permanently deletes the selected title's private base installation,
 // associated game/update data, caches, and custom configuration. Save data

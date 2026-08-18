@@ -74,6 +74,35 @@ TROPUSRLoader::load_result TROPUSRLoader::Load(std::string_view filepath, std::s
 	return res;
 }
 
+bool TROPUSRLoader::LoadExisting(std::string_view filepath)
+{
+	m_tableHeaders.clear();
+	m_table4.clear();
+	m_table6.clear();
+
+	if (!m_file.open(vfs::get(filepath)) ||
+		!LoadHeader() || !LoadTableHeaders() || !LoadTables())
+	{
+		m_file.close();
+		return false;
+	}
+
+	m_file.close();
+	if (m_table4.empty() || m_table4.size() != m_table6.size())
+	{
+		return false;
+	}
+
+	for (usz index = 0; index < m_table4.size(); index++)
+	{
+		if (m_table4[index].trophy_id != index || m_table6[index].trophy_id != index)
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
 bool TROPUSRLoader::LoadHeader()
 {
 	if (!m_file)

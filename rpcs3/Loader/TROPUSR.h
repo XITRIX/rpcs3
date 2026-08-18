@@ -96,6 +96,9 @@ public:
 	};
 
 	[[nodiscard]] load_result Load(std::string_view filepath, std::string_view configpath);
+	// Loads an already registered trophy database without generating, repairing,
+	// or saving it. Frontends use this path for read-only trophy presentation.
+	[[nodiscard]] bool LoadExisting(std::string_view filepath);
 	[[nodiscard]] bool Save(std::string_view filepath);
 
 	[[nodiscard]] u32 GetTrophiesCount() const;
