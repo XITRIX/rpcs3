@@ -186,6 +186,8 @@ typedef struct rpcs3_ios_pad_feedback
 
 // Strings are UTF-8 and remain valid only for the duration of the synchronous
 // enumeration callback. icon_path is empty when the title has no ICON0.PNG.
+// size_on_disk is UINT64_MAX when the size could not be determined. New fields
+// are appended so ABI v20 clients can use struct_size for forward compatibility.
 typedef struct rpcs3_ios_game_info
 {
     uint32_t struct_size;
@@ -194,6 +196,15 @@ typedef struct rpcs3_ios_game_info
     const char* version;
     const char* category;
     const char* icon_path;
+    const char* firmware_version;
+    const char* path;
+    uint32_t attribute;
+    uint32_t bootable;
+    uint32_t parental_level;
+    uint32_t sound_format;
+    uint32_t resolution;
+    uint32_t reserved;
+    uint64_t size_on_disk;
 } rpcs3_ios_game_info;
 
 typedef void (*rpcs3_ios_game_callback)(
