@@ -1611,6 +1611,15 @@ extern "C" rpcs3_ios_status rpcs3_ios_enumerate_games(
 				game.version.c_str(),
 				game.category.c_str(),
 				game.icon_path.c_str(),
+				game.firmware_version.c_str(),
+				game.path.c_str(),
+				game.attribute,
+				game.bootable,
+				game.parental_level,
+				game.sound_format,
+				game.resolution,
+				0,
+				game.size_on_disk,
 			};
 			callback(user_context, &info);
 		}
