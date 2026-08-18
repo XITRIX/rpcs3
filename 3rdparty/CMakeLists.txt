@@ -432,6 +432,11 @@ add_subdirectory(llvm EXCLUDE_FROM_ALL)
 # disabled at runtime.
 if(RPCS3_IOS_FRONTEND)
 	add_subdirectory(wolfssl EXCLUDE_FROM_ALL)
+	# Sony's current PS3 update chain includes the self-signed SCEI DNAS
+	# Root 05 with serial number zero. RFC 5280 asks implementations to
+	# tolerate non-conforming zero serials, and this focused wolfSSL switch
+	# preserves every other ASN.1 and certificate validation check.
+	target_compile_definitions(wolfssl PRIVATE WOLFSSL_ASN_ALLOW_0_SERIAL)
 	add_subdirectory(curl EXCLUDE_FROM_ALL)
 	add_library(3rdparty_miniupnpc INTERFACE)
 	add_subdirectory(rtmidi EXCLUDE_FROM_ALL)
