@@ -13,6 +13,21 @@ namespace rpcs3::ios
 	};
 
 	inline constexpr std::uint64_t process_memory_mib = 0x100000ull;
+	inline constexpr std::uint32_t automatic_llvm_compile_threads = 3;
+
+	// LLVM compilation has a large transient working set. On iOS, a zero
+	// configuration value means a memory-safe automatic limit instead of every
+	// performance core; an explicit value remains an opt-in override.
+	constexpr std::uint32_t get_llvm_compile_thread_limit(
+		std::uint32_t available_threads,
+		std::uint32_t configured_threads)
+	{
+		const std::uint32_t hardware_limit = available_threads ? available_threads : 1;
+		const std::uint32_t requested_threads = configured_threads
+			? configured_threads
+			: automatic_llvm_compile_threads;
+		return requested_threads < hardware_limit ? requested_threads : hardware_limit;
+	}
 
 	// iOS reports the process's current dirty-memory allowance rather than a
 	// fixed device-wide limit. Enter pressure states immediately, but require an
