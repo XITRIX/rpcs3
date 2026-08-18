@@ -178,6 +178,8 @@ if(RPCS3_FRONTEND STREQUAL "IOS")
         ios/GameArchiveContract.h
         ios/GameLibrary.cpp
         ios/GameLibrary.h
+        ios/GameUpdateManifest.cpp
+        ios/GameUpdateManifest.h
         ios/IOSGSFrame.cpp
         ios/IOSGSFrame.h
         ios/RPCS3IOS.cpp
@@ -206,7 +208,7 @@ if(RPCS3_FRONTEND STREQUAL "IOS")
         ${CMAKE_SOURCE_DIR}/3rdparty/zlib/zlib/contrib/minizip/ioapi.c
         ${CMAKE_SOURCE_DIR}/3rdparty/zlib/zlib/contrib/minizip/unzip.c
     )
-    target_link_libraries(RPCS3Core PRIVATE rpcs3_emu)
+    target_link_libraries(RPCS3Core PRIVATE rpcs3_emu 3rdparty::libcurl)
     target_include_directories(RPCS3Core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ios")
     target_include_directories(RPCS3Core PRIVATE
         "${CMAKE_SOURCE_DIR}/3rdparty/zlib/zlib/contrib"
@@ -217,7 +219,7 @@ if(RPCS3_FRONTEND STREQUAL "IOS")
         RPCS3_IOS_CORE_BUILD=1
         "$<TARGET_PROPERTY:3rdparty_zlib,INTERFACE_COMPILE_DEFINITIONS>"
     )
-    set_source_files_properties(ios/FirmwareInstaller.cpp ios/GameLibrary.cpp ios/RPCS3IOS.cpp ios/RPCS3IOSLocalization.cpp ios/RPCS3IOSPerformance.cpp ios/RPCS3IOSRuntimePatches.cpp ios/RPCS3IOSSettings.cpp PROPERTIES COMPILE_OPTIONS -fexceptions)
+    set_source_files_properties(ios/FirmwareInstaller.cpp ios/GameLibrary.cpp ios/GameUpdateManifest.cpp ios/RPCS3IOS.cpp ios/RPCS3IOSLocalization.cpp ios/RPCS3IOSPerformance.cpp ios/RPCS3IOSRuntimePatches.cpp ios/RPCS3IOSSettings.cpp PROPERTIES COMPILE_OPTIONS -fexceptions)
 
     set_target_properties(RPCS3Core PROPERTIES
         OUTPUT_NAME RPCS3Core
