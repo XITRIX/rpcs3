@@ -361,6 +361,10 @@ localized_source overlay_source(id value) noexcept
 	case id::HOME_MENU_TROPHY_GRADE_SILVER: return {"core.HOME_MENU_TROPHY_GRADE_SILVER", "Silver"};
 	case id::HOME_MENU_TROPHY_GRADE_GOLD: return {"core.HOME_MENU_TROPHY_GRADE_GOLD", "Gold"};
 	case id::HOME_MENU_TROPHY_GRADE_PLATINUM: return {"core.HOME_MENU_TROPHY_GRADE_PLATINUM", "Platinum"};
+	case id::HOME_MENU_TROPHY_SYNC_TROPHIES: return {"core.HOME_MENU_TROPHY_SYNC_TROPHIES", "Sync trophies"};
+	case id::HOME_MENU_TROPHY_SYNCING_TROPHIES: return {"core.HOME_MENU_TROPHY_SYNCING_TROPHIES", "Syncing..."};
+	case id::HOME_MENU_TROPHY_SYNC_SUCCESS: return {"core.HOME_MENU_TROPHY_SYNC_SUCCESS", "Synced!"};
+	case id::HOME_MENU_TROPHY_SYNC_FAILED: return {"core.HOME_MENU_TROPHY_SYNC_FAILED", "Sync failed"};
 	case id::HOME_MENU_TROPHY_SORT_GAME_DEFAULT: return {"core.HOME_MENU_TROPHY_SORT_GAME_DEFAULT", "Sort: Game Default"};
 	case id::HOME_MENU_TROPHY_SORT_NOT_EARNED: return {"core.HOME_MENU_TROPHY_SORT_NOT_EARNED", "Sort: Not Earned"};
 	case id::HOME_MENU_TROPHY_SORT_EARNED_DATE: return {"core.HOME_MENU_TROPHY_SORT_EARNED_DATE", "Sort: Earned Date"};
