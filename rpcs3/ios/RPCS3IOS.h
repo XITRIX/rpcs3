@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 22u
+#define RPCS3_IOS_ABI_VERSION 23u
 
 typedef enum rpcs3_ios_status
 {
@@ -59,7 +59,8 @@ typedef enum rpcs3_ios_status
     RPCS3_IOS_RAP_INVALID = 35,
     RPCS3_IOS_RAP_INSTALL_FAILED = 36,
     RPCS3_IOS_NETWORK_ERROR = 37,
-    RPCS3_IOS_RESPONSE_TOO_LARGE = 38
+    RPCS3_IOS_RESPONSE_TOO_LARGE = 38,
+    RPCS3_IOS_GAME_DELETE_FAILED = 39
 } rpcs3_ios_status;
 
 typedef enum rpcs3_ios_state
@@ -193,7 +194,7 @@ typedef struct rpcs3_ios_pad_feedback
 // Strings are UTF-8 and remain valid only for the duration of the synchronous
 // enumeration callback. icon_path is empty when the title has no ICON0.PNG.
 // size_on_disk is UINT64_MAX when the size could not be determined. New fields
-// are appended so ABI v22 clients can use struct_size for forward compatibility.
+// are appended so ABI v23 clients can use struct_size for forward compatibility.
 typedef struct rpcs3_ios_game_info
 {
     uint32_t struct_size;
@@ -462,6 +463,11 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_download_game_update_package(
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_games(
     rpcs3_ios_game_callback callback,
     void* user_context) RPCS3_IOS_NOEXCEPT;
+// Permanently deletes the selected title's private base installation,
+// associated game/update data, caches, and custom configuration. Save data
+// and savestates are retained intentionally.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_delete_game(
+    const char* title_id) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_game_patches(
     const char* title_id,
     rpcs3_ios_game_patch_callback callback,

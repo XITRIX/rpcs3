@@ -189,6 +189,56 @@ bool valid_title_id(std::string_view title_id)
 		});
 }
 
+bool remove_installed_path(const std::string& path, std::string& detail)
+{
+	fs::stat_t info{};
+	if (!fs::get_stat(path, info))
+	{
+		if (fs::g_tls_error == fs::error::noent)
+		{
+			return true;
+		}
+		detail = fmt::format("RPCS3 could not inspect %s", path);
+		return false;
+	}
+
+	const bool removed = info.is_directory
+		? fs::remove_all(path, true, false)
+		: fs::remove_file(path);
+	if (!removed)
+	{
+		detail = fmt::format("RPCS3 could not remove %s", path);
+	}
+	return removed;
+}
+
+bool remove_installed_paths_with_prefix(
+	const std::string& root,
+	std::string_view prefix,
+	std::string& detail)
+{
+	std::vector<std::string> paths;
+	for (auto&& entry : fs::dir{root})
+	{
+		const bool title_scoped = entry.name == prefix ||
+			(entry.name.starts_with(prefix) && entry.name.size() > prefix.size() &&
+				entry.name[prefix.size()] == '_');
+		if (entry.name != "." && entry.name != ".." && title_scoped)
+		{
+			paths.emplace_back(root + entry.name);
+		}
+	}
+
+	for (const std::string& path : paths)
+	{
+		if (!remove_installed_path(path, detail))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
 std::string disc_image_root()
 {
 	return rpcs3::utils::get_games_dir() + "DiscImages/";
@@ -1432,6 +1482,99 @@ game_folder_install_result install_game_folder(
 		progress(1000, 1000, fmt::format("Installed %s", title));
 	}
 	return {game_folder_install_error::none, std::move(title_id), std::move(title), {}};
+}
+
+game_delete_result delete_installed_game(std::string_view title_id)
+{
+	if (!valid_title_id(title_id))
+	{
+		return {
+			game_delete_error::not_found,
+			std::string{title_id},
+			{},
+			"The selected game is not installed",
+		};
+	}
+
+	const auto installed = find_installed_game(title_id);
+	if (!installed)
+	{
+		return {
+			game_delete_error::not_found,
+			std::string{title_id},
+			{},
+			"The selected game is not installed",
+		};
+	}
+
+	const std::string id{title_id};
+	std::string detail;
+	if (!remove_installed_paths_with_prefix(
+		rpcs3::utils::get_hdd0_game_dir(), id, detail))
+	{
+		return {
+			game_delete_error::deletion_failed,
+			id,
+			installed->title,
+			std::move(detail),
+		};
+	}
+	const std::array private_install_paths{
+		disc_image_root() + id,
+		extracted_game_root() + id,
+	};
+	for (const std::string& path : private_install_paths)
+	{
+		if (!remove_installed_path(path, detail))
+		{
+			return {
+				game_delete_error::deletion_failed,
+				id,
+				installed->title,
+				std::move(detail),
+			};
+		}
+	}
+
+	// Match RPCS3's desktop removal defaults: discard derived title state and
+	// custom configuration, but retain save data and savestates for recovery or
+	// a later reinstall.
+	const std::array derived_paths{
+		rpcs3::utils::get_cache_dir_by_serial(id),
+		rpcs3::utils::get_custom_config_path(id),
+		rpcs3::utils::get_input_config_dir(id),
+	};
+	for (const std::string& path : derived_paths)
+	{
+		if (!remove_installed_path(path, detail))
+		{
+			return {
+				game_delete_error::deletion_failed,
+				id,
+				installed->title,
+				std::move(detail),
+			};
+		}
+	}
+	if (!remove_installed_paths_with_prefix(
+		rpcs3::utils::get_hdd1_cache_dir(), id, detail) ||
+		!remove_installed_paths_with_prefix(
+		rpcs3::utils::get_hdd0_locks_dir(), id, detail))
+	{
+		return {
+			game_delete_error::deletion_failed,
+			id,
+			installed->title,
+			std::move(detail),
+		};
+	}
+
+	return {
+		game_delete_error::none,
+		id,
+		installed->title,
+		{},
+	};
 }
 
 std::vector<installed_game> installed_games()

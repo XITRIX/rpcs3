@@ -46,6 +46,13 @@ enum class game_patch_install_error
 	installation_failed,
 };
 
+enum class game_delete_error
+{
+	none,
+	not_found,
+	deletion_failed,
+};
+
 struct game_package_install_result
 {
 	game_package_install_error error = game_package_install_error::none;
@@ -84,6 +91,14 @@ struct game_patch_install_result
 	std::string title_id;
 	std::string title;
 	std::string version;
+	std::string detail;
+};
+
+struct game_delete_result
+{
+	game_delete_error error = game_delete_error::none;
+	std::string title_id;
+	std::string title;
 	std::string detail;
 };
 
@@ -137,6 +152,7 @@ game_patch_install_result install_game_patch(
 	std::string_view expected_title_id,
 	const std::string& package_path,
 	const game_package_progress_callback& progress);
+game_delete_result delete_installed_game(std::string_view title_id);
 std::vector<installed_game> installed_games();
 std::optional<installed_game> find_installed_game(std::string_view title_id);
 std::vector<installed_game_patch> installed_game_patches(std::string_view title_id);
