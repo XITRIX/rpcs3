@@ -14,6 +14,7 @@
 #endif
 
 #ifdef RPCS3_IOS
+#include <malloc/malloc.h>
 #include <os/proc.h>
 #endif
 
@@ -143,6 +144,15 @@ u64 available_process_memory_headroom() noexcept
 	return os_proc_available_memory();
 #else
 	return umax;
+#endif
+}
+
+u64 relieve_process_memory_pressure() noexcept
+{
+#ifdef RPCS3_IOS
+	return malloc_zone_pressure_relief(nullptr, 0);
+#else
+	return 0;
 #endif
 }
 
