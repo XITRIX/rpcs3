@@ -297,9 +297,14 @@ namespace rsx
 
 		bool trophy_list_dialog::rpcn_configured()
 		{
+#ifdef RPCS3_IOS
+			// iOS keeps derived credentials in the process-lifetime global override.
+			return !g_cfg_rpcn.get_npid().empty() && !g_cfg_rpcn.get_password().empty();
+#else
 			cfg_rpcn cfg;
 			cfg.load();
 			return !cfg.get_npid().empty() && !cfg.get_password().empty();
+#endif
 		}
 
 		void trophy_list_dialog::sync_trophies_async()
