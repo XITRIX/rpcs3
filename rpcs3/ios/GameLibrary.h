@@ -96,6 +96,12 @@ struct installed_game
 	u32 resolution = 0;
 	std::string path;
 	std::string icon_path;
+	std::string firmware_version;
+	u32 attribute = 0;
+	u32 bootable = 0;
+	u32 parental_level = 0;
+	u32 sound_format = 0;
+	u64 size_on_disk = umax;
 };
 
 struct installed_game_patch
