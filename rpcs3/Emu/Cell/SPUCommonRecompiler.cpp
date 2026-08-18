@@ -31,6 +31,8 @@
 
 #ifdef RPCS3_IOS
 #include "ios/RPCS3IOSExperimentalPolicy.h"
+#include "ios/IOSMemoryPressurePolicy.h"
+#include "ios/RPCS3IOSPerformance.h"
 #include "rpcs3_version.h"
 #endif
 
@@ -1382,6 +1384,13 @@ void spu_cache::initialize(bool build_existing_cache)
 		spu_log.notice("SPU Runtime: Worker %u built %u programs.", i + 1, workers[i]);
 		built_total += workers[i];
 	}
+
+#ifdef RPCS3_IOS
+	if (const u64 released = rpcs3::ios::relieve_process_memory_pressure())
+	{
+		spu_log.notice("iOS released %llu MiB of transient SPU compilation memory", released / rpcs3::ios::process_memory_mib);
+	}
+#endif
 
 	spu_log.notice("SPU Runtime: Workers built %u programs.", built_total);
 
