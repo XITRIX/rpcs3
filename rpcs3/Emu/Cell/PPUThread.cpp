@@ -2,6 +2,8 @@
 #include "Utilities/JIT.h"
 #ifdef RPCS3_IOS
 #include "Utilities/JITIOSLayoutPolicy.h"
+#include "ios/IOSMemoryPressurePolicy.h"
+#include "ios/RPCS3IOSPerformance.h"
 #endif
 #include "Utilities/StrUtil.h"
 #include "util/serialization.hpp"
@@ -3822,15 +3824,10 @@ extern bool ppu_stdcx(ppu_thread& ppu, u32 addr, u64 reg_value)
 
 struct jit_core_allocator
 {
-	const s16 thread_count = g_cfg.core.llvm_threads ? std::min<s32>(g_cfg.core.llvm_threads, limit()) : limit();
+	const s16 thread_count = static_cast<s16>(std::min<u32>(rpcs3::utils::get_max_threads(), 0x7fff));
 
 	// Initialize global semaphore with the max number of threads
 	::semaphore<0x7fff> sem{std::max<s16>(thread_count, 1)};
-
-	static s16 limit()
-	{
-		return static_cast<s16>(std::min<s32>(0x7fff, utils::get_thread_count()));
-	}
 };
 
 #ifdef LLVM_AVAILABLE
@@ -4311,7 +4308,7 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_
 	// Especially when thread count is on the rise with each CPU generation
 	atomic_t<u32> file_size_limit = static_cast<u32>(std::clamp<u64>(utils::aligned_div<u64>(utils::get_total_memory(), 2000), 65536, u32{umax}));
 
-	const u32 software_thread_limit = std::min<u32>(g_cfg.core.llvm_threads ? g_cfg.core.llvm_threads : u32{umax}, ::size32(file_queue));
+	const u32 software_thread_limit = std::min<u32>(rpcs3::utils::get_max_threads(), ::size32(file_queue));
 	const u32 cpu_thread_limit = utils::get_thread_count() > 8u ? std::max<u32>(utils::get_thread_count(), 2) - 1 : utils::get_thread_count(); // One LLVM thread less
 
 	std::vector<u128> decrypt_klics;
@@ -4581,6 +4578,13 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_
 
 	// Join every thread
 	workers.join();
+
+#ifdef RPCS3_IOS
+	if (const u64 released = rpcs3::ios::relieve_process_memory_pressure())
+	{
+		ppu_log.notice("iOS released %llu MiB of transient SPRX compilation memory", released / rpcs3::ios::process_memory_mib);
+	}
+#endif
 
 	named_thread exec_worker("PPU Exec Worker", [&]
 	{
@@ -5629,6 +5633,10 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 
 		const u32 thread_count = std::max<u32>(std::min<u32>(::size32(workload), rpcs3::utils::get_max_threads()), 1) - 1;
 
+#ifdef RPCS3_IOS
+		ppu_log.notice("iOS LLVM compilation: %u module(s), %u concurrent thread(s)", ::size32(workload), thread_count + 1);
+#endif
+
 		struct thread_index_allocator
 		{
 			atomic_t<u64> index = 0;
@@ -5753,7 +5761,14 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 		}
 
 		threads.join();
-		
+
+#ifdef RPCS3_IOS
+		if (const u64 released = rpcs3::ios::relieve_process_memory_pressure())
+		{
+			ppu_log.notice("iOS released %llu MiB of transient PPU compilation memory", released / rpcs3::ios::process_memory_mib);
+		}
+#endif
+
 		thread_ctrl::set_name(old_name);
 		g_watchdog_hold_ctr--;
 	}

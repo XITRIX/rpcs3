@@ -7,9 +7,16 @@ using rpcs3::ios::process_memory_pressure;
 
 int main()
 {
+	using rpcs3::ios::get_llvm_compile_thread_limit;
 	using rpcs3::ios::get_process_memory_pressure;
 	using rpcs3::ios::get_process_pressure_texture_cache_quota;
 	using rpcs3::ios::has_safe_savestate_headroom;
+
+	static_assert(get_llvm_compile_thread_limit(10, 0) == 3);
+	static_assert(get_llvm_compile_thread_limit(2, 0) == 2);
+	static_assert(get_llvm_compile_thread_limit(10, 6) == 6);
+	static_assert(get_llvm_compile_thread_limit(4, 12) == 4);
+	static_assert(get_llvm_compile_thread_limit(0, 0) == 1);
 
 	static_assert(get_process_memory_pressure(2'000 * process_memory_mib) == process_memory_pressure::low);
 	static_assert(get_process_memory_pressure(1536 * process_memory_mib) == process_memory_pressure::moderate);

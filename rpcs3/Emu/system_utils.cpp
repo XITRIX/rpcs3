@@ -14,6 +14,10 @@
 #include "Crypto/unedat.h"
 #include "Loader/ISO.h"
 
+#ifdef RPCS3_IOS
+#include "ios/IOSMemoryPressurePolicy.h"
+#endif
+
 #include <charconv>
 #include <thread>
 
@@ -25,8 +29,13 @@ namespace rpcs3::utils
 	{
 		const u32 max_threads = static_cast<u32>(g_cfg.core.llvm_threads);
 		const u32 hw_threads = ::utils::get_thread_count();
+
+#ifdef RPCS3_IOS
+		return rpcs3::ios::get_llvm_compile_thread_limit(hw_threads, max_threads);
+#else
 		const u32 thread_count = max_threads > 0 ? std::min(max_threads, hw_threads) : hw_threads;
 		return thread_count;
+#endif
 	}
 
 	void configure_logs(bool force_enable)
