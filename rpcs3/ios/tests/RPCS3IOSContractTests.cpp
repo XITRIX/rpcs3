@@ -19,7 +19,7 @@ int main()
 	static_assert(sizeof(rpcs3_ios_display_surface) == 24);
 	static_assert(sizeof(rpcs3_ios_pad_state) == 40);
 	static_assert(sizeof(rpcs3_ios_pad_feedback) == 16);
-	static_assert(sizeof(rpcs3_ios_game_info) == 48);
+	static_assert(sizeof(rpcs3_ios_game_info) == 96);
 	static_assert(sizeof(rpcs3_ios_game_patch_info) == 32);
 	static_assert(sizeof(rpcs3_ios_runtime_patch_info) == 80);
 	static_assert(sizeof(rpcs3_ios_setting_info) == 96);
