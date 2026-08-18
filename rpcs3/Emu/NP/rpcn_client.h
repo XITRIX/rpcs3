@@ -1,5 +1,8 @@
 #pragma once
 
+#ifndef RPCS3_EMU_NP_RPCN_CLIENT_H
+#define RPCS3_EMU_NP_RPCN_CLIENT_H
+
 #include <unordered_map>
 #include <chrono>
 #include <thread>
@@ -474,3 +477,5 @@ namespace rpcn
 	};
 
 } // namespace rpcn
+
+#endif // RPCS3_EMU_NP_RPCN_CLIENT_H
