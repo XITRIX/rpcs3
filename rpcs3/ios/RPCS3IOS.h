@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 20u
+#define RPCS3_IOS_ABI_VERSION 22u
 
 typedef enum rpcs3_ios_status
 {
@@ -57,7 +57,9 @@ typedef enum rpcs3_ios_status
     RPCS3_IOS_RPCN_SERVER_EXISTS = 33,
     RPCS3_IOS_RPCN_SERVER_NOT_FOUND = 34,
     RPCS3_IOS_RAP_INVALID = 35,
-    RPCS3_IOS_RAP_INSTALL_FAILED = 36
+    RPCS3_IOS_RAP_INSTALL_FAILED = 36,
+    RPCS3_IOS_NETWORK_ERROR = 37,
+    RPCS3_IOS_RESPONSE_TOO_LARGE = 38
 } rpcs3_ios_status;
 
 typedef enum rpcs3_ios_state
@@ -108,6 +110,10 @@ typedef void (*rpcs3_ios_folder_progress_callback)(
     uint32_t completed,
     uint32_t total,
     const char* stage);
+typedef void (*rpcs3_ios_download_progress_callback)(
+    void* user_context,
+    uint64_t completed,
+    uint64_t total);
 typedef void (*rpcs3_ios_main_thread_task)(void* task_context);
 typedef void (*rpcs3_ios_main_thread_callback)(
     void* user_context,
@@ -187,7 +193,7 @@ typedef struct rpcs3_ios_pad_feedback
 // Strings are UTF-8 and remain valid only for the duration of the synchronous
 // enumeration callback. icon_path is empty when the title has no ICON0.PNG.
 // size_on_disk is UINT64_MAX when the size could not be determined. New fields
-// are appended so ABI v20 clients can use struct_size for forward compatibility.
+// are appended so ABI v22 clients can use struct_size for forward compatibility.
 typedef struct rpcs3_ios_game_info
 {
     uint32_t struct_size;
@@ -434,6 +440,24 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_game_patch(
     const char* expected_title_id,
     const char* package_path,
     rpcs3_ios_package_progress_callback progress_callback,
+    void* user_context) RPCS3_IOS_NOEXCEPT;
+// Fetches Sony's bounded title-update XML through the core's curl/wolfSSL
+// transport because current Apple TLS rejects that legacy endpoint before a
+// URLSession trust override can take effect. manifest_size receives raw bytes;
+// no terminator is written or included.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_fetch_game_update_manifest(
+    const char* title_id,
+    void* manifest,
+    size_t manifest_capacity,
+    size_t* manifest_size) RPCS3_IOS_NOEXCEPT;
+// Downloads one manifest-selected package through the same legacy-compatible
+// transport. destination_path must be a .pkg below the configured cache root;
+// the file is committed atomically only after exactly expected_size bytes.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_download_game_update_package(
+    const char* package_url,
+    const char* destination_path,
+    uint64_t expected_size,
+    rpcs3_ios_download_progress_callback progress_callback,
     void* user_context) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_games(
     rpcs3_ios_game_callback callback,
