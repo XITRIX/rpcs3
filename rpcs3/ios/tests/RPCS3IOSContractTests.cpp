@@ -6,7 +6,7 @@
 int main()
 {
 	using namespace rpcs3::ios;
-	static_assert(RPCS3_IOS_ABI_VERSION == 23);
+	static_assert(RPCS3_IOS_ABI_VERSION == 24);
 	static_assert(RPCS3_IOS_FOLDER_INVALID == 22);
 	static_assert(RPCS3_IOS_FOLDER_INSTALL_FAILED == 23);
 	static_assert(RPCS3_IOS_PATCH_INVALID == 24);
@@ -21,6 +21,9 @@ int main()
 	static_assert(sizeof(rpcs3_ios_pad_state) == 40);
 	static_assert(sizeof(rpcs3_ios_pad_feedback) == 16);
 	static_assert(sizeof(rpcs3_ios_game_info) == 96);
+	static_assert(sizeof(rpcs3_ios_trophy_info) == 80);
+	static_assert(RPCS3_IOS_TROPHY_GRADE_PLATINUM == 1);
+	static_assert(RPCS3_IOS_TROPHY_GRADE_BRONZE == 4);
 	static_assert(sizeof(rpcs3_ios_game_patch_info) == 32);
 	static_assert(sizeof(rpcs3_ios_runtime_patch_info) == 80);
 	static_assert(sizeof(rpcs3_ios_setting_info) == 96);
