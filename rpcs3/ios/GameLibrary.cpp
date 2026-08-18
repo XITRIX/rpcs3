@@ -751,6 +751,11 @@ std::optional<installed_game> installed_iso(const std::string& directory)
 		psf::get_integer(metadata, "RESOLUTION", 0),
 		iso_path,
 		std::move(icon_path),
+		std::string{psf::get_string(metadata, "PS3_SYSTEM_VER")},
+		psf::get_integer(metadata, "ATTRIBUTE", 0),
+		psf::get_integer(metadata, "BOOTABLE", 0),
+		psf::get_integer(metadata, "PARENTAL_LEVEL", 0),
+		psf::get_integer(metadata, "SOUND_FORMAT", 0),
 	};
 }
 
@@ -798,6 +803,11 @@ std::optional<installed_game> installed_extracted_game(const std::string& direct
 		psf::get_integer(metadata, "RESOLUTION", 0),
 		directory,
 		std::move(icon_path),
+		std::string{psf::get_string(metadata, "PS3_SYSTEM_VER")},
+		psf::get_integer(metadata, "ATTRIBUTE", 0),
+		psf::get_integer(metadata, "BOOTABLE", 0),
+		psf::get_integer(metadata, "PARENTAL_LEVEL", 0),
+		psf::get_integer(metadata, "SOUND_FORMAT", 0),
 	};
 }
 }
@@ -1477,6 +1487,11 @@ std::vector<installed_game> installed_games()
 			psf::get_integer(metadata, "RESOLUTION", 0),
 			path,
 			std::move(icon_path),
+			std::string{psf::get_string(metadata, "PS3_SYSTEM_VER")},
+			psf::get_integer(metadata, "ATTRIBUTE", 0),
+			psf::get_integer(metadata, "BOOTABLE", 0),
+			psf::get_integer(metadata, "PARENTAL_LEVEL", 0),
+			psf::get_integer(metadata, "SOUND_FORMAT", 0),
 		});
 	}
 
@@ -1539,6 +1554,34 @@ std::vector<installed_game> installed_games()
 			rpcs3::utils::version_is_bigger(update_version, game.version, game.title_id, false)))
 		{
 			game.version = std::move(update_version);
+
+			const std::string update_firmware{psf::get_string(update_metadata, "PS3_SYSTEM_VER")};
+			if (!update_firmware.empty() && (game.firmware_version.empty() ||
+				rpcs3::utils::version_is_bigger(update_firmware, game.firmware_version, game.title_id, true)))
+			{
+				game.firmware_version = update_firmware;
+			}
+
+			const u32 update_parental_level = psf::get_integer(update_metadata, "PARENTAL_LEVEL", 0);
+			if (update_parental_level > game.parental_level)
+			{
+				game.parental_level = update_parental_level;
+			}
+		}
+	}
+
+	// Match the Qt game-list size column. Disc images report their file size;
+	// directory-backed games report the recursive size of their boot path.
+	for (installed_game& game : result)
+	{
+		if (fs::is_file(game.path))
+		{
+			const fs::file file{game.path};
+			game.size_on_disk = file ? file.size() : umax;
+		}
+		else
+		{
+			game.size_on_disk = fs::get_dir_size(game.path, 1);
 		}
 	}
 
