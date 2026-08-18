@@ -6,6 +6,7 @@
 int main()
 {
 	using rpcs3::ios::normalize_resolved_host_path;
+	using rpcs3::ios::is_lexically_within_path;
 
 	assert(normalize_resolved_host_path("").empty());
 	assert(normalize_resolved_host_path("/") == "/");
@@ -19,6 +20,21 @@ int main()
 
 	assert(update_tail == "BLES00635/USRDIR/EBOOT.BIN");
 	assert(update_tail.starts_with("BLES00635/"));
+
+	assert(is_lexically_within_path(
+		"/sandbox/Library/Caches/RPCS3",
+		"/sandbox/Library/Caches/RPCS3/UpdateDownloads/job/Update.pkg"));
+	assert(is_lexically_within_path(
+		"/sandbox/Library/Caches/RPCS3/",
+		"/sandbox/Library/Caches/RPCS3/UpdateDownloads/Update.pkg"));
+	assert(!is_lexically_within_path(
+		"/sandbox/Library/Caches/RPCS3",
+		"/sandbox/Library/Caches/RPCS3-other/Update.pkg"));
+	assert(!is_lexically_within_path(
+		"/sandbox/Library/Caches/RPCS3",
+		"/sandbox/Library/Caches/RPCS3/../Documents/Update.pkg"));
+	assert(!is_lexically_within_path("relative", "/sandbox/Update.pkg"));
+	assert(!is_lexically_within_path("/sandbox", "relative/Update.pkg"));
 
 	return 0;
 }
