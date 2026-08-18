@@ -19,6 +19,10 @@ void record_presented_frame(u32 rsx_load) noexcept;
 // limit. The query is intentionally cheap enough for frame-boundary sampling.
 u64 available_process_memory_headroom() noexcept;
 
+// Returns unused pages from all malloc zones to iOS after a bounded transient
+// allocation workload, such as an LLVM compilation batch.
+u64 relieve_process_memory_pressure() noexcept;
+
 // Produces an observational snapshot without taking the serialized lifecycle
 // lock. The caller supplies struct_size for ABI validation.
 rpcs3_ios_status capture_performance_metrics(rpcs3_ios_performance_metrics* metrics);
