@@ -14,6 +14,7 @@
 #include "RPCS3IOSZcullAccuracy.h"
 #include "FirmwareInstaller.h"
 #include "GameLibrary.h"
+#include "GameUpdateManifest.h"
 #include "IOSGSFrame.h"
 #include "Emu/Io/IOS/IOSPadHandler.h"
 
@@ -875,7 +876,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":20,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library\",\"settings\":\"global-and-per-game-cfg-root-catalog\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop\",\"media_codecs\":true}";
+	return "{\"abi\":21,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library\",\"settings\":\"global-and-per-game-cfg-root-catalog\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop\",\"media_codecs\":true}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -1582,6 +1583,144 @@ extern "C" rpcs3_ios_status rpcs3_ios_install_game_patch(
 
 	g_lifecycle.finish_content_install();
 	return RPCS3_IOS_PATCH_INSTALL_FAILED;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_fetch_game_update_manifest(
+	const char* title_id,
+	void* manifest,
+	size_t manifest_capacity,
+	size_t* manifest_size) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (manifest_size)
+	{
+		*manifest_size = 0;
+	}
+	if (!title_id || !title_id[0] || !manifest || manifest_capacity == 0 || !manifest_size)
+	{
+		set_error("Game-update discovery requires a title ID and writable manifest buffer");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("Stop emulation before checking for game updates");
+		return result;
+	}
+
+	try
+	{
+		constexpr size_t absolute_limit = 2 * 1024 * 1024;
+		const size_t response_limit = std::min(manifest_capacity, absolute_limit);
+		auto result = rpcs3::ios::fetch_game_update_manifest(title_id, response_limit);
+		switch (result.error)
+		{
+		case rpcs3::ios::game_update_manifest_error::none:
+			if (result.content.size() > manifest_capacity)
+			{
+				set_error("The PlayStation update manifest exceeded the caller buffer");
+				return RPCS3_IOS_RESPONSE_TOO_LARGE;
+			}
+			std::memcpy(manifest, result.content.data(), result.content.size());
+			*manifest_size = result.content.size();
+			emit_log(4, fmt::format("Downloaded %u-byte PlayStation update manifest for %s through curl/wolfSSL",
+				static_cast<u32>(result.content.size()), title_id));
+			return RPCS3_IOS_OK;
+		case rpcs3::ios::game_update_manifest_error::invalid_title_id:
+			set_error(std::move(result.detail));
+			return RPCS3_IOS_INVALID_ARGUMENT;
+		case rpcs3::ios::game_update_manifest_error::response_too_large:
+			set_error(std::move(result.detail));
+			return RPCS3_IOS_RESPONSE_TOO_LARGE;
+		case rpcs3::ios::game_update_manifest_error::initialization_failed:
+		case rpcs3::ios::game_update_manifest_error::request_failed:
+		case rpcs3::ios::game_update_manifest_error::http_error:
+			set_error(std::move(result.detail));
+			return RPCS3_IOS_NETWORK_ERROR;
+		}
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown error while downloading the PlayStation update manifest");
+	}
+	return RPCS3_IOS_NETWORK_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_download_game_update_package(
+	const char* package_url,
+	const char* destination_path,
+	uint64_t expected_size,
+	rpcs3_ios_download_progress_callback progress_callback,
+	void* user_context) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!package_url || !package_url[0] || !destination_path || !destination_path[0] || expected_size == 0)
+	{
+		set_error("Game-update download requires a package URL, cache destination, and expected size");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	const std::string destination{destination_path};
+	if (!rpcs3::ios::is_lexically_within_path(g_cache_path, destination) ||
+		!destination.ends_with(".pkg"))
+	{
+		set_error("Game-update packages may be downloaded only to a .pkg file under RPCS3's cache");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("Stop emulation before downloading game updates");
+		return result;
+	}
+
+	try
+	{
+		auto progress = [progress_callback, user_context](std::uint64_t completed, std::uint64_t total)
+		{
+			if (progress_callback)
+			{
+				progress_callback(user_context, completed, total);
+			}
+		};
+		auto result = rpcs3::ios::download_game_update_package(
+			package_url, destination, expected_size, std::move(progress));
+		switch (result.error)
+		{
+		case rpcs3::ios::game_update_package_download_error::none:
+			emit_log(4, fmt::format("Downloaded %llu-byte PlayStation update package through curl/wolfSSL",
+				static_cast<unsigned long long>(result.downloaded_size)));
+			return RPCS3_IOS_OK;
+		case rpcs3::ios::game_update_package_download_error::invalid_url:
+		case rpcs3::ios::game_update_package_download_error::invalid_destination:
+			set_error(std::move(result.detail));
+			return RPCS3_IOS_INVALID_ARGUMENT;
+		case rpcs3::ios::game_update_package_download_error::response_too_large:
+			set_error(std::move(result.detail));
+			return RPCS3_IOS_RESPONSE_TOO_LARGE;
+		case rpcs3::ios::game_update_package_download_error::write_failed:
+			set_error(std::move(result.detail));
+			return RPCS3_IOS_INTERNAL_ERROR;
+		case rpcs3::ios::game_update_package_download_error::initialization_failed:
+		case rpcs3::ios::game_update_package_download_error::request_failed:
+		case rpcs3::ios::game_update_package_download_error::http_error:
+		case rpcs3::ios::game_update_package_download_error::size_mismatch:
+			set_error(std::move(result.detail));
+			return RPCS3_IOS_NETWORK_ERROR;
+		}
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown error while downloading the PlayStation update package");
+	}
+	return RPCS3_IOS_NETWORK_ERROR;
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_enumerate_games(
