@@ -23,7 +23,7 @@ namespace rsx
 				suspend_mode ? home_menu::fa_icon::poweroff : home_menu::fa_icon::floppy,
 				get_localized_string(suspend_mode ? localized_string_id::HOME_MENU_SAVESTATE_AND_EXIT : localized_string_id::HOME_MENU_SAVESTATE_SAVE), width, text_align::left);
 
-			add_item(save_state, [suspend_mode](pad_button btn) -> page_navigation
+			add_item(save_state, [this, suspend_mode](pad_button btn) -> page_navigation
 			{
 				if (btn != pad_button::cross) return page_navigation::stay;
 
@@ -41,16 +41,19 @@ namespace rsx
 #endif
 
 				rsx_log.notice("User selected savestate in home menu");
-				Emu.CallFromMainThread([suspend_mode]()
+				set_after_close_action([suspend_mode]()
 				{
-					if (!suspend_mode)
+					Emu.CallFromMainThread([suspend_mode]()
 					{
-						Emu.after_kill_callback = []() { Emu.Restart(true, false); };
+						if (!suspend_mode)
+						{
+							Emu.after_kill_callback = []() { Emu.Restart(true, false); };
 
-						// Make sure we keep the game window opened
-						Emu.SetContinuousMode(true);
-					}
-					Emu.Kill(false, true);
+							// Make sure we keep the game window opened
+							Emu.SetContinuousMode(true);
+						}
+						Emu.Kill(false, true);
+					});
 				});
 				return page_navigation::exit;
 			});
@@ -62,7 +65,7 @@ namespace rsx
 					const localized_string_id str_id = static_cast<localized_string_id>(static_cast<usz>(localized_string_id::HOME_MENU_RELOAD_SAVESTATE) + (save_index - 1));
 					std::unique_ptr<overlay_element> reload_state = std::make_unique<home_menu_entry>(home_menu::fa_icon::restart, get_localized_string(str_id), width, text_align::left);
 
-					add_item(reload_state, [save_index](pad_button btn) -> page_navigation
+					add_item(reload_state, [this, save_index](pad_button btn) -> page_navigation
 					{
 						if (btn != pad_button::cross)
 						{
@@ -70,7 +73,10 @@ namespace rsx
 						}
 
 						rsx_log.notice("User selected reload savestate(%u) in home menu", save_index);
-						Emu.CallFromMainThread([save_index]() { boot_current_game_savestate(false, save_index); });
+						set_after_close_action([save_index]()
+						{
+							Emu.CallFromMainThread([save_index]() { boot_current_game_savestate(false, save_index); });
+						});
 						return page_navigation::exit;
 					});
 				}

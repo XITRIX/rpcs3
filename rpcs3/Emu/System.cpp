@@ -3472,6 +3472,14 @@ void Emulator::Kill(bool allow_autoexit, bool savestate, savestate_stage* save_s
 					}
 				} success_guard {};
 
+				constexpr u64 sysutil_callback_wait_timeout = 1'000'000;
+				constexpr u64 sysutil_callback_wait_interval = 1'000;
+
+				for (u64 waited = 0; sysutil_callbacks_pending() && waited < sysutil_callback_wait_timeout; waited += sysutil_callback_wait_interval)
+				{
+					thread_ctrl::wait_for(sysutil_callback_wait_interval);
+				}
+
 				std::vector<std::pair<shared_ptr<named_thread<spu_thread>>, u32>> paused_spus;
 
 				if (!try_lock_spu_threads_in_a_state_compatible_with_savestates(false, &paused_spus))
@@ -3499,19 +3507,21 @@ void Emulator::Kill(bool allow_autoexit, bool savestate, savestate_stage* save_s
 				}
 
 				bool savedata_error = false;
+				bool sysutil_error = false;
 				bool vdec_error = false;
 
 				if (!g_fxo->get<hle_locks_t>().try_finalize([&]()
 				{
 					// List of conditions required for emulation to save properly
 					vdec_error = check_if_vdec_contexts_exist();
-					return !vdec_error;
+					sysutil_error = sysutil_callbacks_pending();
+					return !vdec_error && !sysutil_error;
 				}))
 				{
 					// Unlock SPUs
 					try_lock_spu_threads_in_a_state_compatible_with_savestates(true);
 
-					savedata_error = !vdec_error; // For now it is implied a savedata error
+					savedata_error = !vdec_error && !sysutil_error; // For now any active HLE lock implies a savedata error
 
 					if (vdec_error)
 					{
@@ -3530,6 +3540,12 @@ void Emulator::Kill(bool allow_autoexit, bool savestate, savestate_stage* save_s
 						sys_log.error("Failed to savestate: Savedata operation is active."
 							"\nYour best chance is to wait for the current game saving operation to finish and retry."
 							"\nThe game is probably displaying a saving cicrle or other gesture to indicate that it is saving.");
+					}
+
+					if (sysutil_error)
+					{
+						rsx::overlays::queue_message(localized_string_id::SAVESTATE_FAILED_DUE_TO_SAVEDATA);
+						sys_log.error("Failed to savestate: pending sysutil callbacks did not complete before the timeout.");
 					}
 
 					m_emu_state_close_pending = false;

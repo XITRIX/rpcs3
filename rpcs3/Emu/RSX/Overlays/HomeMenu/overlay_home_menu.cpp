@@ -111,6 +111,7 @@ namespace rsx
 
 				fade_animation.on_finish = [this, navigation]
 				{
+					auto after_close_action = m_main_menu.take_after_close_action();
 					close(true, true);
 
 					if (g_cfg.misc.pause_during_home_menu)
@@ -119,6 +120,11 @@ namespace rsx
 						{
 							Emu.Resume();
 						});
+					}
+
+					if (after_close_action)
+					{
+						after_close_action();
 					}
 
 					if (navigation == page_navigation::exit_for_screenshot)

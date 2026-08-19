@@ -38,6 +38,8 @@ namespace rsx
 
 			void on_activate();
 			void on_deactivate();
+			void set_after_close_action(std::function<void()> action);
+			std::function<void()> take_after_close_action();
 
 			virtual void update(u64 /*timestamp_us*/) {}
 			virtual bool show_reset_button() const { return false; }
@@ -48,6 +50,7 @@ namespace rsx
 
 			std::shared_ptr<home_menu_message_box> m_message_box;
 			std::shared_ptr<bool> m_config_changed;
+			std::shared_ptr<std::function<void()>> m_after_close_action;
 
 			home_menu_popup m_popup;
 

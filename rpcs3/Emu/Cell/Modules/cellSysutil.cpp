@@ -101,6 +101,7 @@ struct sysutil_cb_manager
 	}();
 
 	lf_queue<dispatcher_cb> registered;
+	atomic_t<u32> callbacks_in_progress{0};
 
 	atomic_t<bool> draw_cb_started{};
 	atomic_t<u64> read_counter{0};
@@ -211,6 +212,16 @@ extern u64 get_sysutil_cb_manager_read_count()
 	}
 
 	return 0;
+}
+
+extern bool sysutil_callbacks_pending()
+{
+	if (auto cbm = g_fxo->try_get<sysutil_cb_manager>())
+	{
+		return static_cast<bool>(cbm->registered) || cbm->callbacks_in_progress != 0;
+	}
+
+	return false;
 }
 
 extern bool send_open_home_menu_cmds()
@@ -581,7 +592,26 @@ error_code cellSysutilCheckCallback(ppu_thread& ppu)
 
 	auto& cbm = g_fxo->get<sysutil_cb_manager>();
 
-	for (auto&& func : cbm.registered.pop_all())
+	struct callback_batch_guard
+	{
+		atomic_t<u32>& count;
+
+		~callback_batch_guard()
+		{
+			count--;
+		}
+	};
+
+	cbm.callbacks_in_progress++;
+	callback_batch_guard guard{cbm.callbacks_in_progress};
+	auto callbacks = cbm.registered.pop_all();
+
+	if (!callbacks)
+	{
+		return CELL_OK;
+	}
+
+	for (auto&& func : callbacks)
 	{
 		if (func.call_active && !*func.call_active)
 		{
