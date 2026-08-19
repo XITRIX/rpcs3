@@ -19,12 +19,14 @@ namespace rsx
 			{
 				m_message_box = parent->m_message_box;
 				m_config_changed = parent->m_config_changed;
+				m_after_close_action = parent->m_after_close_action;
 			}
 			else
 			{
 				m_config_changed = std::make_shared<bool>(g_backup_cfg.to_string() != g_cfg.to_string());
 				m_message_box = std::make_shared<home_menu_message_box>(x, y, width, height);
 				m_message_box->visible = false;
+				m_after_close_action = std::make_shared<std::function<void()>>();
 			}
 
 			m_reset_btn.set_image_resource(resource_config::standard_image_resource::select);
@@ -54,6 +56,16 @@ namespace rsx
 		void home_menu_page::on_deactivate()
 		{
 			hide_row_highliter(true);
+		}
+
+		void home_menu_page::set_after_close_action(std::function<void()> action)
+		{
+			*m_after_close_action = std::move(action);
+		}
+
+		std::function<void()> home_menu_page::take_after_close_action()
+		{
+			return std::exchange(*m_after_close_action, {});
 		}
 
 		void home_menu_page::set_current_page(home_menu_page* page)

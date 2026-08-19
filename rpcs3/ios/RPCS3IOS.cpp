@@ -9,6 +9,7 @@
 #include "RPCS3IOSPerformance.h"
 #include "RAPLicenseContract.h"
 #include "RPCS3IOSRuntimePatches.h"
+#include "RPCS3IOSSaveDialog.h"
 #include "RPCS3IOSResolution.h"
 #include "RPCS3IOSSettings.h"
 #include "RPCS3IOSZcullAccuracy.h"
@@ -624,7 +625,10 @@ EmuCallbacks make_callbacks()
 	};
 	callbacks.get_msg_dialog = []() -> std::shared_ptr<MsgDialogBase> { return {}; };
 	callbacks.get_osk_dialog = []() -> std::shared_ptr<OskDialogBase> { return {}; };
-	callbacks.get_save_dialog = []() -> std::unique_ptr<SaveDialogBase> { return {}; };
+	callbacks.get_save_dialog = []() -> std::unique_ptr<SaveDialogBase>
+	{
+		return std::make_unique<rpcs3::ios::save_data_dialog>();
+	};
 	callbacks.get_sendmessage_dialog = []() -> std::shared_ptr<SendMessageDialogBase> { return {}; };
 	callbacks.get_recvmessage_dialog = []() -> std::shared_ptr<RecvMessageDialogBase> { return {}; };
 	callbacks.get_trophy_notification_dialog = []() -> std::unique_ptr<TrophyNotificationBase> { return {}; };
