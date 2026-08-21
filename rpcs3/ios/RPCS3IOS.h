@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 24u
+#define RPCS3_IOS_ABI_VERSION 26u
 
 typedef enum rpcs3_ios_status
 {
@@ -60,7 +60,9 @@ typedef enum rpcs3_ios_status
     RPCS3_IOS_RAP_INSTALL_FAILED = 36,
     RPCS3_IOS_NETWORK_ERROR = 37,
     RPCS3_IOS_RESPONSE_TOO_LARGE = 38,
-    RPCS3_IOS_GAME_DELETE_FAILED = 39
+    RPCS3_IOS_GAME_DELETE_FAILED = 39,
+    RPCS3_IOS_CONFIG_DATABASE_INVALID = 40,
+    RPCS3_IOS_CONFIG_DATABASE_STORAGE_FAILED = 41
 } rpcs3_ios_status;
 
 typedef enum rpcs3_ios_state
@@ -302,6 +304,8 @@ typedef enum rpcs3_ios_setting_kind
 // Strings and option arrays remain valid only for the duration of the
 // synchronous enumeration callbacks. Every catalog entry is an allow-listed
 // scalar from RPCS3's cfg_root; platform-fixed backends are never exposed.
+// recommended_value is non-null only during per-game enumeration when the
+// title database changes this setting from RPCS3's built-in default.
 typedef struct rpcs3_ios_setting_info
 {
     uint32_t struct_size;
@@ -318,6 +322,7 @@ typedef struct rpcs3_ios_setting_info
     double step;
     uint32_t option_count;
     uint32_t flags;
+    const char* recommended_value;
 } rpcs3_ios_setting_info;
 
 typedef struct rpcs3_ios_setting_option
@@ -435,6 +440,11 @@ typedef struct rpcs3_ios_performance_metrics
 RPCS3_IOS_EXPORT uint32_t rpcs3_ios_abi_version(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT const char* rpcs3_ios_build_info(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) RPCS3_IOS_NOEXCEPT;
+// Validates an opaque response from RPCS3's official configuration endpoint,
+// atomically caches it, and publishes title lookups used by Emulator::Load.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_update_config_database(
+    const void* content,
+    size_t content_size) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_run_llvm_self_test(uint64_t input, uint64_t* output) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT const char* rpcs3_ios_firmware_version(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_firmware(
@@ -551,7 +561,8 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_setting(
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_reset_settings(void) RPCS3_IOS_NOEXCEPT;
 // Per-game settings use RPCS3's desktop-compatible
 // custom_configs/config_<TITLE_ID>.yml files. Enumeration reports the
-// effective global-plus-custom values and whether a custom file exists.
+// effective global-plus-custom values, whether a custom file exists, and
+// title-database recommendations without exposing YAML to the wrapper.
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_game_settings(
     const char* title_id,
     rpcs3_ios_setting_callback setting_callback,
