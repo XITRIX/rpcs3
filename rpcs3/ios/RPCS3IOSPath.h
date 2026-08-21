@@ -1,7 +1,9 @@
 #pragma once
 
+#include <filesystem>
 #include <string>
 #include <string_view>
+#include <system_error>
 
 namespace rpcs3::ios
 {
@@ -50,5 +52,39 @@ inline bool is_lexically_within_path(std::string_view root, std::string_view can
 		relative.remove_prefix(separator + 1);
 	}
 	return true;
+}
+
+inline bool is_resolved_within_path(std::string_view root, std::string_view candidate)
+{
+	if (!is_lexically_within_path(root, candidate))
+	{
+		return false;
+	}
+
+	std::error_code error;
+	const std::filesystem::path resolved_root =
+		std::filesystem::canonical(std::filesystem::path{root}, error);
+	if (error)
+	{
+		return false;
+	}
+	const std::filesystem::path resolved_candidate =
+		std::filesystem::weakly_canonical(std::filesystem::path{candidate}, error);
+	if (error)
+	{
+		return false;
+	}
+
+	auto root_component = resolved_root.begin();
+	auto candidate_component = resolved_candidate.begin();
+	for (; root_component != resolved_root.end(); ++root_component, ++candidate_component)
+	{
+		if (candidate_component == resolved_candidate.end() ||
+			*root_component != *candidate_component)
+		{
+			return false;
+		}
+	}
+	return candidate_component != resolved_candidate.end();
 }
 }
