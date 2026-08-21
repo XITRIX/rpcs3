@@ -1,5 +1,6 @@
 #include "RPCS3IOS.h"
 #include "RPCS3IOSCapabilities.h"
+#include "RPCS3IOSConfigDatabase.h"
 #include "RPCS3IOSContract.h"
 #include "RPCS3IOSDisplay.h"
 #include "RPCS3IOSLocalization.h"
@@ -90,6 +91,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
 
 namespace
 {
@@ -300,6 +302,7 @@ void normalize_current_game_resolution(u32 resolution_flags)
 }
 
 constexpr std::string_view zcull_accuracy_key = "gpu.zcull_accuracy";
+using setting_recommendations = std::unordered_map<std::string, std::string>;
 
 std::string zcull_accuracy_value(bool use_default)
 {
@@ -312,6 +315,46 @@ std::string zcull_accuracy_value(bool use_default)
 		enabled(g_cfg.video.precise_zpass_count),
 		enabled(g_cfg.video.relaxed_zcull_sync),
 	})};
+}
+
+bool collect_database_recommendations(
+	std::string_view title_id,
+	setting_recommendations& recommendations)
+{
+	const std::string database_config =
+		rpcs3::ios::shared_config_database().config_for(title_id);
+	if (database_config.empty())
+	{
+		return true;
+	}
+
+	g_cfg.from_default();
+	if (!g_cfg.from_string(database_config))
+	{
+		return false;
+	}
+
+	for (const auto& setting : rpcs3::ios::settings_catalog())
+	{
+		if (!rpcs3::ios::setting_is_available(
+				setting.scope, rpcs3::ios::setting_context::game))
+		{
+			continue;
+		}
+
+		const bool is_zcull_accuracy = setting.key == zcull_accuracy_key;
+		std::string value = is_zcull_accuracy
+			? zcull_accuracy_value(false)
+			: setting.entry->to_string();
+		const std::string default_value = is_zcull_accuracy
+			? zcull_accuracy_value(true)
+			: setting.entry->def_to_string();
+		if (value != default_value)
+		{
+			recommendations.emplace(std::string{setting.key}, std::move(value));
+		}
+	}
+	return true;
 }
 
 bool set_zcull_accuracy(std::string_view value)
@@ -331,7 +374,8 @@ void enumerate_current_settings(
 	rpcs3_ios_setting_option_callback option_callback,
 	void* user_context,
 	rpcs3::ios::setting_context context,
-	u32 game_resolution_flags = 0)
+	u32 game_resolution_flags = 0,
+	const setting_recommendations* recommendations = nullptr)
 {
 	for (const auto& setting : rpcs3::ios::settings_catalog())
 	{
@@ -347,6 +391,15 @@ void enumerate_current_settings(
 		const std::string default_value = is_zcull_accuracy
 			? zcull_accuracy_value(true)
 			: setting.entry->def_to_string();
+		const char* recommended_value = nullptr;
+		if (recommendations)
+		{
+			if (const auto recommendation = recommendations->find(std::string{setting.key});
+				recommendation != recommendations->end())
+			{
+				recommended_value = recommendation->second.c_str();
+			}
+		}
 		std::vector<std::string> options;
 		if (setting.kind == RPCS3_IOS_SETTING_CHOICE)
 		{
@@ -403,6 +456,7 @@ void enumerate_current_settings(
 			setting.step,
 			static_cast<uint32_t>(options.size()),
 			1u,
+			recommended_value,
 		};
 		setting_callback(user_context, &info);
 
@@ -684,7 +738,10 @@ EmuCallbacks make_callbacks()
 	callbacks.check_microphone_permissions = []() {};
 	callbacks.make_video_source = []() { return rpcs3::ios::make_overlay_media_source(); };
 	callbacks.enable_gamemode = [](bool) {};
-	callbacks.get_database_config = [](const std::string&) { return std::string{}; };
+	callbacks.get_database_config = [](const std::string& title_id)
+	{
+		return rpcs3::ios::shared_config_database().config_for(title_id);
+	};
 	return callbacks;
 }
 
@@ -892,7 +949,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":24,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-trophies\",\"settings\":\"global-and-per-game-cfg-root-catalog\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop\",\"media_codecs\":true}";
+	return "{\"abi\":26,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-trophies\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop\",\"media_codecs\":true}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -949,6 +1006,20 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		g_preferred_language = rpcs3::ios::preferred_language_identifier();
 		rpcs3::ios::set_localization_resolver(&rpcs3::ios::localized_application_string);
 		emit_log(4, "Using iOS preferred language for native overlays: " + g_preferred_language);
+		const auto database_result = rpcs3::ios::shared_config_database().load_cache();
+		if (database_result.error == rpcs3::ios::config_database_error::none)
+		{
+			emit_log(database_result.skipped_configs == 0 ? 4 : 3,
+				"Loaded cached title configuration database: " + database_result.detail);
+		}
+		else if (database_result.error == rpcs3::ios::config_database_error::cache_missing)
+		{
+			emit_log(4, database_result.detail);
+		}
+		else
+		{
+			emit_log(3, "Ignoring invalid cached title configuration database: " + database_result.detail);
+		}
 		rpcs3::ios::shared_pad_states().clear();
 		rpcs3::ios::shared_pad_feedback().clear();
 		const auto jit_stats = rpcs3::ios::jit::get_statistics();
@@ -987,6 +1058,63 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 	rpcs3::ios::shared_pad_feedback().clear();
 	g_lifecycle.finish_initialize(false);
 	return RPCS3_IOS_CORE_INIT_FAILED;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_update_config_database(
+	const void* content,
+	size_t content_size) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!content || content_size == 0)
+	{
+		set_error("The RPCS3 title configuration database response is empty");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (content_size > rpcs3::ios::config_database_maximum_size)
+	{
+		set_error("The RPCS3 title configuration database exceeds its safety limit");
+		return RPCS3_IOS_RESPONSE_TOO_LARGE;
+	}
+	if (g_lifecycle.state() != RPCS3_IOS_STATE_READY)
+	{
+		set_error("RPCS3Core must be ready before updating the title configuration database");
+		return RPCS3_IOS_INVALID_STATE;
+	}
+
+	try
+	{
+		const auto result = rpcs3::ios::shared_config_database().update(
+			{static_cast<const char*>(content), content_size});
+		if (result.error == rpcs3::ios::config_database_error::none)
+		{
+			emit_log(result.skipped_configs == 0 ? 4 : 3,
+				"Updated title configuration database: " + result.detail);
+			return RPCS3_IOS_OK;
+		}
+
+		set_error(result.detail);
+		switch (result.error)
+		{
+		case rpcs3::ios::config_database_error::response_too_large:
+			return RPCS3_IOS_RESPONSE_TOO_LARGE;
+		case rpcs3::ios::config_database_error::storage_failed:
+			return RPCS3_IOS_CONFIG_DATABASE_STORAGE_FAILED;
+		case rpcs3::ios::config_database_error::cache_missing:
+		case rpcs3::ios::config_database_error::invalid_response:
+			return RPCS3_IOS_CONFIG_DATABASE_INVALID;
+		case rpcs3::ios::config_database_error::none:
+			break;
+		}
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown error while updating the RPCS3 title configuration database");
+	}
+	return RPCS3_IOS_INTERNAL_ERROR;
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_run_llvm_self_test(uint64_t input, uint64_t* output) noexcept
@@ -2298,6 +2426,14 @@ extern "C" rpcs3_ios_status rpcs3_ios_enumerate_game_settings(
 	try
 	{
 		settings_state_guard state_guard;
+		setting_recommendations recommendations;
+		if (!collect_database_recommendations(title_id, recommendations))
+		{
+			set_error(fmt::format(
+				"Unable to load title configuration database recommendations for %s",
+				title_id));
+			return RPCS3_IOS_CONFIG_DATABASE_INVALID;
+		}
 		bool custom_config = false;
 		const bool loaded = load_settings_for_api(title_id, custom_config);
 		*has_custom_config = custom_config ? 1u : 0u;
@@ -2311,7 +2447,8 @@ extern "C" rpcs3_ios_status rpcs3_ios_enumerate_game_settings(
 			option_callback,
 			user_context,
 			rpcs3::ios::setting_context::game,
-			game.resolution);
+			game.resolution,
+			&recommendations);
 		return RPCS3_IOS_OK;
 	}
 	catch (const std::exception& error)
