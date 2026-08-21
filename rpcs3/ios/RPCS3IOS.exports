@@ -1,6 +1,7 @@
 _rpcs3_ios_abi_version
 _rpcs3_ios_build_info
 _rpcs3_ios_initialize
+_rpcs3_ios_update_config_database
 _rpcs3_ios_run_llvm_self_test
 _rpcs3_ios_firmware_version
 _rpcs3_ios_install_firmware
