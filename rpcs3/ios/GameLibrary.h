@@ -153,6 +153,7 @@ game_patch_install_result install_game_patch(
 	const std::string& package_path,
 	const game_package_progress_callback& progress);
 game_delete_result delete_installed_game(std::string_view title_id);
+bool is_valid_game_title_id(std::string_view title_id) noexcept;
 std::vector<installed_game> installed_games();
 std::optional<installed_game> find_installed_game(std::string_view title_id);
 std::vector<installed_game_patch> installed_game_patches(std::string_view title_id);
