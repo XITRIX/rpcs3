@@ -261,11 +261,34 @@ bool load_settings_for_api(std::string_view title_id, bool& has_custom_config)
 	return false;
 }
 
+bool apply_database_settings_for_api(std::string_view title_id)
+{
+	const std::string database_config =
+		rpcs3::ios::shared_config_database().config_for(title_id);
+	if (database_config.empty())
+	{
+		return true;
+	}
+	if (g_cfg.from_string(database_config))
+	{
+		return true;
+	}
+	set_error(fmt::format(
+		"Unable to apply title configuration database settings for %s",
+		title_id));
+	return false;
+}
+
 rpcs3_ios_status validate_game_settings_target(const char* title_id, rpcs3::ios::installed_game* installed_game = nullptr)
 {
 	if (!title_id || !title_id[0])
 	{
 		set_error("A game title ID is required");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (!rpcs3::ios::is_valid_game_title_id(title_id))
+	{
+		set_error("The game has an invalid PlayStation title ID");
 		return RPCS3_IOS_INVALID_ARGUMENT;
 	}
 	auto game = rpcs3::ios::find_installed_game(title_id);
@@ -279,6 +302,73 @@ rpcs3_ios_status validate_game_settings_target(const char* title_id, rpcs3::ios:
 		*installed_game = std::move(*game);
 	}
 	return RPCS3_IOS_OK;
+}
+
+rpcs3_ios_status validate_game_settings_preset_operation(
+	const char* title_id,
+	std::string_view action,
+	rpcs3::ios::installed_game* installed_game = nullptr)
+{
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error(fmt::format("Stop emulation before %s game-settings presets", action));
+		return result;
+	}
+	return validate_game_settings_target(title_id, installed_game);
+}
+
+rpcs3_ios_status finish_game_settings_preset_result(
+	rpcs3::ios::game_settings_preset_result result)
+{
+	if (result)
+	{
+		return RPCS3_IOS_OK;
+	}
+	set_error(std::move(result.detail));
+	switch (result.error)
+	{
+	case rpcs3::ios::game_settings_preset_error::invalid_name:
+	case rpcs3::ios::game_settings_preset_error::invalid_config:
+	case rpcs3::ios::game_settings_preset_error::too_many_presets:
+		return RPCS3_IOS_SETTINGS_PRESET_INVALID;
+	case rpcs3::ios::game_settings_preset_error::already_exists:
+		return RPCS3_IOS_SETTINGS_PRESET_EXISTS;
+	case rpcs3::ios::game_settings_preset_error::not_found:
+		return RPCS3_IOS_SETTINGS_PRESET_NOT_FOUND;
+	case rpcs3::ios::game_settings_preset_error::storage_failed:
+		return RPCS3_IOS_SETTINGS_SAVE_FAILED;
+	case rpcs3::ios::game_settings_preset_error::none:
+		return RPCS3_IOS_OK;
+	}
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+template <typename Operation>
+rpcs3_ios_status run_game_settings_preset_operation(
+	const char* title_id,
+	std::string_view action,
+	Operation&& operation)
+{
+	if (const auto result = validate_game_settings_preset_operation(title_id, action);
+		result != RPCS3_IOS_OK)
+	{
+		return result;
+	}
+
+	try
+	{
+		return finish_game_settings_preset_result(operation());
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error(fmt::format("Unknown exception while %s game-settings presets", action));
+	}
+	return RPCS3_IOS_INTERNAL_ERROR;
 }
 
 std::vector<std::string> supported_game_resolution_options(u32 resolution_flags)
@@ -949,7 +1039,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":26,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-trophies\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop\",\"media_codecs\":true}";
+	return "{\"abi\":27,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-trophies\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop\",\"media_codecs\":true}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -2602,6 +2692,239 @@ extern "C" rpcs3_ios_status rpcs3_ios_remove_game_settings(const char* title_id)
 		set_error("Unknown exception while removing game settings");
 	}
 	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_enumerate_game_settings_presets(
+	const char* title_id,
+	rpcs3_ios_game_settings_preset_callback callback,
+	void* user_context) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!callback)
+	{
+		set_error("Game-settings preset enumeration requires a callback");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	return run_game_settings_preset_operation(title_id, "enumerating", [&]
+	{
+		std::vector<rpcs3::ios::game_settings_preset> presets;
+		auto result = rpcs3::ios::enumerate_game_settings_presets(title_id, presets);
+		if (!result)
+		{
+			return result;
+		}
+		for (const auto& preset : presets)
+		{
+			const rpcs3_ios_game_settings_preset_info info{
+				sizeof(rpcs3_ios_game_settings_preset_info),
+				0,
+				preset.size,
+				preset.modified_time,
+				preset.name.c_str(),
+			};
+			callback(user_context, &info);
+		}
+		return result;
+	});
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_save_game_settings_preset(
+	const char* title_id,
+	const char* name) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!name)
+	{
+		set_error("A settings preset name is required");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	rpcs3::ios::installed_game game;
+	if (const auto result = validate_game_settings_preset_operation(title_id, "saving", &game);
+		result != RPCS3_IOS_OK)
+	{
+		return result;
+	}
+
+	try
+	{
+		settings_state_guard state_guard;
+		bool has_custom_config = false;
+		if (!load_settings_for_api(title_id, has_custom_config))
+		{
+			return RPCS3_IOS_SETTINGS_SAVE_FAILED;
+		}
+		if (!has_custom_config && !apply_database_settings_for_api(title_id))
+		{
+			return RPCS3_IOS_CONFIG_DATABASE_INVALID;
+		}
+		normalize_current_game_resolution(game.resolution);
+		const auto result = finish_game_settings_preset_result(
+			rpcs3::ios::save_current_game_settings_preset(title_id, name));
+		if (result == RPCS3_IOS_OK)
+		{
+			emit_log(4, fmt::format("Saved the active settings for %s as preset '%s'", title_id, name));
+		}
+		return result;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while saving a game-settings preset");
+	}
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_apply_game_settings_preset(
+	const char* title_id,
+	const char* name) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!name)
+	{
+		set_error("A settings preset name is required");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	const auto result = run_game_settings_preset_operation(title_id, "applying", [&]
+	{
+		return rpcs3::ios::apply_game_settings_preset(title_id, name);
+	});
+	if (result == RPCS3_IOS_OK)
+	{
+		emit_log(4, fmt::format("Applied settings preset '%s' to %s", name, title_id));
+	}
+	return result;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_duplicate_game_settings_preset(
+	const char* title_id,
+	const char* source_name,
+	const char* destination_name) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!source_name || !destination_name)
+	{
+		set_error("Source and destination settings preset names are required");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	const auto result = run_game_settings_preset_operation(title_id, "duplicating", [&]
+	{
+		return rpcs3::ios::duplicate_game_settings_preset(
+			title_id, source_name, destination_name);
+	});
+	if (result == RPCS3_IOS_OK)
+	{
+		emit_log(4, fmt::format(
+			"Duplicated settings preset '%s' as '%s' for %s",
+			source_name, destination_name, title_id));
+	}
+	return result;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_rename_game_settings_preset(
+	const char* title_id,
+	const char* source_name,
+	const char* destination_name) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!source_name || !destination_name)
+	{
+		set_error("Source and destination settings preset names are required");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	const auto result = run_game_settings_preset_operation(title_id, "renaming", [&]
+	{
+		return rpcs3::ios::rename_game_settings_preset(
+			title_id, source_name, destination_name);
+	});
+	if (result == RPCS3_IOS_OK)
+	{
+		emit_log(4, fmt::format(
+			"Renamed settings preset '%s' to '%s' for %s",
+			source_name, destination_name, title_id));
+	}
+	return result;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_delete_game_settings_preset(
+	const char* title_id,
+	const char* name) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!name)
+	{
+		set_error("A settings preset name is required");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	const auto result = run_game_settings_preset_operation(title_id, "deleting", [&]
+	{
+		return rpcs3::ios::delete_game_settings_preset(title_id, name);
+	});
+	if (result == RPCS3_IOS_OK)
+	{
+		emit_log(4, fmt::format("Deleted settings preset '%s' for %s", name, title_id));
+	}
+	return result;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_import_game_settings_preset(
+	const char* title_id,
+	const char* source_path,
+	const char* name) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!source_path || !source_path[0] || !name)
+	{
+		set_error("A cache-staged YAML file and settings preset name are required");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	const std::string source{source_path};
+	if (!rpcs3::ios::is_resolved_within_path(g_cache_path, source) ||
+		!source.ends_with(".yml"))
+	{
+		set_error("Settings presets may be imported only from a .yml file staged under RPCS3's cache");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	const auto result = run_game_settings_preset_operation(title_id, "importing", [&]
+	{
+		return rpcs3::ios::import_game_settings_preset(title_id, source, name);
+	});
+	if (result == RPCS3_IOS_OK)
+	{
+		emit_log(4, fmt::format("Imported settings preset '%s' for %s", name, title_id));
+	}
+	return result;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_export_game_settings_preset(
+	const char* title_id,
+	const char* name,
+	const char* destination_path) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!name || !destination_path || !destination_path[0])
+	{
+		set_error("A settings preset name and cache export path are required");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	const std::string destination{destination_path};
+	if (!rpcs3::ios::is_resolved_within_path(g_cache_path, destination) ||
+		!destination.ends_with(".yml"))
+	{
+		set_error("Settings presets may be exported only to a .yml file under RPCS3's cache");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	const auto result = run_game_settings_preset_operation(title_id, "exporting", [&]
+	{
+		return rpcs3::ios::export_game_settings_preset(title_id, name, destination);
+	});
+	if (result == RPCS3_IOS_OK)
+	{
+		emit_log(4, fmt::format("Exported settings preset '%s' for %s", name, title_id));
+	}
+	return result;
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_get_rpcn_config(
