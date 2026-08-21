@@ -666,7 +666,18 @@ EmuCallbacks make_callbacks()
 		return rpcs3::ios::normalize_resolved_host_path(path);
 	};
 	callbacks.get_font_dirs = []() { return std::vector<std::string>{}; };
-	callbacks.on_install_pkgs = [](const std::vector<std::string>&) { return false; };
+	callbacks.on_install_pkgs = [](const std::vector<std::string>& packages, bool from_optical_drive)
+	{
+		for (const std::string& package : packages)
+		{
+			if (!rpcs3::utils::install_pkg(package, from_optical_drive))
+			{
+				emit_log(2, fmt::format("Failed to install bundled disc package: %s", package));
+				return false;
+			}
+		}
+		return true;
+	};
 	callbacks.add_breakpoint = [](u32) {};
 	callbacks.display_sleep_control_supported = []() { return rpcs3::ios::display_sleep_control_supported(); };
 	callbacks.enable_display_sleep = [](bool enable) { rpcs3::ios::enable_display_sleep(enable); };
