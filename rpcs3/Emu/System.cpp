@@ -1839,6 +1839,12 @@ game_boot_result Emulator::Load(const std::string& title_id, bool is_disc_patch,
 
 #ifdef RPCS3_IOS
 			g_cfg.ios_experimental.persistent_spu_object_cache.set(ios_global_persistent_spu_cache);
+			// Temporary: keep native overlays mandatory until every guest dialog has a SwiftUI adapter.
+			if (!g_cfg.misc.use_native_interface.get())
+			{
+				sys_log.warning("Ignoring 'Use native user interface: false' on iOS until SwiftUI guest-dialog fallbacks are complete");
+			}
+			g_cfg.misc.use_native_interface.set(true);
 			rpcs3::ios::resolve_experimental_policy();
 #endif
 
