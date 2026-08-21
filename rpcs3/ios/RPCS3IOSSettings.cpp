@@ -124,7 +124,8 @@ const std::array catalog{
 	// Emulator
 	SETTING("emulator.max_llvm_threads", "Emulator", "Compilation", "Max LLVM Compile Threads", "Limits concurrent LLVM compilation threads; zero uses the iOS memory-safe automatic limit.", kind::RPCS3_IOS_SETTING_INTEGER, g_cfg.core.llvm_threads, 0, 64, 1),
 	SETTING("emulator.shader_compiler_threads", "Emulator", "Compilation", "Max Shader Compile Threads", "Limits concurrent shader compiler threads; zero is automatic.", kind::RPCS3_IOS_SETTING_INTEGER, g_cfg.video.shader_compiler_threads_count, 0, 16, 1),
-	SETTING("emulator.native_interface", "Emulator", "Behavior", "Use native user interface", "Uses RPCS3's controller-driven in-game overlays instead of desktop dialogs.", kind::RPCS3_IOS_SETTING_BOOLEAN, g_cfg.misc.use_native_interface, 0, 1, 1),
+	// Temporarily hidden until SwiftUI guest-dialog fallbacks are complete.
+	// SETTING("emulator.native_interface", "Emulator", "Behavior", "Use native user interface", "Uses RPCS3's controller-driven in-game overlays instead of desktop dialogs.", kind::RPCS3_IOS_SETTING_BOOLEAN, g_cfg.misc.use_native_interface, 0, 1, 1),
 	SETTING("emulator.prevent_display_sleep", "Emulator", "Behavior", "Prevent display sleep while running games", "Keeps the iOS display awake while emulation is running.", kind::RPCS3_IOS_SETTING_BOOLEAN, g_cfg.misc.prevent_display_sleep, 0, 1, 1),
 	SETTING("emulator.pause_home_menu", "Emulator", "Behavior", "Pause emulation during home menu", "Pauses emulation whenever RPCS3's native home menu is open.", kind::RPCS3_IOS_SETTING_BOOLEAN, g_cfg.misc.pause_during_home_menu, 0, 1, 1),
 	SETTING("emulator.play_boot_music", "Emulator", "Behavior", "Play music during boot sequence", "Plays title-provided music during the boot sequence when available.", kind::RPCS3_IOS_SETTING_BOOLEAN, g_cfg.misc.play_music_during_boot, 0, 1, 1),
