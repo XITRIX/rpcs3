@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 26u
+#define RPCS3_IOS_ABI_VERSION 27u
 
 typedef enum rpcs3_ios_status
 {
@@ -62,7 +62,10 @@ typedef enum rpcs3_ios_status
     RPCS3_IOS_RESPONSE_TOO_LARGE = 38,
     RPCS3_IOS_GAME_DELETE_FAILED = 39,
     RPCS3_IOS_CONFIG_DATABASE_INVALID = 40,
-    RPCS3_IOS_CONFIG_DATABASE_STORAGE_FAILED = 41
+    RPCS3_IOS_CONFIG_DATABASE_STORAGE_FAILED = 41,
+    RPCS3_IOS_SETTINGS_PRESET_INVALID = 42,
+    RPCS3_IOS_SETTINGS_PRESET_EXISTS = 43,
+    RPCS3_IOS_SETTINGS_PRESET_NOT_FOUND = 44
 } rpcs3_ios_status;
 
 typedef enum rpcs3_ios_state
@@ -341,6 +344,22 @@ typedef void (*rpcs3_ios_setting_option_callback)(
     void* user_context,
     const rpcs3_ios_setting_option* option);
 
+// Names are UTF-8 and callback-scoped. modified_time is a Unix timestamp.
+// Presets remain separate from custom_configs/config_<TITLE_ID>.yml until
+// explicitly applied.
+typedef struct rpcs3_ios_game_settings_preset_info
+{
+    uint32_t struct_size;
+    uint32_t reserved;
+    uint64_t size;
+    int64_t modified_time;
+    const char* name;
+} rpcs3_ios_game_settings_preset_info;
+
+typedef void (*rpcs3_ios_game_settings_preset_callback)(
+    void* user_context,
+    const rpcs3_ios_game_settings_preset_info* preset);
+
 // RPCN passwords never leave the core after being submitted. The iOS wrapper
 // persists its copy in Keychain, while rpcn.yml retains only public profile and
 // server-list data. Strings below are valid only during their callback.
@@ -582,6 +601,40 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_reset_game_settings(
 // Removes the title's custom configuration so it inherits global settings.
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_remove_game_settings(
     const char* title_id) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_game_settings_presets(
+    const char* title_id,
+    rpcs3_ios_game_settings_preset_callback callback,
+    void* user_context) RPCS3_IOS_NOEXCEPT;
+// Saves the current effective configuration as a new named preset without
+// changing the active custom configuration.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_save_game_settings_preset(
+    const char* title_id,
+    const char* name) RPCS3_IOS_NOEXCEPT;
+// Applying a preset atomically replaces the title's active custom config.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_apply_game_settings_preset(
+    const char* title_id,
+    const char* name) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_duplicate_game_settings_preset(
+    const char* title_id,
+    const char* source_name,
+    const char* destination_name) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_rename_game_settings_preset(
+    const char* title_id,
+    const char* source_name,
+    const char* destination_name) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_delete_game_settings_preset(
+    const char* title_id,
+    const char* name) RPCS3_IOS_NOEXCEPT;
+// Import/export paths must be .yml files below the configured cache root.
+// The core bounds and validates imported YAML and never exposes YAML to Swift.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_import_game_settings_preset(
+    const char* title_id,
+    const char* source_path,
+    const char* name) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_export_game_settings_preset(
+    const char* title_id,
+    const char* name,
+    const char* destination_path) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_get_rpcn_config(
     rpcs3_ios_rpcn_config_callback callback,
     void* user_context) RPCS3_IOS_NOEXCEPT;
