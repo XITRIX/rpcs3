@@ -2399,6 +2399,9 @@ game_boot_result Emulator::Load(const std::string& title_id, bool is_disc_patch,
 			if (!pkgs.empty())
 			{
 				bool install_success = true;
+#ifdef RPCS3_IOS
+				install_success = GetCallbacks().on_install_pkgs(pkgs, launching_from_optical_drive);
+#else
 				BlockingCallFromMainThread([this, &pkgs, &install_success, launching_from_optical_drive]()
 				{
 					if (!GetCallbacks().on_install_pkgs(pkgs, launching_from_optical_drive))
@@ -2406,6 +2409,7 @@ game_boot_result Emulator::Load(const std::string& title_id, bool is_disc_patch,
 						install_success = false;
 					}
 				});
+#endif
 				if (!install_success)
 				{
 					sys_log.error("Failed to install packages");
