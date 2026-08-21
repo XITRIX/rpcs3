@@ -1,4 +1,5 @@
 #include "GameLibrary.h"
+#include "RPCS3IOSSettings.h"
 #include "GameArchiveContract.h"
 #include "GameFolderContract.h"
 #include "GamePatchContract.h"
@@ -862,6 +863,11 @@ std::optional<installed_game> installed_extracted_game(const std::string& direct
 }
 }
 
+bool is_valid_game_title_id(std::string_view title_id) noexcept
+{
+	return valid_title_id(title_id);
+}
+
 game_package_install_result install_game_package(
 	const std::string& path,
 	const game_package_progress_callback& progress)
@@ -1542,6 +1548,7 @@ game_delete_result delete_installed_game(std::string_view title_id)
 	const std::array derived_paths{
 		rpcs3::utils::get_cache_dir_by_serial(id),
 		rpcs3::utils::get_custom_config_path(id),
+		game_settings_preset_directory(id),
 		rpcs3::utils::get_input_config_dir(id),
 	};
 	for (const std::string& path : derived_paths)
@@ -1600,7 +1607,7 @@ std::vector<installed_game> installed_games()
 		const psf::registry metadata = psf::load_object(sfo_path);
 		const std::string title_id{psf::get_string(metadata, "TITLE_ID")};
 		const std::string category{psf::get_string(metadata, "CATEGORY")};
-		if (title_id.empty() || !psf::is_cat_hdd(category))
+		if (!valid_title_id(title_id) || !psf::is_cat_hdd(category))
 		{
 			continue;
 		}

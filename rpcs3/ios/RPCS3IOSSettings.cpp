@@ -1,10 +1,14 @@
 #include "RPCS3IOSSettings.h"
+#include "GameLibrary.h"
 
 #include "Emu/system_config.h"
 #include "Emu/system_utils.hpp"
 #include "Utilities/File.h"
 
+#include <algorithm>
 #include <array>
+#include <cctype>
+#include <optional>
 
 namespace rpcs3::ios
 {
@@ -190,11 +194,294 @@ const std::array catalog{
 #undef SETTING
 #undef GAME_SETTING
 #undef GLOBAL_SETTING
+
+constexpr std::size_t maximum_preset_name_size = 80;
+constexpr std::size_t maximum_preset_config_size = 1024 * 1024;
+constexpr std::size_t maximum_presets_per_title = 128;
+constexpr std::string_view preset_filename_prefix = "preset_";
+constexpr std::string_view preset_filename_suffix = ".yml";
+
+game_settings_preset_result preset_failure(game_settings_preset_error error, std::string detail)
+{
+	return {error, std::move(detail)};
+}
+
+bool is_valid_preset_name(std::string_view name)
+{
+	if (name.empty() || name.size() > maximum_preset_name_size ||
+		name.front() == ' ' || name.back() == ' ' || name == "." || name == "..")
+	{
+		return false;
+	}
+
+	return std::ranges::none_of(name, [](unsigned char character)
+	{
+		return character < 0x20 || character == 0x7f ||
+			character == '/' || character == '\\' || character == ':';
+	});
+}
+
+std::string ascii_folded(std::string_view value)
+{
+	std::string folded{value};
+	std::ranges::transform(folded, folded.begin(), [](unsigned char character)
+	{
+		return static_cast<char>(std::tolower(character));
+	});
+	return folded;
+}
+
+std::string encoded_preset_filename(std::string_view name)
+{
+	constexpr char digits[] = "0123456789abcdef";
+	std::string filename;
+	filename.reserve(preset_filename_prefix.size() + name.size() * 2 + preset_filename_suffix.size());
+	filename.append(preset_filename_prefix);
+	for (const unsigned char character : name)
+	{
+		filename.push_back(digits[character >> 4]);
+		filename.push_back(digits[character & 0xf]);
+	}
+	filename.append(preset_filename_suffix);
+	return filename;
+}
+
+std::optional<unsigned char> decode_hex_digit(char character)
+{
+	if (character >= '0' && character <= '9')
+	{
+		return static_cast<unsigned char>(character - '0');
+	}
+	if (character >= 'a' && character <= 'f')
+	{
+		return static_cast<unsigned char>(character - 'a' + 10);
+	}
+	return std::nullopt;
+}
+
+std::optional<std::string> decoded_preset_name(std::string_view filename)
+{
+	if (!filename.starts_with(preset_filename_prefix) ||
+		!filename.ends_with(preset_filename_suffix))
+	{
+		return std::nullopt;
+	}
+
+	filename.remove_prefix(preset_filename_prefix.size());
+	filename.remove_suffix(preset_filename_suffix.size());
+	if (filename.empty() || filename.size() % 2 != 0)
+	{
+		return std::nullopt;
+	}
+
+	std::string name;
+	name.reserve(filename.size() / 2);
+	for (std::size_t index = 0; index < filename.size(); index += 2)
+	{
+		const auto high = decode_hex_digit(filename[index]);
+		const auto low = decode_hex_digit(filename[index + 1]);
+		if (!high || !low)
+		{
+			return std::nullopt;
+		}
+		name.push_back(static_cast<char>((*high << 4) | *low));
+	}
+	return is_valid_preset_name(name) ? std::optional{std::move(name)} : std::nullopt;
+}
+
+std::string preset_path(std::string_view title_id, std::string_view name)
+{
+	return game_settings_preset_directory(title_id) + encoded_preset_filename(name);
+}
+
+game_settings_preset_result read_preset_records(
+	std::string_view title_id,
+	std::vector<game_settings_preset>& presets)
+{
+	presets.clear();
+	const std::string directory = game_settings_preset_directory(title_id);
+	if (!fs::exists(directory))
+	{
+		return fs::g_tls_error == fs::error::noent
+			? game_settings_preset_result{}
+			: preset_failure(
+				game_settings_preset_error::storage_failed,
+				"RPCS3 could not inspect the game-settings preset directory");
+	}
+	if (!fs::is_dir(directory))
+	{
+		return preset_failure(
+			game_settings_preset_error::storage_failed,
+			"The game-settings preset path is not a directory");
+	}
+
+	fs::dir entries{directory};
+	if (!entries)
+	{
+		return preset_failure(
+			game_settings_preset_error::storage_failed,
+			"RPCS3 could not open the game-settings preset directory");
+	}
+
+	for (const auto& entry : entries)
+	{
+		if (entry.is_directory || entry.is_symlink)
+		{
+			continue;
+		}
+		auto name = decoded_preset_name(entry.name);
+		if (!name)
+		{
+			continue;
+		}
+		if (presets.size() >= maximum_presets_per_title)
+		{
+			presets.clear();
+			return preset_failure(
+				game_settings_preset_error::too_many_presets,
+				"A game may have at most 128 settings presets");
+		}
+		presets.push_back({
+			std::move(*name),
+			entry.size,
+			entry.mtime,
+		});
+	}
+
+	std::ranges::sort(presets, [](const game_settings_preset& lhs, const game_settings_preset& rhs)
+	{
+		return ascii_folded(lhs.name) < ascii_folded(rhs.name);
+	});
+	return {};
+}
+
+game_settings_preset_result validate_new_preset_name(
+	std::string_view title_id,
+	std::string_view name,
+	std::string_view excluded_name = {})
+{
+	if (!is_valid_preset_name(name))
+	{
+		return preset_failure(
+			game_settings_preset_error::invalid_name,
+			"Preset names must be 1-80 UTF-8 bytes, may not start or end with a space, and may not contain control characters, '/', '\\', or ':'");
+	}
+
+	std::vector<game_settings_preset> presets;
+	if (auto result = read_preset_records(title_id, presets); !result)
+	{
+		return result;
+	}
+	const std::string folded_name = ascii_folded(name);
+	for (const auto& preset : presets)
+	{
+		if (preset.name != excluded_name && ascii_folded(preset.name) == folded_name)
+		{
+			return preset_failure(
+				game_settings_preset_error::already_exists,
+				"A settings preset with this name already exists");
+		}
+	}
+	if (presets.size() >= maximum_presets_per_title && excluded_name.empty())
+	{
+		return preset_failure(
+			game_settings_preset_error::too_many_presets,
+			"A game may have at most 128 settings presets");
+	}
+	return {};
+}
+
+game_settings_preset_result locate_preset(
+	std::string_view title_id,
+	std::string_view requested_name,
+	game_settings_preset& preset)
+{
+	if (!is_valid_preset_name(requested_name))
+	{
+		return preset_failure(
+			game_settings_preset_error::invalid_name,
+			"The settings preset name is invalid");
+	}
+
+	std::vector<game_settings_preset> presets;
+	if (auto result = read_preset_records(title_id, presets); !result)
+	{
+		return result;
+	}
+	const std::string folded_name = ascii_folded(requested_name);
+	const auto found = std::ranges::find_if(presets, [&](const game_settings_preset& candidate)
+	{
+		return ascii_folded(candidate.name) == folded_name;
+	});
+	if (found == presets.end())
+	{
+		return preset_failure(
+			game_settings_preset_error::not_found,
+			"The requested game-settings preset was not found");
+	}
+	preset = *found;
+	return {};
+}
+
+game_settings_preset_result read_validated_configuration(
+	std::string_view path,
+	std::string& content)
+{
+	fs::file source{std::string{path}, fs::read};
+	if (!source)
+	{
+		return preset_failure(
+			game_settings_preset_error::storage_failed,
+			"RPCS3 could not open the settings preset");
+	}
+	const std::uint64_t size = source.size();
+	if (size == 0 || size > maximum_preset_config_size)
+	{
+		return preset_failure(
+			game_settings_preset_error::invalid_config,
+			"Settings presets must contain 1 byte to 1 MiB of YAML");
+	}
+	content = source.to_string();
+	cfg_root verifier;
+	if (content.size() != size || !verifier.validate(content))
+	{
+		content.clear();
+		return preset_failure(
+			game_settings_preset_error::invalid_config,
+			"The selected file is not a valid RPCS3 configuration");
+	}
+	return {};
+}
+
+game_settings_preset_result write_configuration(
+	std::string_view path,
+	std::string_view content)
+{
+	fs::pending_file destination{std::string{path}};
+	if (!destination.file ||
+		destination.file.write(content.data(), content.size()) != content.size() ||
+		!destination.commit())
+	{
+		return preset_failure(
+			game_settings_preset_error::storage_failed,
+			"RPCS3 could not atomically save the settings preset");
+	}
+	return {};
+}
 }
 
 std::span<const setting_record> settings_catalog() noexcept
 {
 	return catalog;
+}
+
+std::string game_settings_preset_directory(std::string_view title_id)
+{
+	if (!is_valid_game_title_id(title_id))
+	{
+		return {};
+	}
+	return rpcs3::utils::get_custom_config_dir() + "presets/" + std::string{title_id} + "/";
 }
 
 const setting_record* find_setting(std::string_view key, setting_context context) noexcept
@@ -292,5 +579,176 @@ std::string_view settings_load_error_detail(settings_load_error error) noexcept
 		return "The game's custom configuration is invalid";
 	}
 	return "Unable to load RPCS3 settings";
+}
+
+game_settings_preset_result enumerate_game_settings_presets(
+	std::string_view title_id,
+	std::vector<game_settings_preset>& presets)
+{
+	if (title_id.empty())
+	{
+		return preset_failure(
+			game_settings_preset_error::storage_failed,
+			"A game title ID is required");
+	}
+	return read_preset_records(title_id, presets);
+}
+
+game_settings_preset_result save_current_game_settings_preset(
+	std::string_view title_id,
+	std::string_view name)
+{
+	if (auto result = validate_new_preset_name(title_id, name); !result)
+	{
+		return result;
+	}
+	const std::string content = g_cfg.to_string();
+	if (content.empty() || content.size() > maximum_preset_config_size)
+	{
+		return preset_failure(
+			game_settings_preset_error::invalid_config,
+			"The active game settings cannot be represented as a bounded preset");
+	}
+	if (!fs::create_path(game_settings_preset_directory(title_id)))
+	{
+		return preset_failure(
+			game_settings_preset_error::storage_failed,
+			"RPCS3 could not create the game-settings preset directory");
+	}
+	return write_configuration(preset_path(title_id, name), content);
+}
+
+game_settings_preset_result apply_game_settings_preset(
+	std::string_view title_id,
+	std::string_view name)
+{
+	game_settings_preset preset;
+	if (auto result = locate_preset(title_id, name, preset); !result)
+	{
+		return result;
+	}
+	std::string content;
+	if (auto result = read_validated_configuration(preset_path(title_id, preset.name), content); !result)
+	{
+		return result;
+	}
+	if (!fs::create_path(rpcs3::utils::get_custom_config_dir()))
+	{
+		return preset_failure(
+			game_settings_preset_error::storage_failed,
+			"RPCS3 could not create its custom configuration directory");
+	}
+	return write_configuration(rpcs3::utils::get_custom_config_path(std::string{title_id}), content);
+}
+
+game_settings_preset_result duplicate_game_settings_preset(
+	std::string_view title_id,
+	std::string_view source_name,
+	std::string_view destination_name)
+{
+	game_settings_preset source;
+	if (auto result = locate_preset(title_id, source_name, source); !result)
+	{
+		return result;
+	}
+	if (auto result = validate_new_preset_name(title_id, destination_name); !result)
+	{
+		return result;
+	}
+	std::string content;
+	if (auto result = read_validated_configuration(preset_path(title_id, source.name), content); !result)
+	{
+		return result;
+	}
+	return write_configuration(preset_path(title_id, destination_name), content);
+}
+
+game_settings_preset_result rename_game_settings_preset(
+	std::string_view title_id,
+	std::string_view source_name,
+	std::string_view destination_name)
+{
+	game_settings_preset source;
+	if (auto result = locate_preset(title_id, source_name, source); !result)
+	{
+		return result;
+	}
+	if (source.name == destination_name)
+	{
+		return {};
+	}
+	if (auto result = validate_new_preset_name(title_id, destination_name, source.name); !result)
+	{
+		return result;
+	}
+	if (!fs::rename(
+		preset_path(title_id, source.name),
+		preset_path(title_id, destination_name),
+		false))
+	{
+		return preset_failure(
+			game_settings_preset_error::storage_failed,
+			"RPCS3 could not rename the settings preset");
+	}
+	return {};
+}
+
+game_settings_preset_result delete_game_settings_preset(
+	std::string_view title_id,
+	std::string_view name)
+{
+	game_settings_preset preset;
+	if (auto result = locate_preset(title_id, name, preset); !result)
+	{
+		return result;
+	}
+	if (!fs::remove_file(preset_path(title_id, preset.name)))
+	{
+		return preset_failure(
+			game_settings_preset_error::storage_failed,
+			"RPCS3 could not delete the settings preset");
+	}
+	return {};
+}
+
+game_settings_preset_result import_game_settings_preset(
+	std::string_view title_id,
+	std::string_view source_path,
+	std::string_view name)
+{
+	if (auto result = validate_new_preset_name(title_id, name); !result)
+	{
+		return result;
+	}
+	std::string content;
+	if (auto result = read_validated_configuration(source_path, content); !result)
+	{
+		return result;
+	}
+	if (!fs::create_path(game_settings_preset_directory(title_id)))
+	{
+		return preset_failure(
+			game_settings_preset_error::storage_failed,
+			"RPCS3 could not create the game-settings preset directory");
+	}
+	return write_configuration(preset_path(title_id, name), content);
+}
+
+game_settings_preset_result export_game_settings_preset(
+	std::string_view title_id,
+	std::string_view name,
+	std::string_view destination_path)
+{
+	game_settings_preset preset;
+	if (auto result = locate_preset(title_id, name, preset); !result)
+	{
+		return result;
+	}
+	std::string content;
+	if (auto result = read_validated_configuration(preset_path(title_id, preset.name), content); !result)
+	{
+		return result;
+	}
+	return write_configuration(destination_path, content);
 }
 }
