@@ -73,6 +73,12 @@ if(RPCS3_FRONTEND STREQUAL "IOS")
     endif()
 
     add_compile_definitions(RPCS3_IOS=1)
+    add_compile_options(
+        "$<$<COMPILE_LANGUAGE:C,CXX>:-ffile-prefix-map=${CMAKE_SOURCE_DIR}=rpcs3>"
+        "$<$<COMPILE_LANGUAGE:C,CXX>:-ffile-prefix-map=${CMAKE_BINARY_DIR}=rpcs3-build>"
+        "$<$<COMPILE_LANGUAGE:C,CXX>:-fdebug-compilation-dir=.>"
+        "$<$<COMPILE_LANGUAGE:C,CXX>:-fcoverage-compilation-dir=.>"
+    )
     set(USE_NATIVE_INSTRUCTIONS OFF CACHE BOOL "" FORCE)
     set(STATIC_LINK_LLVM ON CACHE BOOL "" FORCE)
     set(USE_FAUDIO OFF CACHE BOOL "" FORCE)
