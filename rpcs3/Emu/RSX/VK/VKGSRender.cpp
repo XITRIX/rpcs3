@@ -840,6 +840,9 @@ VKGSRender::~VKGSRender()
 
 	// Upscaler (references some global resources)
 	m_upscaler.reset();
+#ifdef RPCS3_IOS
+	m_metal_fx_spatial.reset();
+#endif
 
 	// Heaps
 	vk::data_heap_manager::reset();
