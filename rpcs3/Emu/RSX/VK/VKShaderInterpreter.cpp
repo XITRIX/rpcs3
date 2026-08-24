@@ -23,7 +23,6 @@ namespace vk
 	{
 		vk::pipeline_props m_properties{};
 		VkDevice m_device = VK_NULL_HANDLE;
-		VkPipelineCache m_pipeline_cache = VK_NULL_HANDLE;
 		VkShaderModule m_vs = VK_NULL_HANDLE;
 		VkShaderModule m_fs = VK_NULL_HANDLE;
 
@@ -52,12 +51,10 @@ namespace vk
 		async_pipe_compiler_context(
 			const vk::pipeline_props& props,
 			VkDevice device,
-			VkPipelineCache pipeline_cache,
 			VkShaderModule vs,
 			VkShaderModule fs)
 			: m_properties(props)
 			, m_device(device)
-			, m_pipeline_cache(pipeline_cache)
 			, m_vs(vs)
 			, m_fs(fs)
 		{
@@ -462,9 +459,6 @@ namespace vk
 	void shader_interpreter::init(const vk::render_device& dev)
 	{
 		m_device = dev;
-
-		VkPipelineCacheCreateInfo drv_cache_info{ VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO };
-		vkCreatePipelineCache(m_device, &drv_cache_info, nullptr, &m_driver_pipeline_cache);
 	}
 
 	void shader_interpreter::destroy()
@@ -473,12 +467,6 @@ namespace vk
 		m_program_cache.clear();
 		m_vs_shader_cache.clear();
 		m_fs_shader_cache.clear();
-
-		if (m_driver_pipeline_cache)
-		{
-			vkDestroyPipelineCache(m_device, m_driver_pipeline_cache, nullptr);
-			m_driver_pipeline_cache = VK_NULL_HANDLE;
-		}
 	}
 
 	std::shared_ptr<glsl::program> shader_interpreter::link(const vk::pipeline_props& properties, u64 compiler_opt, bool async, async_build_fn_callback async_callback)
@@ -486,7 +474,7 @@ namespace vk
 		auto vs = build_vs(compiler_opt);
 		auto fs = build_fs(compiler_opt);
 
-		async_pipe_compiler_context context{ properties, m_device, m_driver_pipeline_cache, vs->shader.get_handle(), fs->shader.get_handle() };
+		async_pipe_compiler_context context{ properties, m_device, vs->shader.get_handle(), fs->shader.get_handle() };
 		auto create_graphics_info_fn = [=]() mutable
 		{
 			return context.compile();
