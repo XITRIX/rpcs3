@@ -148,6 +148,7 @@ namespace vk
 		gpu_formats_support m_formats_support{};
 		std::unique_ptr<mem_allocator_base> m_allocator;
 		VkDevice dev = VK_NULL_HANDLE;
+		VkPipelineCache m_pipeline_cache = VK_NULL_HANDLE;
 
 		VkQueue m_graphics_queue = VK_NULL_HANDLE;
 		VkQueue m_present_queue = VK_NULL_HANDLE;
@@ -164,6 +165,9 @@ namespace vk
 		void dump_debug_info(
 			const std::vector<const char*>& requested_extensions,
 			const VkPhysicalDeviceFeatures& requested_features) const;
+		void create_pipeline_cache();
+		void save_pipeline_cache() const;
+		void save_and_destroy_pipeline_cache();
 
 	public:
 		render_device() = default;
@@ -213,6 +217,7 @@ namespace vk
 		u32 get_transfer_queue_family() const { return m_transfer_queue_family; }
 
 		mem_allocator_base* get_allocator() const { return m_allocator.get(); }
+		VkPipelineCache get_pipeline_cache() const { return m_pipeline_cache; }
 
 		bool device_lost() const;  // Returns true if the device was valid before the call.
 		bool is_lost() const { return m_is_lost; }
