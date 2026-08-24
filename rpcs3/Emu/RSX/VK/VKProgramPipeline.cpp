@@ -266,6 +266,9 @@ namespace vk
 
 			create_pipeline_layout();
 			ensure(m_pipeline_layout);
+			const VkPipelineCache pipeline_cache = g_render_device && static_cast<VkDevice>(*g_render_device) == m_device
+				? g_render_device->get_pipeline_cache()
+				: VK_NULL_HANDLE;
 
 			if (is_graphics_pipe)
 			{

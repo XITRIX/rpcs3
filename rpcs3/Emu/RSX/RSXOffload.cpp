@@ -8,7 +8,6 @@
 
 #include "Utilities/lockless.h"
 
-#include <thread>
 #include "util/asm.hpp"
 
 namespace rsx
@@ -79,7 +78,11 @@ namespace rsx
 				if (m_enqueued_count.load() == m_processed_count.load())
 				{
 					m_processed_count.notify_all();
-					std::this_thread::yield();
+
+					// Queue insertion notifies this atomic when transitioning from empty
+					// to non-empty. Keep a short timeout so an abort, which does not add
+					// queue work, is still observed promptly.
+					m_work_queue.get_wait_atomic().wait(0, atomic_wait_timeout{5'000'000});
 				}
 			}
 
