@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 27u
+#define RPCS3_IOS_ABI_VERSION 28u
 
 typedef enum rpcs3_ios_status
 {
@@ -65,7 +65,8 @@ typedef enum rpcs3_ios_status
     RPCS3_IOS_CONFIG_DATABASE_STORAGE_FAILED = 41,
     RPCS3_IOS_SETTINGS_PRESET_INVALID = 42,
     RPCS3_IOS_SETTINGS_PRESET_EXISTS = 43,
-    RPCS3_IOS_SETTINGS_PRESET_NOT_FOUND = 44
+    RPCS3_IOS_SETTINGS_PRESET_NOT_FOUND = 44,
+    RPCS3_IOS_GAME_CACHE_FAILED = 45
 } rpcs3_ios_status;
 
 typedef enum rpcs3_ios_state
@@ -222,6 +223,26 @@ typedef struct rpcs3_ios_game_info
 typedef void (*rpcs3_ios_game_callback)(
     void* user_context,
     const rpcs3_ios_game_info* game);
+
+typedef enum rpcs3_ios_game_cache_type
+{
+    RPCS3_IOS_GAME_CACHE_SHADER = 1,
+    RPCS3_IOS_GAME_CACHE_PPU = 2,
+    RPCS3_IOS_GAME_CACHE_SPU = 3,
+    RPCS3_IOS_GAME_CACHE_HDD1 = 4,
+    RPCS3_IOS_GAME_CACHE_ALL = 5
+} rpcs3_ios_game_cache_type;
+
+typedef struct rpcs3_ios_game_cache_info
+{
+    uint32_t struct_size;
+    uint32_t reserved;
+    uint64_t shader;
+    uint64_t ppu;
+    uint64_t spu;
+    uint64_t hdd1;
+    uint64_t total;
+} rpcs3_ios_game_cache_info;
 
 typedef enum rpcs3_ios_trophy_grade
 {
@@ -537,6 +558,17 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_trophies(
 // and savestates are retained intentionally.
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_delete_game(
     const char* title_id) RPCS3_IOS_NOEXCEPT;
+// Reports title-scoped cache usage using RPCS3's native cache layout. The
+// operation is available only while emulation is stopped.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_get_game_cache_info(
+    const char* title_id,
+    rpcs3_ios_game_cache_info* cache_info) RPCS3_IOS_NOEXCEPT;
+// Clears one cache category or every title-scoped cache. bytes_removed is the
+// measured pre-deletion size and remains an estimate of reclaimed disk space.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_clear_game_cache(
+    const char* title_id,
+    rpcs3_ios_game_cache_type cache_type,
+    uint64_t* bytes_removed) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_game_patches(
     const char* title_id,
     rpcs3_ios_game_patch_callback callback,
