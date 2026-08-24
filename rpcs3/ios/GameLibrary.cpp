@@ -240,6 +240,219 @@ bool remove_installed_paths_with_prefix(
 	return true;
 }
 
+struct game_cache_inventory
+{
+	game_cache_usage usage;
+	std::vector<std::string> shader_directories;
+	std::vector<std::string> ppu_files;
+	std::vector<std::string> spu_files;
+	std::vector<std::string> hdd1_paths;
+};
+
+bool add_cache_size(u64& destination, u64 amount, std::string& detail)
+{
+	constexpr u64 maximum_cache_size = std::numeric_limits<u64>::max();
+	if (amount > maximum_cache_size - destination)
+	{
+		detail = "The selected game's cache size exceeds the supported range";
+		return false;
+	}
+	destination += amount;
+	return true;
+}
+
+bool cache_path_size(const std::string& path, u64& size, std::string& detail)
+{
+	fs::stat_t info{};
+	if (!fs::get_stat(path, info))
+	{
+		if (fs::g_tls_error == fs::error::noent)
+		{
+			size = 0;
+			return true;
+		}
+		detail = fmt::format("RPCS3 could not inspect cache path %s", path);
+		return false;
+	}
+
+	size = info.is_directory ? fs::get_dir_size(path, 1) : info.size;
+	if (size == std::numeric_limits<u64>::max())
+	{
+		detail = fmt::format("RPCS3 could not measure cache path %s", path);
+		return false;
+	}
+	return true;
+}
+
+bool is_ppu_cache_file(std::string_view name)
+{
+	return name.starts_with('v') &&
+		(name.ends_with(".obj") || name.ends_with(".obj.gz"));
+}
+
+bool is_spu_cache_file(std::string_view name)
+{
+	return name.starts_with("spu") &&
+		(name.ends_with(".dat") || name.ends_with(".dat.gz") ||
+			name.ends_with(".obj") || name.ends_with(".obj.gz"));
+}
+
+bool inspect_main_cache_directory(
+	const std::string& directory,
+	game_cache_inventory& inventory,
+	std::string& detail)
+{
+	const fs::dir entries{directory};
+	if (!entries)
+	{
+		detail = fmt::format("RPCS3 could not inspect cache directory %s", directory);
+		return false;
+	}
+
+	for (const auto& entry : entries)
+	{
+		if (entry.name == "." || entry.name == "..")
+		{
+			continue;
+		}
+
+		const std::string path = directory + '/' + entry.name;
+		if (entry.is_directory && !entry.is_symlink)
+		{
+			if (entry.name == "shaders_cache")
+			{
+				u64 size = 0;
+				if (!cache_path_size(path, size, detail) ||
+					!add_cache_size(inventory.usage.shader, size, detail))
+				{
+					return false;
+				}
+				inventory.shader_directories.emplace_back(path);
+				continue;
+			}
+			if (!inspect_main_cache_directory(path, inventory, detail))
+			{
+				return false;
+			}
+			continue;
+		}
+
+		if (is_ppu_cache_file(entry.name))
+		{
+			if (!add_cache_size(inventory.usage.ppu, entry.size, detail))
+			{
+				return false;
+			}
+			inventory.ppu_files.emplace_back(path);
+		}
+		if (is_spu_cache_file(entry.name))
+		{
+			if (!add_cache_size(inventory.usage.spu, entry.size, detail))
+			{
+				return false;
+			}
+			inventory.spu_files.emplace_back(path);
+		}
+	}
+	return true;
+}
+
+bool title_scoped_cache_name(std::string_view name, std::string_view title_id)
+{
+	return name == title_id ||
+		(name.starts_with(title_id) && name.size() > title_id.size() &&
+			name[title_id.size()] == '_');
+}
+
+bool build_game_cache_inventory(
+	std::string_view title_id,
+	game_cache_inventory& inventory,
+	std::string& detail)
+{
+	const std::string main_cache = rpcs3::utils::get_cache_dir_by_serial(std::string{title_id});
+	fs::stat_t main_info{};
+	if (fs::get_stat(main_cache, main_info))
+	{
+		if (!main_info.is_directory || main_info.is_symlink)
+		{
+			detail = fmt::format("RPCS3 cache path is not a directory: %s", main_cache);
+			return false;
+		}
+		if (!cache_path_size(main_cache, inventory.usage.total, detail) ||
+			!inspect_main_cache_directory(main_cache, inventory, detail))
+		{
+			return false;
+		}
+	}
+	else if (fs::g_tls_error != fs::error::noent)
+	{
+		detail = fmt::format("RPCS3 could not inspect cache path %s", main_cache);
+		return false;
+	}
+
+	const std::string hdd1_root = rpcs3::utils::get_hdd1_cache_dir();
+	fs::stat_t hdd1_info{};
+	if (!fs::get_stat(hdd1_root, hdd1_info))
+	{
+		if (fs::g_tls_error == fs::error::noent)
+		{
+			return true;
+		}
+		detail = fmt::format("RPCS3 could not inspect HDD1 cache path %s", hdd1_root);
+		return false;
+	}
+	if (!hdd1_info.is_directory || hdd1_info.is_symlink)
+	{
+		detail = fmt::format("RPCS3 HDD1 cache path is not a directory: %s", hdd1_root);
+		return false;
+	}
+
+	for (const auto& entry : fs::dir{hdd1_root})
+	{
+		if (entry.name == "." || entry.name == ".." ||
+			!title_scoped_cache_name(entry.name, title_id))
+		{
+			continue;
+		}
+
+		const std::string path = hdd1_root + entry.name;
+		u64 size = 0;
+		if (!cache_path_size(path, size, detail) ||
+			!add_cache_size(inventory.usage.hdd1, size, detail) ||
+			!add_cache_size(inventory.usage.total, size, detail))
+		{
+			return false;
+		}
+		inventory.hdd1_paths.emplace_back(path);
+	}
+	return true;
+}
+
+bool remove_cache_files(const std::vector<std::string>& paths, std::string& detail)
+{
+	for (const std::string& path : paths)
+	{
+		if (!fs::remove_file(path))
+		{
+			detail = fmt::format("RPCS3 could not remove cache file %s", path);
+			return false;
+		}
+	}
+	return true;
+}
+
+bool remove_cache_paths(const std::vector<std::string>& paths, std::string& detail)
+{
+	for (const std::string& path : paths)
+	{
+		if (!remove_installed_path(path, detail))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
 std::string disc_image_root()
 {
 	return rpcs3::utils::get_games_dir() + "DiscImages/";
@@ -1582,6 +1795,88 @@ game_delete_result delete_installed_game(std::string_view title_id)
 		installed->title,
 		{},
 	};
+}
+
+game_cache_result inspect_game_cache(std::string_view title_id)
+{
+	if (!valid_title_id(title_id) || !find_installed_game(title_id))
+	{
+		return {
+			game_cache_error::not_found,
+			{},
+			"The selected game is not installed",
+		};
+	}
+
+	game_cache_inventory inventory;
+	std::string detail;
+	if (!build_game_cache_inventory(title_id, inventory, detail))
+	{
+		return {
+			game_cache_error::inspection_failed,
+			inventory.usage,
+			std::move(detail),
+		};
+	}
+	return {game_cache_error::none, inventory.usage, {}};
+}
+
+game_cache_result clear_game_cache(std::string_view title_id, game_cache_type type)
+{
+	if (!valid_title_id(title_id) || !find_installed_game(title_id))
+	{
+		return {
+			game_cache_error::not_found,
+			{},
+			"The selected game is not installed",
+		};
+	}
+
+	game_cache_inventory inventory;
+	std::string detail;
+	if (!build_game_cache_inventory(title_id, inventory, detail))
+	{
+		return {
+			game_cache_error::inspection_failed,
+			inventory.usage,
+			std::move(detail),
+		};
+	}
+
+	bool removed = false;
+	switch (type)
+	{
+	case game_cache_type::shader:
+		removed = remove_cache_paths(inventory.shader_directories, detail);
+		break;
+	case game_cache_type::ppu:
+		removed = remove_cache_files(inventory.ppu_files, detail);
+		break;
+	case game_cache_type::spu:
+		removed = remove_cache_files(inventory.spu_files, detail);
+		break;
+	case game_cache_type::hdd1:
+		removed = remove_cache_paths(inventory.hdd1_paths, detail);
+		break;
+	case game_cache_type::all:
+		removed = remove_installed_path(
+			rpcs3::utils::get_cache_dir_by_serial(std::string{title_id}), detail) &&
+			remove_cache_paths(inventory.hdd1_paths, detail);
+		break;
+	default:
+		detail = "RPCS3 received an unsupported game cache type";
+		break;
+	}
+
+	if (!removed)
+	{
+		return {
+			game_cache_error::deletion_failed,
+			inventory.usage,
+			std::move(detail),
+		};
+	}
+	return {game_cache_error::none, inventory.usage, {}};
 }
 
 std::vector<installed_game> installed_games()
