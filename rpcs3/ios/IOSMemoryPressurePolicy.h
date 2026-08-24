@@ -14,6 +14,7 @@ namespace rpcs3::ios
 
 	inline constexpr std::uint64_t process_memory_mib = 0x100000ull;
 	inline constexpr std::uint32_t automatic_llvm_compile_threads = 3;
+	inline constexpr std::uint32_t savestate_compression_threads = 3;
 
 	// LLVM compilation has a large transient working set. On iOS, a zero
 	// configuration value means a memory-safe automatic limit instead of every
@@ -27,6 +28,19 @@ namespace rpcs3::ios
 			? configured_threads
 			: automatic_llvm_compile_threads;
 		return requested_threads < hardware_limit ? requested_threads : hardware_limit;
+	}
+
+	// Every ZSTD savestate worker can temporarily own both an uncompressed input
+	// block and its compression-bound output. Keep enough parallelism to avoid a
+	// single-threaded multi-gigabyte save without scaling that transient working
+	// set to every performance core on unified-memory devices.
+	constexpr std::uint32_t get_savestate_compression_thread_limit(
+		std::uint32_t available_threads)
+	{
+		const std::uint32_t worker_limit = available_threads > 1 ? available_threads - 1 : 1;
+		return worker_limit < savestate_compression_threads
+			? worker_limit
+			: savestate_compression_threads;
 	}
 
 	// iOS reports the process's current dirty-memory allowance rather than a
