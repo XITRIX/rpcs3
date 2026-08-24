@@ -718,6 +718,13 @@ if(TARGET 3rdparty_vulkan)
             RSX/VK/vkutils/metal_layer.mm
         )
     endif()
+
+    if(RPCS3_FRONTEND STREQUAL "IOS")
+        target_sources(rpcs3_emu PRIVATE
+            RSX/VK/upscalers/metalfx_spatial.mm
+        )
+        set_source_files_properties(RSX/VK/upscalers/metalfx_spatial.mm PROPERTIES COMPILE_OPTIONS -fno-objc-arc)
+    endif()
 endif()
 
 if(NOT WIN32)
@@ -760,6 +767,7 @@ target_link_libraries(rpcs3_emu
 if(RPCS3_FRONTEND STREQUAL "IOS")
     target_link_libraries(rpcs3_emu PUBLIC
         "-framework Foundation"
+        "-framework MetalFX"
         iconv
     )
 endif()
