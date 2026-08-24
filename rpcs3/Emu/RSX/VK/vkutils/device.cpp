@@ -3,15 +3,203 @@
 #include "VRAMBudgetPolicy.h"
 #include "util/logs.hpp"
 #include "Emu/system_config.h"
+#include "Utilities/File.h"
 #include <vulkan/vulkan_core.h>
 #ifdef __APPLE__
 #include <vulkan/vulkan_beta.h>
 #endif
 
+#include <cstring>
+
 namespace vk
 {
+	namespace
+	{
+		constexpr u32 pipeline_cache_file_magic = 0x56435052; // "RPCV"
+		constexpr u32 pipeline_cache_file_version = 1;
+		constexpr u64 maximum_pipeline_cache_data_size = 128 * 1024 * 1024;
+
+		struct pipeline_cache_file_header
+		{
+			u32 magic;
+			u32 version;
+			u32 header_size;
+			u32 data_size;
+			u32 vendor_id;
+			u32 device_id;
+			u8 pipeline_cache_uuid[VK_UUID_SIZE];
+		};
+
+		static_assert(sizeof(pipeline_cache_file_header) == 40);
+
+		std::string get_pipeline_cache_path()
+		{
+			return fs::get_cache_dir() + "vk_pipeline_cache.bin";
+		}
+	}
+
 	// Global shared render device
 	const render_device* g_render_device = nullptr;
+
+	void render_device::create_pipeline_cache()
+	{
+		ensure(dev && pgpu);
+		ensure(!m_pipeline_cache);
+
+		std::vector<u8> initial_data;
+		const std::string path = get_pipeline_cache_path();
+		fs::file cache_file{path, fs::read};
+
+		if (cache_file)
+		{
+			const u64 file_size = cache_file.size();
+			if (file_size >= sizeof(pipeline_cache_file_header) &&
+				file_size <= sizeof(pipeline_cache_file_header) + maximum_pipeline_cache_data_size)
+			{
+				pipeline_cache_file_header header{};
+				if (cache_file.read(&header, sizeof(header)) == sizeof(header) &&
+					header.magic == pipeline_cache_file_magic &&
+					header.version == pipeline_cache_file_version &&
+					header.header_size == sizeof(header) &&
+					header.data_size == file_size - sizeof(header) &&
+					header.vendor_id == pgpu->props.vendorID &&
+					header.device_id == pgpu->props.deviceID &&
+					std::memcmp(header.pipeline_cache_uuid, pgpu->props.pipelineCacheUUID, VK_UUID_SIZE) == 0)
+				{
+					initial_data.resize(header.data_size);
+					if (cache_file.read(initial_data.data(), initial_data.size()) != initial_data.size())
+					{
+						rsx_log.warning("Vulkan driver pipeline cache could not be read completely; starting empty.");
+						initial_data.clear();
+					}
+				}
+				else
+				{
+					rsx_log.notice("Vulkan driver pipeline cache is incompatible or invalid; starting empty.");
+				}
+			}
+			else
+			{
+				rsx_log.warning("Vulkan driver pipeline cache has an invalid size (%llu bytes); starting empty.", file_size);
+			}
+		}
+
+		VkPipelineCacheCreateInfo create_info{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+		create_info.initialDataSize = initial_data.size();
+		create_info.pInitialData = initial_data.empty() ? nullptr : initial_data.data();
+
+		VkResult result = vkCreatePipelineCache(dev, &create_info, nullptr, &m_pipeline_cache);
+		if (result != VK_SUCCESS && !initial_data.empty())
+		{
+			rsx_log.warning(
+				"Vulkan driver rejected %llu bytes of persisted pipeline cache data (VkResult %d); retrying empty.",
+				static_cast<u64>(initial_data.size()), static_cast<s32>(result));
+			create_info.initialDataSize = 0;
+			create_info.pInitialData = nullptr;
+			result = vkCreatePipelineCache(dev, &create_info, nullptr, &m_pipeline_cache);
+		}
+
+		if (result != VK_SUCCESS)
+		{
+			m_pipeline_cache = VK_NULL_HANDLE;
+			rsx_log.warning("Vulkan driver pipeline cache is unavailable (VkResult %d).", static_cast<s32>(result));
+			return;
+		}
+
+		if (initial_data.empty())
+		{
+			rsx_log.notice("Vulkan driver pipeline cache initialized empty.");
+		}
+		else
+		{
+			rsx_log.notice(
+				"Vulkan driver pipeline cache initialized from %llu bytes of persisted data.",
+				static_cast<u64>(initial_data.size()));
+		}
+	}
+
+	void render_device::save_pipeline_cache() const
+	{
+		if (!dev || !m_pipeline_cache)
+		{
+			return;
+		}
+
+		std::vector<u8> data;
+		for (u32 attempt = 0; attempt < 2; ++attempt)
+		{
+			size_t data_size = 0;
+			VkResult result = vkGetPipelineCacheData(dev, m_pipeline_cache, &data_size, nullptr);
+			if (result != VK_SUCCESS)
+			{
+				rsx_log.warning("Vulkan driver pipeline cache size query failed (VkResult %d).", static_cast<s32>(result));
+				return;
+			}
+
+			if (!data_size || data_size > maximum_pipeline_cache_data_size)
+			{
+				rsx_log.warning(
+					"Vulkan driver pipeline cache size %llu is outside the persisted limit; cache was not saved.",
+					static_cast<u64>(data_size));
+				return;
+			}
+
+			data.resize(data_size);
+			result = vkGetPipelineCacheData(dev, m_pipeline_cache, &data_size, data.data());
+			if (result == VK_SUCCESS)
+			{
+				data.resize(data_size);
+				break;
+			}
+
+			data.clear();
+			if (result != VK_INCOMPLETE || attempt == 1)
+			{
+				rsx_log.warning("Vulkan driver pipeline cache readback failed (VkResult %d).", static_cast<s32>(result));
+				return;
+			}
+		}
+
+		pipeline_cache_file_header header{};
+		header.magic = pipeline_cache_file_magic;
+		header.version = pipeline_cache_file_version;
+		header.header_size = sizeof(header);
+		header.data_size = ::narrow<u32>(data.size());
+		header.vendor_id = pgpu->props.vendorID;
+		header.device_id = pgpu->props.deviceID;
+		std::memcpy(header.pipeline_cache_uuid, pgpu->props.pipelineCacheUUID, VK_UUID_SIZE);
+
+		const std::string path = get_pipeline_cache_path();
+		if (!fs::create_path(fs::get_cache_dir()))
+		{
+			rsx_log.warning("Vulkan driver pipeline cache directory could not be created.");
+			return;
+		}
+
+		fs::pending_file pending{path};
+		if (!pending.file ||
+			pending.file.write(&header, sizeof(header)) != sizeof(header) ||
+			pending.file.write(data.data(), data.size()) != data.size() ||
+			!pending.commit())
+		{
+			rsx_log.warning("Vulkan driver pipeline cache could not be saved atomically.");
+			return;
+		}
+
+		rsx_log.notice("Vulkan driver pipeline cache saved (%llu bytes).", static_cast<u64>(data.size()));
+	}
+
+	void render_device::save_and_destroy_pipeline_cache()
+	{
+		if (!m_pipeline_cache)
+		{
+			return;
+		}
+
+		save_pipeline_cache();
+		vkDestroyPipelineCache(dev, m_pipeline_cache, nullptr);
+		m_pipeline_cache = VK_NULL_HANDLE;
+	}
 
 	void physical_device::get_physical_device_features(bool allow_extensions)
 	{
@@ -885,6 +1073,7 @@ namespace vk
 #endif
 
 		memory_map.device_local_total_bytes = vram_pressure_limit;
+		create_pipeline_cache();
 	}
 
 	void render_device::destroy()
@@ -896,6 +1085,8 @@ namespace vk
 
 		if (dev && pgpu)
 		{
+			save_and_destroy_pipeline_cache();
+
 			if (m_allocator)
 			{
 				m_allocator->destroy();
