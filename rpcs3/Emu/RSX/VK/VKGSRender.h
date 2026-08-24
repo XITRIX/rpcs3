@@ -1,6 +1,9 @@
 #pragma once
 
 #include "upscalers/upscaling.h"
+#ifdef RPCS3_IOS
+#include "upscalers/metalfx_spatial.h"
+#endif
 
 #include "vkutils/descriptors.h"
 #include "vkutils/data_heap.h"
@@ -68,6 +71,9 @@ private:
 
 	std::unique_ptr<vk::upscaler> m_upscaler;
 	output_scaling_mode m_output_scaling{output_scaling_mode::bilinear};
+#ifdef RPCS3_IOS
+	std::unique_ptr<vk::metal_fx_spatial_upscaler> m_metal_fx_spatial;
+#endif
 
 	std::unique_ptr<vk::buffer> m_cond_render_buffer;
 	u64 m_cond_render_sync_tag = 0;
@@ -224,7 +230,7 @@ private:
 		VkPipelineStageFlags pipeline_stage_flags = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
 
 	void flush_command_queue(bool hard_sync = false, bool do_not_switch = false);
-	void queue_swap_request();
+	void queue_swap_request(bool wait_on_acquire = true);
 	void frame_context_cleanup(vk::frame_context_t *ctx);
 	void advance_queued_frames();
 	void present(vk::frame_context_t *ctx);

@@ -211,7 +211,7 @@ void VKGSRender::advance_queued_frames()
 	vk::advance_frame_counter();
 }
 
-void VKGSRender::queue_swap_request()
+void VKGSRender::queue_swap_request(bool wait_on_acquire)
 {
 	ensure(!m_current_frame->swap_command_buffer);
 	m_current_frame->swap_command_buffer = m_current_command_buffer;
@@ -224,7 +224,7 @@ void VKGSRender::queue_swap_request()
 	else
 	{
 		close_and_submit_command_buffer(nullptr,
-			m_current_frame->acquire_signal_semaphore,
+			wait_on_acquire ? m_current_frame->acquire_signal_semaphore : VK_NULL_HANDLE,
 			m_current_frame->present_wait_semaphore,
 			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT);
 	}
@@ -809,13 +809,87 @@ void VKGSRender::flip(const rsx::display_flip_info_t& info)
 		}
 		else
 		{
+			// MetalFX consumes a normalized BGRA input prepared with this pass.
+			// It also serves as the deterministic fallback outside iOS or when
+			// MetalFX cannot handle the requested dimensions.
 			m_upscaler = std::make_unique<vk::bilinear_upscale_pass>();
 		}
+
+#ifdef RPCS3_IOS
+		if (m_output_scaling == output_scaling_mode::metal_fx)
+		{
+			m_metal_fx_spatial = std::make_unique<vk::metal_fx_spatial_upscaler>();
+		}
+		else
+		{
+			m_metal_fx_spatial.reset();
+		}
+#endif
 	}
 
+	bool acquire_consumed_before_present = false;
 	if (image_to_flip)
 	{
 		const bool use_full_rgb_range_output = g_cfg.video.full_rgb_range_output.get();
+
+#ifdef RPCS3_IOS
+		if (m_output_scaling == output_scaling_mode::metal_fx &&
+			!avconfig.stereo_enabled &&
+			m_metal_fx_spatial &&
+			m_metal_fx_spatial->prepare(
+				*m_device,
+				buffer_width,
+				buffer_height,
+				static_cast<u32>(aspect_ratio.width()),
+				static_cast<u32>(aspect_ratio.height())))
+		{
+			vk::viewable_image* metal_fx_input = m_metal_fx_spatial->input_image();
+			vk::viewable_image* metal_fx_output = m_metal_fx_spatial->output_image();
+			ensure(metal_fx_input && metal_fx_output);
+
+			metal_fx_input->change_layout(*m_current_command_buffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+			VkImageBlit input_copy{};
+			input_copy.srcSubresource = { image_to_flip->aspect(), 0, 0, 1 };
+			input_copy.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+			input_copy.srcOffsets[1] = { static_cast<s32>(buffer_width), static_cast<s32>(buffer_height), 1 };
+			input_copy.dstOffsets[1] = { static_cast<s32>(buffer_width), static_cast<s32>(buffer_height), 1 };
+			m_upscaler->scale_output(
+				*m_current_command_buffer,
+				image_to_flip,
+				metal_fx_input->value,
+				metal_fx_input->current_layout,
+				input_copy,
+				UPSCALE_AND_COMMIT | UPSCALE_DEFAULT_VIEW);
+
+			// Keep both resources in a layout that permits the externally encoded
+			// MetalFX read/write pass. Queue order supplies the cross-API handoff.
+			metal_fx_input->change_layout(*m_current_command_buffer, VK_IMAGE_LAYOUT_GENERAL);
+			metal_fx_output->change_layout(*m_current_command_buffer, VK_IMAGE_LAYOUT_GENERAL);
+
+			close_and_submit_command_buffer(
+				nullptr,
+				m_current_frame->acquire_signal_semaphore,
+				VK_NULL_HANDLE,
+				VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT);
+			acquire_consumed_before_present = true;
+
+			m_current_command_buffer = m_primary_cb_list.next();
+			m_current_command_buffer->reset();
+			m_current_command_buffer->begin();
+
+			if (m_metal_fx_spatial->encode())
+			{
+				image_to_flip = metal_fx_output;
+				buffer_width = metal_fx_output->width();
+				buffer_height = metal_fx_output->height();
+			}
+			else
+			{
+				rsx_log.error("MetalFX Spatial encode failed; using Bilinear for this frame.");
+			}
+		}
+#endif
 
 		if (!use_full_rgb_range_output || !rsx::fcmp(avconfig.gamma, 1.f) || avconfig.stereo_enabled) [[unlikely]]
 		{
@@ -972,7 +1046,7 @@ void VKGSRender::flip(const rsx::display_flip_info_t& info)
 		vk::change_image_layout(*m_current_command_buffer, target_image, target_layout, present_layout, subresource_range);
 	}
 
-	queue_swap_request();
+	queue_swap_request(!acquire_consumed_before_present);
 
 	m_frame_stats.flip_time = m_profiler.duration();
 
