@@ -8,6 +8,10 @@
 #include "Utilities/StrFmt.h"
 #include "serialization_ext.hpp"
 
+#ifdef RPCS3_IOS
+#include "ios/IOSMemoryPressurePolicy.h"
+#endif
+
 #include <zlib.h>
 #include <zstd.h>
 
@@ -812,13 +816,23 @@ void compressed_zstd_serialization_file_handler::initialize(utils::serial& ar)
 		m_compression_threads.clear();
 		m_file_writer_thread.reset();
 
-		// Make sure at least one thread is free
-		// Limit thread count in order to make sure memory limits are under control (TODO: scale with RAM size)
+		// Make sure at least one thread is free. iOS also bounds the transient
+		// input/output working set on unified memory.
+#ifdef RPCS3_IOS
+		const usz thread_count = rpcs3::ios::get_savestate_compression_thread_limit(utils::get_thread_count());
+#else
 		const usz thread_count = std::min<u32>(std::max<u32>(utils::get_thread_count(), 2) - 1, 32);
+#endif
+
+		// Publish every queue context before any worker can observe the deque.
+		// In particular, assignment evaluates its right-hand side first, so the
+		// former combined insertion/assignment expression could start a fast or
+		// reused worker before its context had even been inserted.
+		m_compression_threads.resize(thread_count);
 
 		for (usz i = 0; i < thread_count; i++)
 		{
-			m_compression_threads.emplace_back().m_thread = std::make_unique<named_thread<std::function<void()>>>(fmt::format("CompressedPrepare Thread %d", i + 1), [this]() { this->stream_data_prepare_thread_op(); });
+			m_compression_threads[i].m_thread = std::make_unique<named_thread<std::function<void()>>>(fmt::format("CompressedPrepare Thread %d", i + 1), [this, i]() { this->stream_data_prepare_thread_op(i); });
 		}
 
 		m_file_writer_thread = std::make_unique<named_thread<std::function<void()>>>("CompressedWriter Thread"sv, [this]() { this->file_writer_thread_op(); });
@@ -1209,15 +1223,13 @@ void compressed_zstd_serialization_file_handler::finalize(utils::serial& ar)
 	m_file->sync();
 }
 
-void compressed_zstd_serialization_file_handler::stream_data_prepare_thread_op()
+void compressed_zstd_serialization_file_handler::stream_data_prepare_thread_op(usz thread_index)
 {
 	ZSTD_CCtx* m_zc = ZSTD_createCCtx();
 
 	std::vector<u8> stream_data;
 
 	const stx::shared_ptr<std::vector<u8>> null_ptr = stx::null_ptr;
-	const usz thread_index = m_thread_buffer_index++;
-
 	while (true)
 	{
 		auto& input = m_compression_threads[thread_index].m_input;
