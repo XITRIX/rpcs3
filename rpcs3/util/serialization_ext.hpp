@@ -169,7 +169,6 @@ private:
 
 	usz m_input_buffer_index = 0;
 	atomic_t<usz> m_output_buffer_index = 0;
-	atomic_t<usz> m_thread_buffer_index = 0;
 
 	struct compression_thread_context_t
 	{
@@ -186,7 +185,7 @@ private:
 
 	usz read_at(utils::serial& ar, usz read_pos, void* data, usz size);
 	void initialize(utils::serial& ar);
-	void stream_data_prepare_thread_op();
+	void stream_data_prepare_thread_op(usz thread_index);
 	void file_writer_thread_op();
 };
 
