@@ -114,6 +114,7 @@ const std::array catalog{
 	SETTING("advanced.sleep_timers", "Advanced", "Scheduling", "Sleep timers accuracy", "Controls how aggressively RPCS3 corrects host sleep timing.", kind::RPCS3_IOS_SETTING_CHOICE, g_cfg.core.sleep_timers_accuracy, 0, 0, 0),
 	SETTING("advanced.fifo_accuracy", "Advanced", "Scheduling", "RSX FIFO accuracy", "Controls synchronization accuracy when fetching RSX commands.", kind::RPCS3_IOS_SETTING_CHOICE, g_cfg.core.rsx_fifo_accuracy, 0, 0, 0),
 	GAME_SETTING("advanced.driver_wakeup_delay", "Advanced", "Scheduling", "Driver wake-up delay", "Delays RSX wake-ups to prevent FIFO desynchronization in affected titles; may reduce performance.", kind::RPCS3_IOS_SETTING_INTEGER, g_cfg.video.driver_wakeup_delay, 0, 800, 20),
+	GAME_SETTING("advanced.vblank_frequency", "Advanced", "Scheduling", "VBlank Frequency", "Sets the frequency of vertical blanking signals in hertz; changing the 60 Hz default can alter game speed and event timing.", kind::RPCS3_IOS_SETTING_INTEGER, g_cfg.video.vblank_rate, 1, 6000, 1),
 	SETTING("advanced.max_preempt_count", "Advanced", "Scheduling", "Max Power Saving CPU-preemptions", "Limits CPU thread preemptions per frame; zero is automatic.", kind::RPCS3_IOS_SETTING_INTEGER, g_cfg.core.max_cpu_preempt_count_per_frame, 0, 400, 10),
 
 	// Experimental choices are resolved once after the effective title config
