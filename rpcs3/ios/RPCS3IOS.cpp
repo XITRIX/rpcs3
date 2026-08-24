@@ -1045,7 +1045,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":27,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-trophies\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop\",\"media_codecs\":true}";
+	return "{\"abi\":28,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop\",\"media_codecs\":true}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -2109,6 +2109,117 @@ extern "C" rpcs3_ios_status rpcs3_ios_delete_game(const char* title_id) noexcept
 		set_error("Unknown exception while deleting the installed game");
 	}
 	return RPCS3_IOS_GAME_DELETE_FAILED;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_get_game_cache_info(
+	const char* title_id,
+	rpcs3_ios_game_cache_info* cache_info) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (cache_info)
+	{
+		*cache_info = {sizeof(rpcs3_ios_game_cache_info), 0, 0, 0, 0, 0, 0};
+	}
+	if (!title_id || !title_id[0] || !cache_info)
+	{
+		set_error("Game cache inspection requires a title ID and output record");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("Stop emulation before inspecting a game's cache");
+		return result;
+	}
+
+	try
+	{
+		const auto result = rpcs3::ios::inspect_game_cache(title_id);
+		if (result.error == rpcs3::ios::game_cache_error::none)
+		{
+			*cache_info = {
+				sizeof(rpcs3_ios_game_cache_info),
+				0,
+				result.usage.shader,
+				result.usage.ppu,
+				result.usage.spu,
+				result.usage.hdd1,
+				result.usage.total,
+			};
+			return RPCS3_IOS_OK;
+		}
+		set_error(result.detail);
+		return result.error == rpcs3::ios::game_cache_error::not_found
+			? RPCS3_IOS_GAME_NOT_FOUND
+			: RPCS3_IOS_GAME_CACHE_FAILED;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while inspecting the game cache");
+	}
+	return RPCS3_IOS_GAME_CACHE_FAILED;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_clear_game_cache(
+	const char* title_id,
+	rpcs3_ios_game_cache_type cache_type,
+	uint64_t* bytes_removed) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (bytes_removed)
+	{
+		*bytes_removed = 0;
+	}
+	if (!title_id || !title_id[0] || !bytes_removed ||
+		cache_type < RPCS3_IOS_GAME_CACHE_SHADER || cache_type > RPCS3_IOS_GAME_CACHE_ALL)
+	{
+		set_error("Game cache cleanup requires a title ID, valid cache type, and output size");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("Stop emulation before clearing a game's cache");
+		return result;
+	}
+
+	try
+	{
+		const auto type = static_cast<rpcs3::ios::game_cache_type>(cache_type);
+		const auto result = rpcs3::ios::clear_game_cache(title_id, type);
+		if (result.error == rpcs3::ios::game_cache_error::none)
+		{
+			switch (type)
+			{
+			case rpcs3::ios::game_cache_type::shader: *bytes_removed = result.usage.shader; break;
+			case rpcs3::ios::game_cache_type::ppu: *bytes_removed = result.usage.ppu; break;
+			case rpcs3::ios::game_cache_type::spu: *bytes_removed = result.usage.spu; break;
+			case rpcs3::ios::game_cache_type::hdd1: *bytes_removed = result.usage.hdd1; break;
+			case rpcs3::ios::game_cache_type::all: *bytes_removed = result.usage.total; break;
+			default: *bytes_removed = 0; break;
+			}
+			emit_log(4, fmt::format("Cleared game cache type %u for %s (%llu bytes measured)",
+				static_cast<u32>(cache_type), title_id, *bytes_removed));
+			return RPCS3_IOS_OK;
+		}
+		set_error(result.detail);
+		return result.error == rpcs3::ios::game_cache_error::not_found
+			? RPCS3_IOS_GAME_NOT_FOUND
+			: RPCS3_IOS_GAME_CACHE_FAILED;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while clearing the game cache");
+	}
+	return RPCS3_IOS_GAME_CACHE_FAILED;
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_enumerate_game_patches(
