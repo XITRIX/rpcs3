@@ -348,7 +348,8 @@ enum class output_scaling_mode
 {
 	nearest,
 	bilinear,
-	fsr
+	fsr,
+	metal_fx
 };
 
 enum class stereo_render_mode_options
