@@ -520,6 +520,7 @@ void enumerate_current_settings(
 			std::erase_if(options, [&setting](const std::string& option)
 			{
 				return (setting.key == "advanced.fifo_accuracy" && option == "PS3") ||
+					(setting.key == "cpu.spu_decoder" && option == "Recompiler (ASMJIT)") ||
 					(setting.key == "network.psn_status" && option == "Simulated") ||
 					(setting.key == "audio.format" && option == "Manual") ||
 					(setting.key == "cpu.spu_xfloat_accuracy" && option == "Inaccurate") ||
@@ -606,6 +607,11 @@ rpcs3_ios_status update_current_setting(
 	}))
 	{
 		set_error(fmt::format("Invalid PSN country code '%s'", value));
+		return RPCS3_IOS_SETTING_INVALID;
+	}
+	if (setting->key == "cpu.spu_decoder" && std::string_view{value} == "Recompiler (ASMJIT)")
+	{
+		set_error("The ASMJIT SPU decoder is unavailable on arm64 iOS");
 		return RPCS3_IOS_SETTING_INVALID;
 	}
 	if (setting->key == zcull_accuracy_key)
