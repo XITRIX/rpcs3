@@ -53,6 +53,23 @@ enum class game_delete_error
 	deletion_failed,
 };
 
+enum class game_cache_type : u32
+{
+	shader = 1,
+	ppu = 2,
+	spu = 3,
+	hdd1 = 4,
+	all = 5,
+};
+
+enum class game_cache_error
+{
+	none,
+	not_found,
+	inspection_failed,
+	deletion_failed,
+};
+
 struct game_package_install_result
 {
 	game_package_install_error error = game_package_install_error::none;
@@ -99,6 +116,22 @@ struct game_delete_result
 	game_delete_error error = game_delete_error::none;
 	std::string title_id;
 	std::string title;
+	std::string detail;
+};
+
+struct game_cache_usage
+{
+	u64 shader = 0;
+	u64 ppu = 0;
+	u64 spu = 0;
+	u64 hdd1 = 0;
+	u64 total = 0;
+};
+
+struct game_cache_result
+{
+	game_cache_error error = game_cache_error::none;
+	game_cache_usage usage;
 	std::string detail;
 };
 
@@ -153,6 +186,8 @@ game_patch_install_result install_game_patch(
 	const std::string& package_path,
 	const game_package_progress_callback& progress);
 game_delete_result delete_installed_game(std::string_view title_id);
+game_cache_result inspect_game_cache(std::string_view title_id);
+game_cache_result clear_game_cache(std::string_view title_id, game_cache_type type);
 bool is_valid_game_title_id(std::string_view title_id) noexcept;
 std::vector<installed_game> installed_games();
 std::optional<installed_game> find_installed_game(std::string_view title_id);
