@@ -69,8 +69,8 @@ option(USE_GAMEMODE "Choose whether to enable GameMode features or not." ON)
 option(BUNDLE_UDEV_RULES "Include udev rules on Linux/FreeBSD" OFF)
 
 if(RPCS3_FRONTEND STREQUAL "IOS")
-    if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
-        message(FATAL_ERROR "RPCS3_FRONTEND=IOS requires an iOS CMake toolchain")
+    if(NOT CMAKE_SYSTEM_NAME MATCHES "^(iOS|visionOS)$")
+        message(FATAL_ERROR "RPCS3_FRONTEND=IOS requires an iOS or visionOS CMake toolchain")
     endif()
 
     add_compile_definitions(RPCS3_IOS=1)

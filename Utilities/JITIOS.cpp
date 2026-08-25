@@ -3,7 +3,7 @@
 #include "JITIOSLayoutPolicy.h"
 
 #if !defined(RPCS3_IOS)
-#error "JITIOS.cpp is only available in the iOS frontend"
+#error "JITIOS.cpp is only available in the Apple mobile frontend"
 #endif
 
 #include <algorithm>
@@ -211,7 +211,7 @@ void update_live_bytes(bool executable, usz amount) noexcept
 
 rpcs3::ios::jit::arena_backend current_backend() noexcept
 {
-	if (__builtin_available(iOS 26.0, *))
+	if (__builtin_available(iOS 26.0, visionOS 26.0, *))
 	{
 		return rpcs3::ios::jit::arena_backend::universal_mirrored;
 	}
@@ -374,7 +374,7 @@ bool prepare_arena() noexcept
 		return false;
 	}
 
-	// Below iOS 26, debugger enablement permits the ordinary W-to-X
+	// Below iOS/visionOS 26, debugger enablement permits the ordinary W-to-X
 	// transition. Create the shared alias first so generated code can remain RX
 	// at its relocation address while every later write uses the RW mapping.
 	if (backend == arena_backend::legacy_debugger &&
