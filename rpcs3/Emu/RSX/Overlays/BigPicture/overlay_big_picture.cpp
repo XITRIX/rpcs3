@@ -14,6 +14,27 @@ namespace rsx
 	{
 		namespace
 		{
+			void finish_big_picture_game_boot(const std::string& path, const std::string& title_id)
+			{
+				// Only mark the session as BPM-launched after the shell has stopped, so the
+				// transitional shutdown does not get treated as a game returning to BPM.
+				g_big_picture_mode_active = true;
+
+#ifdef RPCS3_IOS
+				rpcs3::ios::prepare_big_picture_game_boot();
+#endif
+				const game_boot_result result = Emu.BootGame(path, title_id);
+				rsx_log.notice("Big Picture Mode: BootGame result=%s", result);
+
+				if (is_error(result))
+				{
+					g_big_picture_mode_active = false;
+#ifdef RPCS3_IOS
+					Emu.SetForceBoot(false);
+#endif
+				}
+			}
+
 			void boot_game_from_big_picture_mode(std::string path, std::string title_id)
 			{
 				rsx_log.notice("Big Picture Mode: starting boot handoff for '%s' (path='%s')", title_id, path);
@@ -23,26 +44,29 @@ namespace rsx
 					// Keep the game window alive across the handoff instead of closing and reopening it.
 					Emu.SetContinuousMode(true);
 					rsx_log.notice("Big Picture Mode: shutting down shell before boot");
+
+#ifdef RPCS3_IOS
+					if (Emu.after_kill_callback)
+					{
+						rsx_log.error("Big Picture Mode: cannot boot a game while another post-shutdown action is pending");
+						return;
+					}
+
+					// This callback runs on UIKit's main queue. A synchronous shutdown deadlocks because
+					// final core cleanup is dispatched back to the same queue. Let shutdown return, then
+					// boot from RPCS3's existing post-kill callback once the core reaches stopped state.
+					g_big_picture_mode_active = false;
+					Emu.after_kill_callback = [path, title_id]()
+					{
+						rsx_log.notice("Big Picture Mode: shell shut down, starting selected game");
+						finish_big_picture_game_boot(path, title_id);
+					};
+					Emu.GracefulShutdown(false, true, false, true);
+#else
 					Emu.GracefulShutdown(false);
 					rsx_log.notice("Big Picture Mode: shell shut down, is_stopped=%d", Emu.IsStopped());
-
-					// Only mark the session as BPM-launched now, so the transitional shutdown above doesn't
-					// itself get treated as "the game closed" and re-trigger Big Picture Mode.
-					g_big_picture_mode_active = true;
-
-#ifdef RPCS3_IOS
-					rpcs3::ios::prepare_big_picture_game_boot();
+					finish_big_picture_game_boot(path, title_id);
 #endif
-					const game_boot_result result = Emu.BootGame(path, title_id);
-					rsx_log.notice("Big Picture Mode: BootGame result=%s", result);
-
-					if (is_error(result))
-					{
-						g_big_picture_mode_active = false;
-#ifdef RPCS3_IOS
-						Emu.SetForceBoot(false);
-#endif
-					}
 				});
 			}
 		}
