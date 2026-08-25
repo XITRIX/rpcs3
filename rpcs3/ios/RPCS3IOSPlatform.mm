@@ -5,26 +5,37 @@
 #import <UIKit/UIKit.h>
 #pragma clang diagnostic pop
 
+#include <TargetConditionals.h>
+
 #include <dispatch/dispatch.h>
 
 namespace rpcs3::ios
 {
 namespace
 {
+#if !TARGET_OS_VISION
 void apply_display_sleep(void* context)
 {
 	const bool enable = context != nullptr;
 	UIApplication.sharedApplication.idleTimerDisabled = !enable;
 }
+#endif
 }
 
 bool display_sleep_control_supported() noexcept
 {
+#if TARGET_OS_VISION
+	return false;
+#else
 	return true;
+#endif
 }
 
 void enable_display_sleep(bool enable) noexcept
 {
+#if TARGET_OS_VISION
+	(void)enable;
+#else
 	void* context = enable ? reinterpret_cast<void*>(1) : nullptr;
 	if (NSThread.isMainThread)
 	{
@@ -33,6 +44,7 @@ void enable_display_sleep(bool enable) noexcept
 	}
 
 	dispatch_async_f(dispatch_get_main_queue(), context, &apply_display_sleep);
+#endif
 }
 
 std::string preferred_language_identifier()
