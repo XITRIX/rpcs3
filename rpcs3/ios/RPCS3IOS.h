@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 28u
+#define RPCS3_IOS_ABI_VERSION 29u
 
 typedef enum rpcs3_ios_status
 {
@@ -727,6 +727,7 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_pad_state(
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_get_pad_feedback(
     uint32_t player_index,
     rpcs3_ios_pad_feedback* feedback) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_boot_big_picture_mode(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_boot_vsh(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_boot_game(
     const char* title_id) RPCS3_IOS_NOEXCEPT;
