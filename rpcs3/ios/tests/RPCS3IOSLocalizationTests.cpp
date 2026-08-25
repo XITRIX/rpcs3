@@ -35,7 +35,7 @@ int main()
 	assert(localized_overlay_string(localized_string_id::HOME_MENU_TITLE, "en-US") == "Home Menu");
 	assert(localized_overlay_string(localized_string_id::CELL_SAVEDATA_SAVE, "en-US", "Slot 1") == "Save this data?\n\nSlot 1");
 	for (int raw = static_cast<int>(localized_string_id::INVALID);
-		raw <= static_cast<int>(localized_string_id::SAVESTATE_FAILED_DUE_TO_MISSING_SPU_SETTING);
+		raw <= static_cast<int>(localized_string_id::BIG_PICTURE_HINT_SELECT);
 		raw++)
 	{
 		const auto id = static_cast<localized_string_id>(raw);
@@ -74,6 +74,12 @@ int main()
 	assert(localized_overlay_string(
 		localized_string_id::SAVESTATE_FAILED_DUE_TO_MISSING_SPU_SETTING,
 		"en-US") == "SaveState failed: enable Advanced > Compatible Savestate Mode, restart the game, and try again. This can reduce performance.");
+	assert(localized_overlay_string(
+		localized_string_id::BIG_PICTURE_MODE_TITLE,
+		"en-US") == "Big Picture Mode");
+	assert(localized_overlay_string(
+		localized_string_id::BIG_PICTURE_NO_GAMES_FOUND,
+		"en-US") == "No games found.\nAdd games in the main RPCS3 window.");
 	assert(localized_overlay_string(localized_string_id::INVALID, "en-US") == "Invalid");
 	assert(localized_overlay_u32string(localized_string_id::HOME_MENU_SETTINGS, "en-US") == U"Settings");
 	assert(localized_setting_string("VSync Mode", 1, "Adaptive", "en-US") == "Adaptive");
