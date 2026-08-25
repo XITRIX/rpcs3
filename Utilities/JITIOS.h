@@ -4,12 +4,28 @@
 
 namespace rpcs3::ios::jit
 {
-// StikDebug Universal JIT ABI: brk #0xf00d dispatches the command in x16.
-// Command 0 detaches the debugger and command 1 prepares the x0/x1 executable
-// range. RPCS3 prepares its complete process-lifetime arena before command 0.
+// iOS 26+ uses StikDebug's Universal JIT ABI: brk #0xf00d dispatches the
+// command in x16. Command 0 detaches the debugger and command 1 prepares the
+// x0/x1 executable range. iOS 17.4-18.x uses the persistent debugger-enabled
+// code-signing state and an ordinary W-to-X transition instead.
 inline constexpr u16 breakpoint_immediate = 0xf00d;
 inline constexpr u64 command_detach = 0;
 inline constexpr u64 command_prepare_region = 1;
+
+enum class arena_backend : u8
+{
+	legacy_debugger,
+	universal_mirrored,
+};
+
+inline constexpr u32 universal_backend_ios_major = 26;
+
+constexpr arena_backend backend_for_ios_major(u32 major_version) noexcept
+{
+	return major_version >= universal_backend_ios_major
+		? arena_backend::universal_mirrored
+		: arena_backend::legacy_debugger;
+}
 
 struct arena_statistics
 {
@@ -21,6 +37,7 @@ struct arena_statistics
 	usz live_data_bytes = 0;
 	usz peak_code_bytes = 0;
 	usz peak_data_bytes = 0;
+	arena_backend backend = arena_backend::legacy_debugger;
 	bool sealed = false;
 };
 
