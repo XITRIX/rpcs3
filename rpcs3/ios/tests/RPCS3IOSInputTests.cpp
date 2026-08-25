@@ -8,7 +8,7 @@ int main()
 {
 	using namespace rpcs3::ios;
 
-	static_assert(RPCS3_IOS_ABI_VERSION == 27);
+	static_assert(RPCS3_IOS_ABI_VERSION == 29);
 	static_assert(pad_player_count == 7);
 	static_assert(sizeof(rpcs3_ios_pad_state) == 40);
 	static_assert(sizeof(rpcs3_ios_pad_feedback) == 16);

@@ -2,6 +2,9 @@
 #include "overlay_big_picture.h"
 #include "../overlay_manager.h"
 #include "Emu/System.h"
+#ifdef RPCS3_IOS
+#include "Emu/ios/RPCS3IOSBigPicture.h"
+#endif
 
 atomic_t<bool> g_big_picture_mode_active = false;
 
@@ -27,12 +30,18 @@ namespace rsx
 					// itself get treated as "the game closed" and re-trigger Big Picture Mode.
 					g_big_picture_mode_active = true;
 
+#ifdef RPCS3_IOS
+					rpcs3::ios::prepare_big_picture_game_boot();
+#endif
 					const game_boot_result result = Emu.BootGame(path, title_id);
 					rsx_log.notice("Big Picture Mode: BootGame result=%s", result);
 
 					if (is_error(result))
 					{
 						g_big_picture_mode_active = false;
+#ifdef RPCS3_IOS
+						Emu.SetForceBoot(false);
+#endif
 					}
 				});
 			}
@@ -123,7 +132,13 @@ namespace rsx
 
 				Emu.CallFromMainThread([]()
 				{
+#ifdef RPCS3_IOS
+					// Return to the SwiftUI library while preserving the initialized core.
+					Emu.SetForceBoot(false);
+					Emu.GracefulShutdown(false, true);
+#else
 					Emu.GracefulShutdown(true, true);
+#endif
 				});
 				break;
 			}
