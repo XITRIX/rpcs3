@@ -29,6 +29,7 @@
 #include "Emu/Io/pad_config.h"
 #include "Emu/System.h"
 #include "Emu/system_config.h"
+#include "Emu/RSX/Overlays/BigPicture/overlay_big_picture.h"
 #include "Emu/RSX/Overlays/HomeMenu/overlay_home_menu.h"
 #include "Emu/RSX/Overlays/overlay_message.h"
 #include "Emu/Cell/lv2/sys_usbd.h"
@@ -958,6 +959,14 @@ void pad_thread::open_home_menu()
 
 	if (auto manager = g_fxo->try_get<rsx::overlays::display_manager>())
 	{
+		// Big Picture Mode is already the system UI for its guestless shell. Opening the
+		// in-game Home Menu on top would pause and interrupt that shell's input loop.
+		if (manager->get<rsx::overlays::big_picture_dialog>())
+		{
+			input_log.notice("Ignoring Home Menu request while Big Picture Mode is active");
+			return;
+		}
+
 		if (m_home_menu_open.exchange(true))
 		{
 			return;
