@@ -3,7 +3,7 @@
 #include "../overlay_manager.h"
 #include "Emu/System.h"
 #ifdef RPCS3_IOS
-#include "Emu/ios/RPCS3IOSBigPicture.h"
+#include "ios/RPCS3IOSBigPicture.h"
 #endif
 
 atomic_t<bool> g_big_picture_mode_active = false;
