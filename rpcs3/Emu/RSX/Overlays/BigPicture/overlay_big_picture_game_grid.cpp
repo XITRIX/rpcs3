@@ -2,7 +2,11 @@
 #include "overlay_big_picture_game_grid.h"
 #include "overlay_big_picture_game_details.h"
 #include "Emu/system_config.h"
+#include "Emu/system_utils.hpp"
 #include "Utilities/Thread.h"
+#ifdef RPCS3_IOS
+#include "ios/GameLibrary.h"
+#endif
 
 #include <algorithm>
 
@@ -98,6 +102,7 @@ namespace rsx
 			m_games.clear();
 			m_tiles.clear();
 
+#ifndef RPCS3_IOS
 			// Configure game enumeration
 			m_game_enumeration.initialize_paths();
 			m_game_enumeration.set_localization(g_cfg.sys.language, "Unknown", [](const std::string&){ return std::string(); });
@@ -106,9 +111,55 @@ namespace rsx
 			m_game_enumeration.set_play_hover_movies(true);
 			m_game_enumeration.set_play_hover_music(true);
 			m_game_enumeration.set_canceled_callback([](){ return thread_ctrl::state() == thread_state::aborting; });
+#endif
 
 			m_game_enumeration_thread = std::make_unique<named_thread<std::function<void()>>>("BPM Reload", [this]()
 			{
+#ifdef RPCS3_IOS
+				// games.yml does not own the iOS library. Use the same canonical scan as
+				// the SwiftUI Games tab so HDD packages, retained ISOs, and extracted
+				// folders are all visible before they have ever been booted.
+				for (const rpcs3::ios::installed_game& game : rpcs3::ios::installed_games())
+				{
+					if (thread_ctrl::state() == thread_state::aborting)
+					{
+						break;
+					}
+
+					big_picture_game_info info{};
+					info.path = game.path;
+					info.icon_path = game.icon_path;
+					info.serial = game.title_id;
+					info.name = game.title;
+					info.app_ver = game.version;
+					info.version = game.version;
+					info.category = game.category;
+					info.fw = game.firmware_version;
+					info.attr = game.attribute;
+					info.bootable = game.bootable;
+					info.parental_lvl = game.parental_level;
+					info.sound_format = game.sound_format;
+					info.resolution = game.resolution;
+					info.size_on_disk = game.size_on_disk;
+					info.is_iso_file = fs::is_file(info.path);
+					info.game_dir = info.is_iso_file ? "PS3_GAME" : "";
+
+					if (const auto movie = rpcs3::utils::get_game_content_path(game_content_type::content_video, info);
+						!movie.first.empty())
+					{
+						info.movie_path = movie.first;
+						info.movie_in_archive = movie.second;
+					}
+					if (const auto audio = rpcs3::utils::get_game_content_path(game_content_type::content_sound, info);
+						!audio.first.empty())
+					{
+						info.audio_path = audio.first;
+						info.audio_in_archive = audio.second;
+					}
+
+					m_games.push_back(std::move(info));
+				}
+#else
 				// Parse directories
 				m_game_enumeration.parse_directories();
 
@@ -140,6 +191,7 @@ namespace rsx
 
 				// Reset enumeration
 				m_game_enumeration.clear(true);
+#endif
 
 				// Sort by name
 				std::sort(m_games.begin(), m_games.end(), [](const big_picture_game_info& a, const big_picture_game_info& b)
@@ -149,8 +201,8 @@ namespace rsx
 
 				// Create tiles (multithreaded)
 				std::vector<std::unique_ptr<big_picture_game_tile>> tiles(m_games.size());
-				thread_count = std::min<usz>(utils::get_thread_count(), tiles.size());
-				map_workload("BPM Tiles "sv, thread_count, tiles.size(), [this, &tiles](usz index)
+				const usz tile_thread_count = std::min<usz>(utils::get_thread_count(), tiles.size());
+				map_workload("BPM Tiles "sv, tile_thread_count, tiles.size(), [this, &tiles](usz index)
 				{
 					tiles[index] = std::make_unique<big_picture_game_tile>(m_games[index], m_tile_size);
 				});
