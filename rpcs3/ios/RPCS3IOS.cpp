@@ -1,4 +1,5 @@
 #include "RPCS3IOS.h"
+#include "RPCS3IOSBigPicture.h"
 #include "RPCS3IOSCapabilities.h"
 #include "RPCS3IOSConfigDatabase.h"
 #include "RPCS3IOSContract.h"
@@ -1038,6 +1039,15 @@ bool persist_rpcn_profile(std::string_view username, std::string password, std::
 }
 }
 
+namespace rpcs3::ios
+{
+void prepare_big_picture_game_boot() noexcept
+{
+	prepare_rpcn_for_guest_boot();
+	Emu.SetForceBoot(true);
+}
+}
+
 extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 {
 	return RPCS3_IOS_ABI_VERSION;
@@ -1045,7 +1055,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":28,\"frontend\":\"ios\",\"upstream\":\"3d587726a23f514be0e7c3ac43e2db0cf2fe931a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop\",\"media_codecs\":true}";
+	return "{\"abi\":29,\"frontend\":\"ios\",\"upstream\":\"fdcfded8dfd3060af66bda0a3ac4635458980038\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies-big-picture\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop-big-picture\",\"media_codecs\":true}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -3835,6 +3845,49 @@ extern "C" rpcs3_ios_status rpcs3_ios_get_pad_feedback(
 	return RPCS3_IOS_OK;
 }
 
+extern "C" rpcs3_ios_status rpcs3_ios_boot_big_picture_mode(void) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("RPCS3Core must be ready and emulation stopped before booting Big Picture Mode");
+		return result;
+	}
+	if (!g_display_surface.snapshot().valid())
+	{
+		set_error("Attach a valid iOS Metal display surface before booting Big Picture Mode");
+		return RPCS3_IOS_INVALID_STATE;
+	}
+
+	try
+	{
+		Emu.DeactivateBigPictureMode();
+		Emu.SetForceBoot(false);
+		emit_log(4, "Booting Big Picture Mode with the iOS game library");
+		if (!Emu.BootBigPictureMode())
+		{
+			set_error("Big Picture Mode boot failed");
+			return RPCS3_IOS_BOOT_FAILED;
+		}
+
+		emit_log(4, "Big Picture Mode boot request completed");
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while booting Big Picture Mode");
+	}
+
+	Emu.DeactivateBigPictureMode();
+	Emu.SetForceBoot(false);
+	return RPCS3_IOS_BOOT_FAILED;
+}
+
 extern "C" rpcs3_ios_status rpcs3_ios_boot_vsh(void) noexcept
 {
 	std::lock_guard lock(g_api_mutex);
@@ -3861,6 +3914,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_boot_vsh(void) noexcept
 
 		emit_log(4, "Booting the PlayStation 3 XMB from installed firmware");
 		prepare_rpcn_for_guest_boot();
+		Emu.DeactivateBigPictureMode();
 		Emu.SetForceBoot(true);
 		const game_boot_result result = Emu.BootGame(vsh_path);
 		if (result != game_boot_result::no_errors)
@@ -3927,6 +3981,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_boot_game(const char* title_id) noexcept
 
 		emit_log(4, fmt::format("Booting installed game %s (%s)", game->title, game->title_id));
 		prepare_rpcn_for_guest_boot();
+		Emu.DeactivateBigPictureMode();
 		Emu.SetForceBoot(true);
 		const game_boot_result result = Emu.BootGame(game->path, game->title_id);
 		if (result != game_boot_result::no_errors)
@@ -4135,6 +4190,10 @@ extern "C" rpcs3_ios_status rpcs3_ios_stop_emulation(void) noexcept
 
 	try
 	{
+		// An explicit wrapper stop leaves the full-screen session. It must not
+		// trigger upstream's automatic game-to-Big-Picture return callback.
+		Emu.DeactivateBigPictureMode();
+		Emu.SetForceBoot(false);
 		if (Emu.GetStatus(false) == system_state::stopped)
 		{
 			return RPCS3_IOS_OK;
@@ -4191,6 +4250,8 @@ extern "C" rpcs3_ios_status rpcs3_ios_shutdown(void) noexcept
 	{
 		if (g_emu_started)
 		{
+			Emu.DeactivateBigPictureMode();
+			Emu.SetForceBoot(false);
 			if (Emu.GetStatus(false) != system_state::stopped)
 			{
 				Emu.GracefulShutdown(false, false);
