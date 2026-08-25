@@ -23,10 +23,14 @@
 #include <sys/ucontext.h>
 #include <unistd.h>
 
+extern "C" int csops(pid_t pid, unsigned int ops, void* user_address, size_t user_size);
+
 namespace
 {
 constexpr u32 breakpoint_instruction = 0xd4200000u |
 	(static_cast<u32>(rpcs3::ios::jit::breakpoint_immediate) << 5);
+constexpr unsigned int cs_ops_status = 0;
+constexpr u32 cs_debugged = 0x10000000u;
 
 struct arena_state
 {
@@ -43,6 +47,7 @@ struct arena_state
 	usz live_data_bytes = 0;
 	usz peak_code_bytes = 0;
 	usz peak_data_bytes = 0;
+	rpcs3::ios::jit::arena_backend backend = rpcs3::ios::jit::arena_backend::legacy_debugger;
 	bool prepared = false;
 	bool sealed = false;
 };
@@ -203,6 +208,31 @@ void update_live_bytes(bool executable, usz amount) noexcept
 	live += amount;
 	peak = std::max(peak, live);
 }
+
+rpcs3::ios::jit::arena_backend current_backend() noexcept
+{
+	if (__builtin_available(iOS 26.0, *))
+	{
+		return rpcs3::ios::jit::arena_backend::universal_mirrored;
+	}
+	return rpcs3::ios::jit::arena_backend::legacy_debugger;
+}
+
+bool legacy_debugger_is_ready() noexcept
+{
+	int status = 0;
+	if (::csops(::getpid(), cs_ops_status, &status, sizeof(status)) != 0)
+	{
+		set_error("Unable to inspect the legacy debugger JIT state: " + std::string{std::strerror(errno)});
+		return false;
+	}
+	if ((static_cast<u32>(status) & cs_debugged) == 0)
+	{
+		set_error("StikDebug has not enabled JIT for this process");
+		return false;
+	}
+	return true;
+}
 }
 
 namespace rpcs3::ios::jit
@@ -215,6 +245,11 @@ bool is_ready() noexcept
 		{
 			return true;
 		}
+	}
+
+	if (current_backend() == arena_backend::legacy_debugger)
+	{
+		return legacy_debugger_is_ready();
 	}
 
 	const usz length = page_size();
@@ -245,10 +280,16 @@ bool prepare_arena() noexcept
 		return true;
 	}
 
+	const arena_backend backend = current_backend();
+	if (backend == arena_backend::legacy_debugger && !legacy_debugger_is_ready())
+	{
+		return false;
+	}
+
 	const usz capacity = choose_arena_capacity(physical_memory_size());
 	if (!capacity || capacity > std::numeric_limits<usz>::max() / 2)
 	{
-		set_error("Invalid Universal JIT arena capacity");
+		set_error("Invalid JIT arena capacity");
 		return false;
 	}
 
@@ -257,17 +298,20 @@ bool prepare_arena() noexcept
 		MAP_PRIVATE | MAP_ANON, jit_vm_tag, 0));
 	if (layout == MAP_FAILED)
 	{
-		set_error("Unable to reserve the Universal JIT arena layout: " + std::string{std::strerror(errno)});
+		set_error("Unable to reserve the JIT arena layout: " + std::string{std::strerror(errno)});
 		return false;
 	}
 
-	void* const code = ::mmap(layout, capacity, PROT_READ | PROT_EXEC,
+	const int initial_code_protection = backend == arena_backend::universal_mirrored
+		? PROT_READ | PROT_EXEC
+		: PROT_READ | PROT_WRITE;
+	void* const code = ::mmap(layout, capacity, initial_code_protection,
 		MAP_FIXED | MAP_PRIVATE | MAP_ANON, jit_vm_tag, 0);
 	if (code != layout)
 	{
 		const std::string detail = std::strerror(errno);
 		discard_layout(layout, total_size, 0, capacity);
-		set_error("Unable to map the Universal JIT executable arena: " + detail);
+		set_error("Unable to map the JIT code arena: " + detail);
 		return false;
 	}
 
@@ -277,22 +321,26 @@ bool prepare_arena() noexcept
 	{
 		const std::string detail = std::strerror(errno);
 		discard_layout(layout, total_size, 0, capacity);
-		set_error("Unable to map the Universal JIT data arena: " + detail);
+		set_error("Unable to map the JIT data arena: " + detail);
 		return false;
 	}
 
-	const u32 preparation_chunks = arena_prepare_chunk_count(capacity);
-	for (u32 chunk_index = 0; chunk_index < preparation_chunks; ++chunk_index)
+	u32 preparation_chunks = 0;
+	if (backend == arena_backend::universal_mirrored)
 	{
-		const usz offset = static_cast<usz>(chunk_index) * arena_prepare_chunk_size;
-		const usz chunk_length = arena_prepare_chunk_length(capacity, chunk_index);
-		u8* const chunk = layout + offset;
-		if (!chunk_length || protocol_call(command_prepare_region, chunk, chunk_length) != reinterpret_cast<uptr>(chunk))
+		preparation_chunks = arena_prepare_chunk_count(capacity);
+		for (u32 chunk_index = 0; chunk_index < preparation_chunks; ++chunk_index)
 		{
-			discard_layout(layout, total_size, 0, capacity);
-			set_error("The debugger did not prepare Universal JIT arena chunk " +
-				std::to_string(chunk_index + 1) + " of " + std::to_string(preparation_chunks));
-			return false;
+			const usz offset = static_cast<usz>(chunk_index) * arena_prepare_chunk_size;
+			const usz chunk_length = arena_prepare_chunk_length(capacity, chunk_index);
+			u8* const chunk = layout + offset;
+			if (!chunk_length || protocol_call(command_prepare_region, chunk, chunk_length) != reinterpret_cast<uptr>(chunk))
+			{
+				discard_layout(layout, total_size, 0, capacity);
+				set_error("The debugger did not prepare Universal JIT arena chunk " +
+					std::to_string(chunk_index + 1) + " of " + std::to_string(preparation_chunks));
+				return false;
+			}
 		}
 	}
 
@@ -326,6 +374,18 @@ bool prepare_arena() noexcept
 		return false;
 	}
 
+	// Below iOS 26, debugger enablement permits the ordinary W-to-X
+	// transition. Create the shared alias first so generated code can remain RX
+	// at its relocation address while every later write uses the RW mapping.
+	if (backend == arena_backend::legacy_debugger &&
+		::mprotect(layout, capacity, PROT_READ | PROT_EXEC) != 0)
+	{
+		const std::string detail = std::strerror(errno);
+		discard_layout(layout, total_size, alias, capacity);
+		set_error("Unable to transition the legacy JIT arena from writable to executable: " + detail);
+		return false;
+	}
+
 	g_arena.code_allocator.reset(capacity);
 	g_arena.data_allocator.reset(capacity);
 
@@ -334,6 +394,7 @@ bool prepare_arena() noexcept
 	g_arena.data = layout + capacity;
 	g_arena.capacity = capacity;
 	g_arena.preparation_chunks = preparation_chunks;
+	g_arena.backend = backend;
 	g_arena.prepared = true;
 	return true;
 }
@@ -345,6 +406,7 @@ bool seal_arena() noexcept
 		return false;
 	}
 
+	arena_backend backend = arena_backend::legacy_debugger;
 	{
 		std::lock_guard lock(g_arena_mutex);
 		if (g_arena.sealed)
@@ -352,6 +414,12 @@ bool seal_arena() noexcept
 			return true;
 		}
 		g_arena.sealed = true;
+		backend = g_arena.backend;
+	}
+
+	if (backend == arena_backend::legacy_debugger)
+	{
+		return true;
 	}
 
 	// StikDebug's built-in Universal script detaches on command 0. The scoped
@@ -409,7 +477,7 @@ bool claim_runtime(bool executable, usz offset, usz size) noexcept
 		{
 			allocator.release(allocation.offset, allocation.size);
 		}
-		set_error("The Universal JIT arena is exhausted or fragmented at the runtime boundary");
+		set_error("The JIT arena is exhausted or fragmented at the runtime boundary");
 		return false;
 	}
 
@@ -426,7 +494,7 @@ void reset_runtime() noexcept
 	{
 		if (!g_arena.code_allocator.release(0, g_arena.runtime_code_bytes))
 		{
-			set_error("Unable to release the runtime code portion of the Universal JIT arena");
+			set_error("Unable to release the runtime code portion of the JIT arena");
 			return;
 		}
 		g_arena.live_code_bytes -= g_arena.runtime_code_bytes;
@@ -436,7 +504,7 @@ void reset_runtime() noexcept
 	{
 		if (!g_arena.data_allocator.release(0, g_arena.runtime_data_bytes))
 		{
-			set_error("Unable to release the runtime data portion of the Universal JIT arena");
+			set_error("Unable to release the runtime data portion of the JIT arena");
 			return;
 		}
 		g_arena.live_data_bytes -= g_arena.runtime_data_bytes;
@@ -456,7 +524,7 @@ void* allocate(bool executable, usz size, usz alignment) noexcept
 	arena_range allocation;
 	if (!allocator.allocate_highest(size, alignment, allocation))
 	{
-		set_error("The Universal JIT arena is exhausted by a temporary allocation");
+		set_error("The JIT arena is exhausted by a temporary allocation");
 		return nullptr;
 	}
 
@@ -479,14 +547,14 @@ void release_allocation(bool executable, void* address, usz size) noexcept
 	u8* const base = executable ? g_arena.code : g_arena.data;
 	if (!contains(base, g_arena.capacity, address, size, offset))
 	{
-		set_error("Attempted to release an address outside the Universal JIT arena");
+		set_error("Attempted to release an address outside the JIT arena");
 		return;
 	}
 
 	arena_allocator& allocator = executable ? g_arena.code_allocator : g_arena.data_allocator;
 	if (!allocator.release(offset, size))
 	{
-		set_error("Attempted to release an invalid or overlapping Universal JIT allocation");
+		set_error("Attempted to release an invalid or overlapping JIT allocation");
 		return;
 	}
 
@@ -527,6 +595,7 @@ arena_statistics get_statistics() noexcept
 		g_arena.live_data_bytes,
 		g_arena.peak_code_bytes,
 		g_arena.peak_data_bytes,
+		g_arena.backend,
 		g_arena.sealed,
 	};
 }
