@@ -335,6 +335,7 @@ localized_source overlay_source(id value) noexcept
 	case id::HOME_MENU_SETTINGS_MOUSE_DEBUG_INPUT_OVERLAY: return {"core.HOME_MENU_SETTINGS_MOUSE_DEBUG_INPUT_OVERLAY", "Mouse Debug Overlay"};
 	case id::HOME_MENU_SETTINGS_DEBUG_DISABLE_VIDEO_OUTPUT: return {"core.HOME_MENU_SETTINGS_DEBUG_DISABLE_VIDEO_OUTPUT", "Disable Video Output"};
 	case id::HOME_MENU_SETTINGS_DEBUG_TEXTURE_LOD_BIAS: return {"core.HOME_MENU_SETTINGS_DEBUG_TEXTURE_LOD_BIAS", "Texture LOD Bias Addend"};
+	case id::HOME_MENU_SETTINGS_SYSTEM_START_BIG_PICTURE_MODE: return {"core.HOME_MENU_SETTINGS_SYSTEM_START_BIG_PICTURE_MODE", "Open Big Picture Mode On Boot"};
 	case id::HOME_MENU_SCREENSHOT: return {"core.HOME_MENU_SCREENSHOT", "Take Screenshot"};
 	case id::HOME_MENU_SAVESTATE: return {"core.HOME_MENU_SAVESTATE", "SaveState"};
 	case id::HOME_MENU_SAVESTATE_SAVE: return {"core.HOME_MENU_SAVESTATE_SAVE", "Save Emulation State"};
@@ -347,6 +348,13 @@ localized_source overlay_source(id value) noexcept
 	case id::SAVESTATE_FAILED_DUE_TO_SAVEDATA: return {"core.SAVESTATE_FAILED_DUE_TO_SAVEDATA", "SaveState failed: the game is saving data. Wait for it to finish and try again."};
 	case id::SAVESTATE_FAILED_DUE_TO_SPU: return {"core.SAVESTATE_FAILED_DUE_TO_SPU", "SaveState failed: RPCS3 could not safely lock the SPU state."};
 	case id::SAVESTATE_FAILED_DUE_TO_MISSING_SPU_SETTING: return {"core.SAVESTATE_FAILED_DUE_TO_MISSING_SPU_SETTING", "SaveState failed: enable Advanced > Compatible Savestate Mode, restart the game, and try again. This can reduce performance."};
+	case id::BIG_PICTURE_MODE_TITLE: return {"core.BIG_PICTURE_MODE_TITLE", "Big Picture Mode"};
+	case id::BIG_PICTURE_MENU_GAMES: return {"core.BIG_PICTURE_MENU_GAMES", "Games"};
+	case id::BIG_PICTURE_MENU_EXIT: return {"core.BIG_PICTURE_MENU_EXIT", "Exit Big Picture Mode"};
+	case id::BIG_PICTURE_NO_GAMES_FOUND: return {"core.BIG_PICTURE_NO_GAMES_FOUND", "No games found.\nAdd games in the main RPCS3 window."};
+	case id::BIG_PICTURE_GAME_DETAILS_START: return {"core.BIG_PICTURE_GAME_DETAILS_START", "Start"};
+	case id::BIG_PICTURE_HINT_BACK: return {"core.BIG_PICTURE_HINT_BACK", "Back"};
+	case id::BIG_PICTURE_HINT_SELECT: return {"core.BIG_PICTURE_HINT_SELECT", "Select"};
 	case id::HOME_MENU_TOGGLE_FULLSCREEN: return {"core.HOME_MENU_TOGGLE_FULLSCREEN", "Toggle Fullscreen"};
 	case id::HOME_MENU_RECORDING: return {"core.HOME_MENU_RECORDING", "Start/Stop Recording"};
 	case id::HOME_MENU_TROPHIES: return {"core.HOME_MENU_TROPHIES", "Trophies"};
