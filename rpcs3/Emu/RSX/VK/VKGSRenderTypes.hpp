@@ -57,12 +57,37 @@ namespace vk
 		u64 eid_tag = 0;
 		u64 reset_id = 0;
 		shared_mutex guard_mutex;
+		data_heap_manager::managed_heap_snapshot_t heap_snapshot;
+		u64 heap_snapshot_id = 0;
 
 		command_buffer_chunk() = default;
 
 		inline void tag()
 		{
 			eid_tag = vk::get_event_id();
+
+			if (data_heap_manager::use_command_buffer_reclamation())
+			{
+				heap_snapshot = data_heap_manager::get_heap_snapshot();
+				heap_snapshot_id = data_heap_manager::next_snapshot_id();
+			}
+			else
+			{
+				heap_snapshot.clear();
+				heap_snapshot_id = 0;
+			}
+		}
+
+		void reclaim_heap_snapshot()
+		{
+			if (!heap_snapshot_id)
+			{
+				return;
+			}
+
+			data_heap_manager::restore_snapshot(heap_snapshot, heap_snapshot_id);
+			heap_snapshot.clear();
+			heap_snapshot_id = 0;
 		}
 
 		void reset()
@@ -113,6 +138,7 @@ namespace vk
 
 			m_submit_fence->reset();
 			vk::on_event_completed(eid_tag);
+			if (status == VK_SUCCESS) reclaim_heap_snapshot();
 
 			is_pending = false;
 			eid_tag = 0;
@@ -150,6 +176,7 @@ namespace vk
 
 			m_submit_fence->reset();
 			vk::on_event_completed(eid_tag);
+			if (ret == VK_SUCCESS) reclaim_heap_snapshot();
 
 			is_pending = false;
 			eid_tag = 0;
@@ -207,6 +234,7 @@ namespace vk
 		command_buffer_chunk* swap_command_buffer = nullptr;
 
 		data_heap_manager::managed_heap_snapshot_t heap_snapshot;
+		u64 heap_snapshot_id = 0;
 		u64 last_frame_sync_time = 0;
 
 		void init(VkDevice dev)
@@ -230,11 +258,15 @@ namespace vk
 			acquire_signal_semaphore = other.acquire_signal_semaphore;
 			flags = other.flags;
 			heap_snapshot = other.heap_snapshot;
+			heap_snapshot_id = other.heap_snapshot_id;
 		}
 
 		void tag_frame_end()
 		{
 			heap_snapshot = data_heap_manager::get_heap_snapshot();
+			heap_snapshot_id = data_heap_manager::use_command_buffer_reclamation()
+				? data_heap_manager::next_snapshot_id()
+				: 0;
 			last_frame_sync_time = rsx::get_shared_tag();
 		}
 
@@ -242,6 +274,7 @@ namespace vk
 		{
 			last_frame_sync_time = 0;
 			heap_snapshot.clear();
+			heap_snapshot_id = 0;
 		}
 	};
 
