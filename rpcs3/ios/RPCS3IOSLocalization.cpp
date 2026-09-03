@@ -65,7 +65,7 @@ localized_source overlay_source(id value) noexcept
 	case id::RSX_OVERLAYS_TROPHY_SILVER: return {"core.RSX_OVERLAYS_TROPHY_SILVER", "You have earned a silver trophy.\n%0"};
 	case id::RSX_OVERLAYS_TROPHY_GOLD: return {"core.RSX_OVERLAYS_TROPHY_GOLD", "You have earned a gold trophy.\n%0"};
 	case id::RSX_OVERLAYS_TROPHY_PLATINUM: return {"core.RSX_OVERLAYS_TROPHY_PLATINUM", "You have earned a platinum trophy.\n%0"};
-	case id::RSX_OVERLAYS_COMPILING_SHADERS: return {"core.RSX_OVERLAYS_COMPILING_SHADERS", "Compiling shaders"};
+	case id::RSX_OVERLAYS_COMPILING_SHADERS: return {"core.RSX_OVERLAYS_COMPILING_SHADERS", "Precompiling shader interpreter variants.\nPlease wait..."};
 	case id::RSX_OVERLAYS_COMPILING_SHADERS_TITLE: return {"core.RSX_OVERLAYS_COMPILING_SHADERS_TITLE", "Shader Compilation"};
 	case id::RSX_OVERLAYS_COMPILING_SHADERS_VULKAN: return {"core.RSX_OVERLAYS_COMPILING_SHADERS_VULKAN", "Building base variant %0..."};
 	case id::RSX_OVERLAYS_COMPILING_SHADERS_OPENGL_BUILD: return {"core.RSX_OVERLAYS_COMPILING_SHADERS_OPENGL_BUILD", "Building variant %0..."};
