@@ -34,6 +34,16 @@ int main()
 
 	assert(localized_overlay_string(localized_string_id::HOME_MENU_TITLE, "en-US") == "Home Menu");
 	assert(localized_overlay_string(localized_string_id::CELL_SAVEDATA_SAVE, "en-US", "Slot 1") == "Save this data?\n\nSlot 1");
+	assert(localized_overlay_string(
+		localized_string_id::RSX_OVERLAYS_COMPILING_SHADERS_TITLE,
+		"en-US") == "Shader Compilation");
+	assert(localized_overlay_string(
+		localized_string_id::RSX_OVERLAYS_COMPILING_SHADERS_VULKAN,
+		"en-US",
+		"2 of 4") == "Building base variant 2 of 4...");
+	assert(localized_overlay_string(
+		localized_string_id::BIG_PICTURE_LOADING,
+		"en-US") == "Loading games...");
 	for (int raw = static_cast<int>(localized_string_id::INVALID);
 		raw <= static_cast<int>(localized_string_id::BIG_PICTURE_HINT_SELECT);
 		raw++)
