@@ -587,8 +587,17 @@ DECLARE(spu_runtime::g_gateway) = build_function_asm<spu_function_t>("spu_gatewa
 	c.mov(a64::x21, args[2]);
 	c.mov(a64::x22, args[3]);
 
-	// Inject stack frame for scratchpad. Alternatively use per-function frames but that adds some overhead
+	// Generated ARM64 SPU functions share this scratch reservation because
+	// the GHC preservation pass does not emit per-function frames. The iOS
+	// policy defaults to 256 KiB after real blocks exceeded 8 KiB, while its
+	// Experimental opt-out returns the original RPCS3 size.
+#ifdef RPCS3_IOS
+	c.mov(a64::x15, Imm(reinterpret_cast<u64>(&rpcs3::ios::get_spu_gateway_scratch_size)));
+	c.blr(a64::x15);
+	c.sub(a64::sp, a64::sp, a64::x0);
+#else
 	c.sub(a64::sp, a64::sp, Imm(8192));
+#endif
 
 	c.mov(a64::x0, Imm(reinterpret_cast<u64>(spu_runtime::tr_all)));
 	c.blr(a64::x0);
@@ -597,7 +606,7 @@ DECLARE(spu_runtime::g_gateway) = build_function_asm<spu_function_t>("spu_gatewa
 	c.bind(epilogue_addr);
 
 	// Cleanup scratchpad (not needed, we'll reload sp shortly)
-	// c.add(a64::sp, a64::sp, Imm(8192));
+	// The original stack pointer is restored from the hypervisor context below.
 
 	// Restore thread context
 	c.mov(a64::x14, Imm(hv_regs_base));
@@ -683,15 +692,28 @@ DECLARE(spu_runtime::g_tail_escape) = build_function_asm<void(*)(spu_thread*, sp
 	c.sub(a64::sp, a64::sp, Imm(16));
 	c.str(args[0], arm::Mem(a64::sp));
 
-	// Allocate scratchpad. Not needed if using per-function frames, or if we just don't care about returning to C++ (jump to gw exit instead)
+	// Allocate the same boot-selected scratchpad used by the main gateway.
+#ifdef RPCS3_IOS
+	c.mov(a64::x15, Imm(reinterpret_cast<u64>(&rpcs3::ios::get_spu_gateway_scratch_size)));
+	c.blr(a64::x15);
+	c.sub(a64::sp, a64::sp, a64::x0);
+#else
 	c.sub(a64::sp, a64::sp, Imm(8192));
+#endif
 
 	// Make the far jump
 	c.mov(a64::x15, args[1]);
 	c.blr(a64::x15);
 
-	// Clear scratch allocation
+	// Clear scratch allocation. Re-read the immutable boot policy instead of
+	// retaining a register across arbitrary generated SPU code.
+#ifdef RPCS3_IOS
+	c.mov(a64::x15, Imm(reinterpret_cast<u64>(&rpcs3::ios::get_spu_gateway_scratch_size)));
+	c.blr(a64::x15);
+	c.add(a64::sp, a64::sp, a64::x0);
+#else
 	c.add(a64::sp, a64::sp, Imm(8192));
+#endif
 
 	// Restore context. Escape point expects the current thread pointer at x19
 	c.ldr(a64::x19, arm::Mem(a64::sp));
@@ -1477,7 +1499,8 @@ spu_runtime::spu_runtime()
 #ifdef RPCS3_IOS
 	if (rpcs3::ios::get_experimental_policy().persistent_spu_object_cache)
 	{
-		constexpr u32 cache_version = 2;
+		// v3 retires objects produced before ARM64 persistence was disabled.
+		constexpr u32 cache_version = 3;
 		constexpr usz max_files = 12'000;
 		sha1_context ctx;
 		u8 key[20];
