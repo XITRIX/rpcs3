@@ -280,6 +280,54 @@ bool is_savestate_version_compatible(const std::vector<version_entry>& data, boo
 	return ok;
 }
 
+std::vector<savestate_file_entry> get_savestate_files(std::string_view title_id, std::string_view boot_path)
+{
+	const std::string title = std::string{title_id.empty() ? boot_path.substr(boot_path.find_last_of(fs::delim) + 1) : title_id};
+	const std::string dir_path = fs::get_config_dir() + "savestates/" + title + "/";
+
+	fs::dir dir_view{dir_path};
+	std::map<std::string, u64, std::greater<>> save_files;
+
+	for (auto&& dir_entry : dir_view)
+	{
+		if (dir_entry.is_directory || dir_entry.size <= 1024)
+		{
+			continue;
+		}
+
+		const std::string& entry = dir_entry.name;
+
+		if (!title_id.empty() && !entry.starts_with(title + "_"))
+		{
+			// Check prefix only for certified applications
+			// Because ELF file names can be long and unhelpful
+			continue;
+		}
+
+		if (entry.ends_with(".SAVESTAT.zst") || entry.ends_with(".SAVESTAT.gz") || entry.ends_with(".SAVESTAT"))
+		{
+			if (usz dot_idx = entry.rfind(".SAVESTAT"); dot_idx && dot_idx != umax)
+			{
+				if (usz uc_pos = entry.rfind("_", dot_idx - 1); uc_pos != umax && uc_pos + 1 < dot_idx)
+				{
+					if (std::all_of(entry.begin() + uc_pos + 1, entry.begin() + dot_idx, [](char c) { return c >= '0' && c <= '9'; }))
+					{
+						save_files.emplace(entry, dir_entry.size);
+					}
+				}
+			}
+		}
+	}
+
+	std::vector<savestate_file_entry> result;
+	result.reserve(save_files.size());
+	for (const auto& [name, size] : save_files)
+	{
+		result.push_back({dir_path + name, size});
+	}
+	return result;
+}
+
 std::string get_savestate_file(std::string_view title_id, std::string_view boot_path, s64 rel_id, u64 aggregate_file_size)
 {
 	const std::string title = std::string{title_id.empty() ? boot_path.substr(boot_path.find_last_of(fs::delim) + 1) : title_id};
@@ -296,41 +344,7 @@ std::string get_savestate_file(std::string_view title_id, std::string_view boot_
 	if (rel_id >= 0)
 	{
 		std::string dir_path = fs::get_config_dir() + "savestates/" + title + "/";
-
-		fs::dir dir_view{dir_path};
-
-		std::map<std::string, usz, std::greater<>> save_files;
-
-		for (auto&& dir_entry : dir_view)
-		{
-			if (dir_entry.is_directory || dir_entry.size <= 1024)
-			{
-				continue;
-			}
-
-			const std::string& entry = dir_entry.name;
-
-			if (!title_id.empty() && !entry.starts_with(title + "_"))
-			{
-				// Check prefix only for certified applications
-				// Because ELF file names can be long and unhelpful
-				continue;
-			}
-
-			if (entry.ends_with(".SAVESTAT.zst") || entry.ends_with(".SAVESTAT.gz") || entry.ends_with(".SAVESTAT"))
-			{
-				if (usz dot_idx = entry.rfind(".SAVESTAT"); dot_idx && dot_idx != umax)
-				{
-					if (usz uc_pos = entry.rfind("_", dot_idx - 1); uc_pos != umax && uc_pos + 1 < dot_idx)
-					{
-						if (std::all_of(entry.begin() + uc_pos + 1, entry.begin() + dot_idx, [](char c) { return c >= '0' && c <= '9'; }))
-						{
-							save_files.emplace(entry, dir_entry.size);
-						}
-					}
-				}
-			}
-		}
+		const std::vector<savestate_file_entry> save_files = get_savestate_files(title_id, boot_path);
 
 		std::string rel_path;
 		std::string size_based_path;
@@ -346,7 +360,7 @@ std::string get_savestate_file(std::string_view title_id, std::string_view boot_
 		{
 			if (static_cast<usz>(rel_id - 1) < save_files.size())
 			{
-				rel_path = std::next(save_files.begin(), rel_id - 1)->first;
+				rel_path = save_files[rel_id - 1].path;
 			}
 		}
 
@@ -354,28 +368,21 @@ std::string get_savestate_file(std::string_view title_id, std::string_view boot_
 		{
 			usz size_sum = 0;
 
-			for (auto&& [path, size] : save_files)
+			for (const auto& entry : save_files)
 			{
 				if (size_sum >= aggregate_file_size)
 				{
-					size_based_path = path;
+					size_based_path = entry.path;
 					break;
 				}
 
-				size_sum += size;
+				size_sum += entry.size;
 			}
 		}
 
 		if (!rel_path.empty() || !size_based_path.empty())
 		{
-			if (rel_path > size_based_path)
-			{
-				return prepare_return_value(dir_path, rel_path);
-			}
-			else
-			{
-				return prepare_return_value(dir_path, size_based_path);
-			}
+			return rel_path > size_based_path ? rel_path : size_based_path;
 		}
 
 		if (rel_id > 0 || aggregate_file_size != umax)
@@ -405,7 +412,8 @@ std::string get_savestate_file(std::string_view title_id, std::string_view boot_
 
 		if (!save_files.empty())
 		{
-			std::string last_entry = save_files.begin()->first;
+			const usz separator = save_files.front().path.find_last_of(fs::delim);
+			std::string last_entry = save_files.front().path.substr(separator == umax ? 0 : separator + 1);
 
 			// Increment entry ID
 			if (usz inc_pos = increment_string(last_entry, last_entry.rfind(".SAVESTAT") - 1); inc_pos != umax)

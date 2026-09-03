@@ -17,7 +17,7 @@ extern "C" {
 #define RPCS3_IOS_EXPORT
 #endif
 
-#define RPCS3_IOS_ABI_VERSION 29u
+#define RPCS3_IOS_ABI_VERSION 30u
 
 typedef enum rpcs3_ios_status
 {
@@ -223,6 +223,22 @@ typedef struct rpcs3_ios_game_info
 typedef void (*rpcs3_ios_game_callback)(
     void* user_context,
     const rpcs3_ios_game_info* game);
+
+// identifier is an opaque, title-scoped value that remains valid only for the
+// duration of the callback. Enumeration is ordered newest first using RPCS3's
+// native savestate sequence, not filesystem modification time.
+typedef struct rpcs3_ios_savestate_info
+{
+    uint32_t struct_size;
+    uint32_t compatible;
+    uint64_t size;
+    int64_t modified_time;
+    const char* identifier;
+} rpcs3_ios_savestate_info;
+
+typedef void (*rpcs3_ios_savestate_callback)(
+    void* user_context,
+    const rpcs3_ios_savestate_info* savestate);
 
 typedef enum rpcs3_ios_game_cache_type
 {
@@ -547,6 +563,13 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_download_game_update_package(
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_games(
     rpcs3_ios_game_callback callback,
     void* user_context) RPCS3_IOS_NOEXCEPT;
+// Enumerates every retained savestate for one installed title. Entries may be
+// incompatible with the current core and are reported rather than hidden so a
+// future manager can explain or remove them.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_savestates(
+    const char* title_id,
+    rpcs3_ios_savestate_callback callback,
+    void* user_context) RPCS3_IOS_NOEXCEPT;
 // Enumerates registered trophy data for one installed title and the active PS3
 // user. The read-only path never generates or repairs TROPUSR.DAT.
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_trophies(
@@ -729,8 +752,12 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_get_pad_feedback(
     rpcs3_ios_pad_feedback* feedback) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_boot_big_picture_mode(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_boot_vsh(void) RPCS3_IOS_NOEXCEPT;
+// Pass NULL or an empty identifier for a normal game boot. A non-empty value
+// must be an identifier returned by rpcs3_ios_enumerate_savestates() for the
+// same title and must still be compatible when the boot begins.
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_boot_game(
-    const char* title_id) RPCS3_IOS_NOEXCEPT;
+    const char* title_id,
+    const char* savestate_id) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_emulation_state rpcs3_ios_get_emulation_state(void) RPCS3_IOS_NOEXCEPT;
 // Observational and safe to poll while boot is running. A zero total means
 // RPCS3 knows the current stage but cannot calculate a percentage yet.
