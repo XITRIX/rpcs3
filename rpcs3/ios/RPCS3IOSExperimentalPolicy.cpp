@@ -51,15 +51,32 @@ void resolve_experimental_policy() noexcept
 	resolved.fifo_idle_wfe = g_cfg.ios_experimental.fifo_idle_mode == ios_fifo_idle_mode::wait_for_event;
 	resolved.deferred_get_publishing = resolve_mode(g_cfg.ios_experimental.deferred_get_publishing, false);
 	resolved.getllar_backoff = resolve_mode(g_cfg.ios_experimental.getllar_backoff, false);
-	resolved.persistent_spu_object_cache = resolve_mode(g_cfg.ios_experimental.persistent_spu_object_cache, false);
+	resolved.rsx_dma_wait_parking = resolve_mode(g_cfg.ios_experimental.rsx_dma_wait_parking, arm64_default);
+	resolved.vulkan_command_buffer_reclamation = resolve_mode(g_cfg.ios_experimental.vulkan_command_buffer_reclamation, arm64_default);
+	resolved.expanded_spu_scratch = resolve_mode(g_cfg.ios_experimental.expanded_spu_scratch, arm64_default);
+
+	// ARM64 SPU objects currently contain process-specific absolute host
+	// addresses without relocations. Reusing them after ASLR moves those
+	// addresses is unsafe, even when the user explicitly requests the cache.
+	resolved.persistent_spu_object_cache = false;
+	if (g_cfg.ios_experimental.persistent_spu_object_cache == ios_experimental_mode::enabled)
+	{
+		ios_experimental_log.warning("Persistent SPU object cache is unavailable on ARM64 because its objects are not relocatable");
+	}
 
 	s_policy = resolved;
 	configure_buffer_optimizations(resolved.neon_byte_swap, resolved.neon_primitive_restart, resolved.precomputed_indices);
 
 	ios_experimental_log.notice(
-		"Resolved boot policy: swap=%d restart=%d precomputed=%d mobile_spu=%d fifo=%u wfe=%d deferred_get=%d getllar=%d spu_object_cache=%d",
+		"Resolved boot policy: swap=%d restart=%d precomputed=%d mobile_spu=%d fifo=%u wfe=%d deferred_get=%d getllar=%d rsx_park=%d vk_cb_reclaim=%d spu_scratch=%u spu_object_cache=%d",
 		resolved.neon_byte_swap, resolved.neon_primitive_restart, resolved.precomputed_indices,
 		resolved.mobile_spu_scheduling, resolved.fifo_cache_bytes, resolved.fifo_idle_wfe,
-		resolved.deferred_get_publishing, resolved.getllar_backoff, resolved.persistent_spu_object_cache);
+		resolved.deferred_get_publishing, resolved.getllar_backoff, resolved.rsx_dma_wait_parking,
+		resolved.vulkan_command_buffer_reclamation, get_spu_gateway_scratch_size(), resolved.persistent_spu_object_cache);
+}
+
+u32 get_spu_gateway_scratch_size() noexcept
+{
+	return s_policy.expanded_spu_scratch ? 256 * 1024 : 8 * 1024;
 }
 }
