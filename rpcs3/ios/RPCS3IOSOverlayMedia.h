@@ -15,8 +15,9 @@ public:
 	overlay_media_source(const overlay_media_source&) = delete;
 	overlay_media_source& operator=(const overlay_media_source&) = delete;
 
-	void set_video_path(const std::string& video_path) override;
-	void set_audio_path(const std::string& audio_path) override;
+	void set_iso_path(const std::string& iso_path) override;
+	void set_video_path(const std::string& video_path, bool video_in_archive) override;
+	void set_audio_path(const std::string& audio_path, bool audio_in_archive) override;
 	void set_active(bool active) override;
 	bool get_active() const override;
 	bool has_new() const override;

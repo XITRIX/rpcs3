@@ -1134,7 +1134,7 @@ game_package_install_result install_game_package(
 	std::deque<std::string> bootable_paths;
 	named_thread worker("iOS PKG Installer", [&readers, &extraction_result, &bootable_paths]
 	{
-		extraction_result = package_reader::extract_data(readers, bootable_paths);
+		extraction_result = package_reader::extract_data(readers, bootable_paths, false);
 		return extraction_result.error == package_install_result::error_type::no_error;
 	});
 
