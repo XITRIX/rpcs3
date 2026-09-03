@@ -190,7 +190,9 @@ static fs::error to_error(DWORD e)
 #include <copyfile.h>
 #include <mach-o/dyld.h>
 #include <limits.h>
+#if !defined(RPCS3_IOS)
 #include <sys/disk.h>
+#endif
 #include <sys/param.h>
 #include <sys/mount.h>
 #elif defined(__linux__) || defined(__sun)
@@ -244,10 +246,13 @@ static bool is_optical_device_node(const struct ::stat& file_info)
 	const unsigned int device_major = major(file_info.st_rdev);
 
 	return device_major == s_scsi_cdrom_major || device_major == s_loopback_major;
-#elif defined(__APPLE__)
+#elif defined(__APPLE__) && !defined(RPCS3_IOS)
 	// The raw (unbuffered) device is a character device (e.g. "/dev/rdisk2").
 	// NOTE: there is no cheap way to tell an optical drive from any other raw disk here, so any raw disk node is accepted
 	return S_ISCHR(file_info.st_mode);
+#elif defined(RPCS3_IOS)
+	(void)file_info;
+	return false;
 #else
 	// On the BSDs an optical drive is a character device (e.g. "/dev/cd0")
 	return S_ISCHR(file_info.st_mode) || S_ISBLK(file_info.st_mode);
@@ -281,7 +286,7 @@ static u64 get_raw_device_size(int fd)
 	{
 		return size;
 	}
-#elif defined(__APPLE__)
+#elif defined(__APPLE__) && !defined(RPCS3_IOS)
 	u64 block_count = 0;
 	u32 block_size = 0;
 
@@ -1255,7 +1260,9 @@ bool fs::is_optical_raw_device(const std::string& path)
 
 	return false;
 #else
-#ifdef __APPLE__
+#if defined(RPCS3_IOS)
+	return false;
+#elif defined(__APPLE__)
 	// On Mac OS X optical disks will only ever be mounted under /dev/disk(whatever), similar for raw devices,
 	// so reject anything not containing the disk string.
 	if (!path.starts_with("/dev/disk") && !path.starts_with("/dev/rdisk"))
@@ -1381,7 +1388,7 @@ bool fs::get_optical_raw_device(const std::string& path, std::string* raw_device
 	}
 
 	return true;
-#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__)
+#elif (defined(__APPLE__) && !defined(RPCS3_IOS)) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__)
 	// Here the path points to a mounted optical disc or to a mounted disc image (e.g. attached with "hdiutil"/"mdconfig"),
 	// so retrieve the device backing the filesystem it belongs to
 	struct ::stat file_info;
