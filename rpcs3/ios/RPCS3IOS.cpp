@@ -44,6 +44,7 @@
 #endif
 #include "Emu/system_config.h"
 #include "Emu/system_progress.hpp"
+#include "Emu/savestate_utils.hpp"
 #include "Emu/system_utils.hpp"
 #include "Emu/vfs_config.h"
 #include "Input/pad_thread.h"
@@ -110,6 +111,44 @@ std::atomic_bool g_accept_pad_state = false;
 rpcs3::ios::display_surface_registry g_display_surface;
 std::shared_ptr<rpcn::rpcn_client> g_rpcn_client;
 bool g_rpcn_config_loaded = false;
+
+struct ios_savestate
+{
+	std::string identifier;
+	std::string path;
+	u64 size = 0;
+	s64 modified_time = 0;
+	bool compatible = false;
+};
+
+std::vector<ios_savestate> enumerate_title_savestates(
+	std::string_view title_id,
+	std::string_view boot_path)
+{
+	std::vector<ios_savestate> savestates;
+	const std::vector<savestate_file_entry> files = get_savestate_files(title_id, boot_path);
+	savestates.reserve(files.size());
+
+	for (const auto& file : files)
+	{
+		fs::stat_t info{};
+		if (!fs::get_stat(file.path, info) || info.is_directory)
+		{
+			continue;
+		}
+
+		const usz separator = file.path.find_last_of(fs::delim);
+		savestates.push_back({
+			file.path.substr(separator == umax ? 0 : separator + 1),
+			file.path,
+			file.size,
+			info.mtime,
+			is_savestate_compatible(file.path),
+		});
+	}
+
+	return savestates;
+}
 
 struct boot_progress_snapshot
 {
@@ -1055,7 +1094,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":29,\"frontend\":\"ios\",\"upstream\":\"fdcfded8dfd3060af66bda0a3ac4635458980038\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies-big-picture\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop-big-picture\",\"media_codecs\":true}";
+	return "{\"abi\":30,\"frontend\":\"ios\",\"upstream\":\"fdcfded8dfd3060af66bda0a3ac4635458980038\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies-big-picture-savestate-enumeration-selected-boot\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop-big-picture\",\"media_codecs\":true}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -2030,6 +2069,57 @@ extern "C" rpcs3_ios_status rpcs3_ios_enumerate_games(
 	catch (...)
 	{
 		set_error("Unknown exception while enumerating installed games");
+	}
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_enumerate_savestates(
+	const char* title_id,
+	rpcs3_ios_savestate_callback callback,
+	void* user_context) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!title_id || !title_id[0] || !callback)
+	{
+		set_error("Savestate enumeration requires an installed title ID and callback");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("RPCS3Core must be ready and emulation stopped before enumerating savestates");
+		return result;
+	}
+
+	try
+	{
+		const auto game = rpcs3::ios::find_installed_game(title_id);
+		if (!game)
+		{
+			set_error(fmt::format("Installed game not found: %s", title_id));
+			return RPCS3_IOS_GAME_NOT_FOUND;
+		}
+
+		for (const auto& savestate : enumerate_title_savestates(game->title_id, game->path))
+		{
+			const rpcs3_ios_savestate_info info{
+				sizeof(rpcs3_ios_savestate_info),
+				savestate.compatible ? 1u : 0u,
+				savestate.size,
+				savestate.modified_time,
+				savestate.identifier.c_str(),
+			};
+			callback(user_context, &info);
+		}
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while enumerating savestates");
 	}
 	return RPCS3_IOS_INTERNAL_ERROR;
 }
@@ -3940,7 +4030,9 @@ extern "C" rpcs3_ios_status rpcs3_ios_boot_vsh(void) noexcept
 	return RPCS3_IOS_BOOT_FAILED;
 }
 
-extern "C" rpcs3_ios_status rpcs3_ios_boot_game(const char* title_id) noexcept
+extern "C" rpcs3_ios_status rpcs3_ios_boot_game(
+	const char* title_id,
+	const char* savestate_id) noexcept
 {
 	std::lock_guard lock(g_api_mutex);
 	if (!title_id || !title_id[0])
@@ -3956,6 +4048,12 @@ extern "C" rpcs3_ios_status rpcs3_ios_boot_game(const char* title_id) noexcept
 		}))
 	{
 		set_error("The installed title ID contains invalid characters");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	const std::string requested_savestate_id = savestate_id ? savestate_id : "";
+	if (requested_savestate_id.size() > 255)
+	{
+		set_error("The savestate identifier is invalid");
 		return RPCS3_IOS_INVALID_ARGUMENT;
 	}
 	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
@@ -3979,11 +4077,53 @@ extern "C" rpcs3_ios_status rpcs3_ios_boot_game(const char* title_id) noexcept
 			return RPCS3_IOS_GAME_NOT_FOUND;
 		}
 
-		emit_log(4, fmt::format("Booting installed game %s (%s)", game->title, game->title_id));
+		std::string boot_path = game->path;
+		if (!requested_savestate_id.empty())
+		{
+			const auto savestates = enumerate_title_savestates(game->title_id, game->path);
+			const auto selected = std::ranges::find(
+				savestates, requested_savestate_id, &ios_savestate::identifier);
+			if (selected == savestates.end())
+			{
+				set_error(fmt::format("The selected save state was not found for %s", game->title));
+				return RPCS3_IOS_BOOT_FAILED;
+			}
+			if (!selected->compatible)
+			{
+				set_error(fmt::format("The selected save state is not compatible with this RPCS3 build: %s", game->title));
+				return RPCS3_IOS_BOOT_FAILED;
+			}
+			boot_path = selected->path;
+
+			// Savestates for disc titles store the title ID and restore the
+			// current disc source through RPCS3's games configuration. The iOS
+			// library is independently core-owned, so make sure its validated
+			// path is registered before the savestate reader resolves that ID.
+			if (game->category == "DG")
+			{
+				const game_boot_result registration = Emu.AddGame(game->path);
+				if (registration != game_boot_result::no_errors &&
+					registration != game_boot_result::already_added)
+				{
+					set_error(fmt::format("Could not register the installed disc source before loading a save state: %s", registration));
+					return RPCS3_IOS_BOOT_FAILED;
+				}
+			}
+		}
+
+		if (requested_savestate_id.empty())
+		{
+			emit_log(4, fmt::format("Booting installed game %s (%s)", game->title, game->title_id));
+		}
+		else
+		{
+			emit_log(4, fmt::format("Booting selected save state for %s (%s): %s",
+				game->title, game->title_id, requested_savestate_id));
+		}
 		prepare_rpcn_for_guest_boot();
 		Emu.DeactivateBigPictureMode();
 		Emu.SetForceBoot(true);
-		const game_boot_result result = Emu.BootGame(game->path, game->title_id);
+		const game_boot_result result = Emu.BootGame(boot_path, game->title_id);
 		if (result != game_boot_result::no_errors)
 		{
 			Emu.SetForceBoot(false);
@@ -3991,7 +4131,9 @@ extern "C" rpcs3_ios_status rpcs3_ios_boot_game(const char* title_id) noexcept
 			return RPCS3_IOS_BOOT_FAILED;
 		}
 
-		emit_log(4, fmt::format("Installed game boot request completed: %s", game->title_id));
+		emit_log(4, requested_savestate_id.empty()
+			? fmt::format("Installed game boot request completed: %s", game->title_id)
+			: fmt::format("Save-state boot request completed: %s", game->title_id));
 		return RPCS3_IOS_OK;
 	}
 	catch (const std::exception& error)
