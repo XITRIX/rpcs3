@@ -4,11 +4,14 @@
 
 #include "Emu/Audio/IOS/IOSAudioBackend.h"
 #include "Emu/Audio/audio_utils.h"
+#include "Loader/ISO.h"
 #include "util/media_utils.h"
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <thread>
 
@@ -47,11 +50,47 @@ constexpr std::size_t pcm_capacity_samples = output_sample_rate * output_channel
 struct ffmpeg_decoder
 {
 	AVFormatContext* format = nullptr;
+	AVIOContext* io = nullptr;
 	AVCodecContext* codec = nullptr;
 	AVPacket* packet = nullptr;
 	AVFrame* frame = nullptr;
 	AVStream* stream = nullptr;
+	fs::file archive_file;
 	int stream_index = -1;
+
+	static int read_archive(void* opaque, u8* buffer, int buffer_size)
+	{
+		auto& file = *static_cast<fs::file*>(opaque);
+		const u64 count = file.read(buffer, static_cast<u64>(buffer_size));
+		return count ? static_cast<int>(count) : AVERROR_EOF;
+	}
+
+	static s64 seek_archive(void* opaque, s64 offset, int whence)
+	{
+		auto& file = *static_cast<fs::file*>(opaque);
+		if (whence == AVSEEK_SIZE)
+		{
+			const u64 size = file.size();
+			return size <= static_cast<u64>(std::numeric_limits<s64>::max())
+				? static_cast<s64>(size)
+				: AVERROR(EIO);
+		}
+
+		whence &= ~AVSEEK_FORCE;
+		fs::seek_mode mode{};
+		switch (whence)
+		{
+		case SEEK_SET: mode = fs::seek_set; break;
+		case SEEK_CUR: mode = fs::seek_cur; break;
+		case SEEK_END: mode = fs::seek_end; break;
+		default: return AVERROR(EINVAL);
+		}
+
+		const u64 position = file.seek(offset, mode);
+		return position == umax || position > static_cast<u64>(std::numeric_limits<s64>::max())
+			? AVERROR(EIO)
+			: static_cast<s64>(position);
+	}
 
 	~ffmpeg_decoder()
 	{
@@ -71,11 +110,69 @@ struct ffmpeg_decoder
 		{
 			avformat_close_input(&format);
 		}
+		if (io)
+		{
+			av_freep(&io->buffer);
+			avio_context_free(&io);
+		}
 	}
 
-	bool open(const std::string& path, AVMediaType media_type)
+	bool open(
+		const std::string& path,
+		AVMediaType media_type,
+		const std::string& iso_path,
+		bool in_archive)
 	{
-		int error = avformat_open_input(&format, path.c_str(), nullptr, nullptr);
+		if (in_archive)
+		{
+			iso_archive archive{iso_path};
+			if (!archive.is_valid() || !archive.is_file(path))
+			{
+				IOSOverlayMedia.error("Could not find '%s' in ISO '%s'", path, iso_path);
+				return false;
+			}
+
+			archive_file.reset(archive.open(path));
+			if (!archive_file)
+			{
+				IOSOverlayMedia.error("Could not open '%s' in ISO '%s'", path, iso_path);
+				return false;
+			}
+
+			constexpr int io_buffer_size = 32 * 1024;
+			u8* io_buffer = static_cast<u8*>(av_malloc(io_buffer_size));
+			if (!io_buffer)
+			{
+				IOSOverlayMedia.error("Could not allocate ISO media buffer for '%s'", path);
+				return false;
+			}
+
+			io = avio_alloc_context(
+				io_buffer,
+				io_buffer_size,
+				0,
+				&archive_file,
+				&read_archive,
+				nullptr,
+				&seek_archive);
+			if (!io)
+			{
+				av_free(io_buffer);
+				IOSOverlayMedia.error("Could not create ISO media stream for '%s'", path);
+				return false;
+			}
+
+			format = avformat_alloc_context();
+			if (!format)
+			{
+				IOSOverlayMedia.error("Could not allocate the media format context for '%s'", path);
+				return false;
+			}
+			format->pb = io;
+			format->flags |= AVFMT_FLAG_CUSTOM_IO;
+		}
+
+		int error = avformat_open_input(&format, in_archive ? nullptr : path.c_str(), nullptr, nullptr);
 		if (error < 0)
 		{
 			IOSOverlayMedia.error("Could not open '%s': %s", path, utils::av_error_to_string(error));
@@ -153,7 +250,22 @@ public:
 		set_active(false);
 	}
 
-	void set_video_path(const std::string& path)
+	void set_iso_path(const std::string& path)
+	{
+		std::lock_guard lock{m_control_mutex};
+		const bool restart = m_active;
+		if (restart)
+		{
+			stop_locked();
+		}
+		m_iso_path = path;
+		if (restart)
+		{
+			start_locked();
+		}
+	}
+
+	void set_video_path(const std::string& path, bool in_archive)
 	{
 		std::lock_guard lock{m_control_mutex};
 		const bool restart = m_active;
@@ -162,6 +274,7 @@ public:
 			stop_locked();
 		}
 		m_video_path = path;
+		m_video_in_archive = in_archive;
 		m_has_video = !path.empty();
 		if (restart)
 		{
@@ -169,7 +282,7 @@ public:
 		}
 	}
 
-	void set_audio_path(const std::string& path)
+	void set_audio_path(const std::string& path, bool in_archive)
 	{
 		std::lock_guard lock{m_control_mutex};
 		const bool restart = m_active;
@@ -178,6 +291,7 @@ public:
 			stop_locked();
 		}
 		m_audio_path = path;
+		m_audio_in_archive = in_archive;
 		if (restart)
 		{
 			start_locked();
@@ -325,7 +439,7 @@ private:
 		while (!stop_token.stop_requested())
 		{
 			ffmpeg_decoder decoder;
-			if (!decoder.open(m_audio_path, AVMEDIA_TYPE_AUDIO))
+			if (!decoder.open(m_audio_path, AVMEDIA_TYPE_AUDIO, m_iso_path, m_audio_in_archive))
 			{
 				return;
 			}
@@ -513,7 +627,7 @@ private:
 		while (!stop_token.stop_requested())
 		{
 			ffmpeg_decoder decoder;
-			if (!decoder.open(m_video_path, AVMEDIA_TYPE_VIDEO))
+			if (!decoder.open(m_video_path, AVMEDIA_TYPE_VIDEO, m_iso_path, m_video_in_archive))
 			{
 				m_video_failed = true;
 				m_owner.notify_frame_update();
@@ -608,8 +722,11 @@ private:
 	overlay_media_source& m_owner;
 	mutable std::mutex m_control_mutex;
 	std::mutex m_frame_mutex;
+	std::string m_iso_path;
 	std::string m_video_path;
 	std::string m_audio_path;
+	bool m_video_in_archive = false;
+	bool m_audio_in_archive = false;
 	std::atomic_bool m_active = false;
 	std::atomic_bool m_has_video = false;
 	std::atomic_bool m_video_failed = false;
@@ -630,14 +747,19 @@ overlay_media_source::overlay_media_source()
 
 overlay_media_source::~overlay_media_source() = default;
 
-void overlay_media_source::set_video_path(const std::string& video_path)
+void overlay_media_source::set_iso_path(const std::string& iso_path)
 {
-	m_impl->set_video_path(video_path);
+	m_impl->set_iso_path(iso_path);
 }
 
-void overlay_media_source::set_audio_path(const std::string& audio_path)
+void overlay_media_source::set_video_path(const std::string& video_path, bool video_in_archive)
 {
-	m_impl->set_audio_path(audio_path);
+	m_impl->set_video_path(video_path, video_in_archive);
+}
+
+void overlay_media_source::set_audio_path(const std::string& audio_path, bool audio_in_archive)
+{
+	m_impl->set_audio_path(audio_path, audio_in_archive);
 }
 
 void overlay_media_source::set_active(bool active)
