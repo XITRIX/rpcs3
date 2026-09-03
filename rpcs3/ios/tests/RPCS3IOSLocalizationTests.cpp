@@ -35,6 +35,9 @@ int main()
 	assert(localized_overlay_string(localized_string_id::HOME_MENU_TITLE, "en-US") == "Home Menu");
 	assert(localized_overlay_string(localized_string_id::CELL_SAVEDATA_SAVE, "en-US", "Slot 1") == "Save this data?\n\nSlot 1");
 	assert(localized_overlay_string(
+		localized_string_id::RSX_OVERLAYS_COMPILING_SHADERS,
+		"en-US") == "Precompiling shader interpreter variants.\nPlease wait...");
+	assert(localized_overlay_string(
 		localized_string_id::RSX_OVERLAYS_COMPILING_SHADERS_TITLE,
 		"en-US") == "Shader Compilation");
 	assert(localized_overlay_string(
