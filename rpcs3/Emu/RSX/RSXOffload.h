@@ -52,6 +52,7 @@ namespace rsx
 		};
 
 		atomic_t<bool> m_mem_fault_flag = false;
+		bool m_wait_parking = false;
 
 		struct offload_thread;
 		std::shared_ptr<named_thread<offload_thread>> m_thread;

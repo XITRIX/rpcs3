@@ -10,6 +10,10 @@
 
 #include "util/asm.hpp"
 
+#ifdef RPCS3_IOS
+#include "ios/RPCS3IOSExperimentalPolicy.h"
+#endif
+
 namespace rsx
 {
 	struct dma_manager::offload_thread
@@ -96,6 +100,9 @@ namespace rsx
 	// initialization
 	void dma_manager::init()
 	{
+#ifdef RPCS3_IOS
+		m_wait_parking = rpcs3::ios::get_experimental_policy().rsx_dma_wait_parking;
+#endif
 		m_thread = std::make_shared<named_thread<offload_thread>>();
 	}
 
@@ -181,10 +188,37 @@ namespace rsx
 				return false;
 			}
 
-			while (_thr.m_enqueued_count.load() > _thr.m_processed_count.load())
+			u32 spins = 0;
+
+			while (true)
 			{
+				const u64 processed = _thr.m_processed_count.load();
+
+				if (_thr.m_enqueued_count.load() <= processed)
+				{
+					break;
+				}
+
 				rsxthr->on_semaphore_acquire_wait();
-				utils::pause();
+
+				// Preserve RPCS3's original continuous spin when the
+				// experiment is disabled. Otherwise cover the short handoff
+				// locally, then park on the exact progress value observed.
+				if (!m_wait_parking || ++spins < 500 || static_cast<thread_state>(_thr) != thread_state::created)
+				{
+					utils::pause();
+					continue;
+				}
+
+				if (_thr.m_processed_count.load() != processed)
+				{
+					continue;
+				}
+
+				// A timeout is required for memory-fault recovery: the RSX
+				// upkeep above can be the only agent able to release a stopped
+				// offloader, and it can enqueue more work while doing so.
+				_thr.m_processed_count.wait(processed, atomic_wait_timeout{100'000});
 			}
 		}
 		else

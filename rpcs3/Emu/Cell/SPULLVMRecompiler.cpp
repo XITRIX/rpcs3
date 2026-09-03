@@ -3974,7 +3974,10 @@ public:
 				}
 				else if (!m_spurt->get_obj_cache_path().empty())
 				{
-					added = m_jit.try_add(std::move(_module), m_spurt->get_obj_cache_path(), llvm_error);
+					// ARM64 objects embed process-specific host addresses as
+					// immediates without relocations. Compile into the current
+					// process only until every such address is symbolic.
+					added = m_jit.try_add(std::move(_module), llvm_error);
 				}
 				else
 				{
@@ -4000,7 +4003,7 @@ public:
 				}
 				else if (!m_spurt->get_obj_cache_path().empty())
 				{
-					m_jit.add(std::move(_module), m_spurt->get_obj_cache_path());
+					m_jit.add(std::move(_module));
 				}
 				else
 				{
@@ -7619,10 +7622,10 @@ public:
 		const auto known_idx = get_known_bits(c);
 		const bool perm_only = known_idx.Zero[7];
 		const bool perm_or_zero_only = known_idx.Zero[6];
-		const bool consts_only = known_idx.One[7];
-		const bool consts_never_msb = known_idx.Zero[5];
-		const bool consts_never_allones = known_idx.One[5];
-		const bool idx_selects_single = known_idx.extractBits(1, 4).isConstant();
+		[[maybe_unused]] const bool consts_only = known_idx.One[7];
+		[[maybe_unused]] const bool consts_never_msb = known_idx.Zero[5];
+		[[maybe_unused]] const bool consts_never_allones = known_idx.One[5];
+		[[maybe_unused]] const bool idx_selects_single = known_idx.extractBits(1, 4).isConstant();
 
 		const auto a = get_vr<u8[16]>(op.ra);
 		const auto b = get_vr<u8[16]>(op.rb);
@@ -7638,7 +7641,7 @@ public:
 		const bool b_is_splat = b_is_const && b_data == v128::from8p(b_data._u8[0]);
 
 
-		auto get_swap_from_const = [this](v128 data, bool is_splat) {
+		[[maybe_unused]] auto get_swap_from_const = [this](v128 data, bool is_splat) {
 			// Splats are their own byteswap
 			if (!is_splat)
 				std::reverse(std::begin(data._bytes), std::end(data._bytes));
@@ -7646,15 +7649,30 @@ public:
 			return make_const_vector(data, get_type<u8[16]>());
 		};
 
+#ifdef ARCH_ARM64
+		// Folding arbitrary constants into the endian-swapped ARM64 path
+		// miscompiles real SHUFB sequences. Splats are their own byte swap
+		// and remain safe.
+		if (a_is_splat)
+			a_swap.value = a.value;
+
+		if (b_is_splat)
+			b_swap.value = b.value;
+#else
 		if (a_is_const)
 			a_swap.value = get_swap_from_const(a_data, a_is_splat);
 
 		if (b_is_const)
 			b_swap.value = get_swap_from_const(b_data, b_is_splat);
+#endif
 
 		// Shuffle index reversal is equivalent to a byteswap
 		value_t<u8[16]> av, bv, cv;
+#ifdef ARCH_ARM64
+		if ((a_was_swapped || a_is_splat) && (b_was_swapped || b_is_splat))
+#else
 		if ((a_was_swapped || a_is_const) && (b_was_swapped || b_is_const))
+#endif
 		{
 			av = eval(a_swap);
 			bv = eval(b_swap);
@@ -7667,8 +7685,15 @@ public:
 			cv = eval(c ^ 0xf);
 		}
 
-		// When single source, either indicated by KnownBits or both are the same
+		// ARM64's KnownBits bit-4 shortcut is not sufficient when an index
+		// selects an SPU special constant rather than either source. Keep the
+		// shortcut for the established non-ARM64 lowering and use a source
+		// only when both operands are actually the same on ARM64.
+#ifdef ARCH_ARM64
+		const std::optional<value_t<u8[16]>> single_src = (op.ra == op.rb && !m_interp_magn)
+#else
 		const std::optional<value_t<u8[16]>> single_src = (idx_selects_single || (op.ra == op.rb && !m_interp_magn))
+#endif
 			? std::make_optional(known_idx.One[4] ? bv : av)
 			: std::nullopt;
 
@@ -7684,11 +7709,7 @@ public:
 		// NOTE: LLVM doesn't emit BCAX	(llvm-project/issues/200699)
 		//		 Verify if `(x ^ 0x0F) & 0x?F` is reassociated when upstreamed
 
-		if (consts_only)
-		{
-			// NOP to avoid doing any shuffles
-		}
-		else if (single_src)
+		if (single_src)
 		{
 			const auto only_src = single_src.value();
 
@@ -7700,7 +7721,8 @@ public:
 
 			if (only_src_is_splat)
 			{
-				set_vr(op.rt4, tbl(splat_lut, (c >> 4)));
+				const auto lut = build<u8[16]>(0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x80, 0x80, 0x80, 0x80);
+				set_vr(op.rt4, tbx(only_src, lut, (c >> 3) ^ 0x10));
 				return;
 			}
 
@@ -7710,8 +7732,15 @@ public:
 				set_vr(op.rt4, tbl(only_src, cm));
 				return;
 			}
+
+			const auto x = tbl(build<u8[16]>(0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x80, 0x80), (c >> 4));
+			const auto xv = perm_or_zero_only ? eval(splat<u8[16]>(0)) : x;
+			const auto cm = eval(cv & 0x8f);
+			set_vr(op.rt4, tbx(xv, only_src, cm));
+			return;
 		}
-		else if (a_is_splat && b_is_splat)
+
+		if (a_is_splat && b_is_splat)
 		{
 			if (perm_only)
 			{
@@ -7730,39 +7759,10 @@ public:
 			return;
 		}
 
-		// Calculate special index constants
-
-		value_t<u8[16]> idx_consts;
-		if (perm_or_zero_only)
-		{
-			idx_consts = eval(splat<u8[16]>(0));
-		}
-		else if (consts_never_msb)
-		{
-			idx_consts = eval(noncast<u8[16]>(sext<s8[16]>(c >= 0xc0)));
-		}
-		else
-		{
-			idx_consts = tbl(build<u8[16]>(0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x80, 0x80), (c >> 4));
-		}
-
-		if (consts_only)
-		{
-			set_vr(op.rt4, idx_consts);
-			return;
-		}
-
-		// Combine shuffle and special index constants
-
-		if (single_src)
-		{
-			const auto cm = eval(cv & 0x8f);
-			set_vr(op.rt4, tbx(idx_consts, single_src.value(), cm));
-			return;
-		}
-
+		const auto idx_consts = tbl(build<u8[16]>(0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x80, 0x80), (c >> 4));
+		const auto idx_base = perm_or_zero_only ? eval(splat<u8[16]>(0)) : idx_consts;
 		const auto cm = eval(cv & 0x9f);
-		set_vr(op.rt4, tbx2(idx_consts, av, bv, cm));
+		set_vr(op.rt4, tbx2(idx_base, av, bv, cm));
 		return;
 #else
 
@@ -8619,6 +8619,22 @@ public:
 		return eval(fpcast<f32[4]>(xr));
 	}
 
+	// FMS is a * b - c. AArch64 has to materialize -c before its FMA,
+	// which changes the sign of a NaN bit pattern that represents an
+	// ordinary extended-range value on the SPU. Preserve that pattern and
+	// negate only ordered values; x86 folds the select away.
+	value_t<f32[4]> negate_addend(value_t<f32[4]> c)
+	{
+		const auto c_known = get_known_fp_class<4>(c, llvm::FPClassTest::fcNan);
+
+		if (c_known.isKnownNeverNaN())
+		{
+			return eval(-c);
+		}
+
+		return eval(select(fcmp_uno(c != c), c, -c));
+	}
+
 	template <typename T, typename U, typename V>
 	static llvm_calli<f32[4], T, U, V> fnms(T&& a, U&& b, V&& c)
 	{
@@ -9014,7 +9030,7 @@ public:
 				const auto a_clamp = clamp_smax(a, a_known);
 				const auto b_clamp = clamp_smax(b, b_known);
 
-				return fma32x4(a_clamp, b_clamp, eval(-c), a_known, b_known);
+				return fma32x4(a_clamp, b_clamp, negate_addend(c), a_known, b_known);
 			}
 			else
 			{
@@ -9025,7 +9041,7 @@ public:
 				}
 #endif
 
-				return fma32x4(a, b, eval(-c));
+				return fma32x4(a, b, negate_addend(c));
 			}
 		});
 
@@ -9248,7 +9264,15 @@ public:
 			}
 
 			r.value = m_ir->CreateFPToSI(a.value, get_type<s32[4]>());
+#if defined(ARCH_ARM64)
+			// AArch64 lowers v4f64 -> v4i32 through saturating i64
+			// conversions and lane packing, so patch both i32 bounds before
+			// the low words of an overflowing i64 can be observed.
+			set_vr(op.rt, select(fcmp_ord(a >= fsplat<f64[4]>(std::exp2(31.f))), splat<s32[4]>(0x7fffffff),
+				select(fcmp_ord(a < fsplat<f64[4]>(-std::exp2(31.f))), splat<s32[4]>(0x80000000), r)));
+#else
 			set_vr(op.rt, r ^ sext<s32[4]>(fcmp_ord(a >= fsplat<f64[4]>(std::exp2(31.f)))));
+#endif
 		}
 		else
 		{
@@ -9263,7 +9287,15 @@ public:
 
 			value_t<s32[4]> r;
 			r.value = m_ir->CreateFPToSI(a.value, get_type<s32[4]>());
+#if defined(ARCH_ARM64)
+			// FCVTZS already saturates on AArch64; the XOR below is an x86
+			// correction for cvttps2dq's integer-indefinite result and
+			// reverses the correct ARM64 high-side saturation.
+			const auto sat_hi = bitcast<s32[4]>(a) > splat<s32[4]>(((31 + 127) << 23) - 1);
+			set_vr(op.rt, select(sat_hi, splat<s32[4]>(0x7fffffff), select(fcmp_uno(a != a), splat<s32[4]>(0x80000000), r)));
+#else
 			set_vr(op.rt, r ^ sext<s32[4]>(bitcast<s32[4]>(a) > splat<s32[4]>(((31 + 127) << 23) - 1)));
+#endif
 		}
 	}
 

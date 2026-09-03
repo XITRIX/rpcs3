@@ -126,6 +126,9 @@ struct cfg_root : cfg::node
 		cfg::_enum<ios_fifo_idle_mode> fifo_idle_mode{ this, "RSX FIFO Idle Wait", ios_fifo_idle_mode::yield };
 		cfg::_enum<ios_experimental_mode> deferred_get_publishing{ this, "Deferred FIFO GET Publishing", ios_experimental_mode::automatic };
 		cfg::_enum<ios_experimental_mode> getllar_backoff{ this, "GETLLAR Mobile Backoff", ios_experimental_mode::automatic };
+		cfg::_enum<ios_experimental_mode> rsx_dma_wait_parking{ this, "RSX DMA Wait Parking", ios_experimental_mode::automatic };
+		cfg::_enum<ios_experimental_mode> vulkan_command_buffer_reclamation{ this, "Vulkan Command-Buffer Reclamation", ios_experimental_mode::automatic };
+		cfg::_enum<ios_experimental_mode> expanded_spu_scratch{ this, "Expanded ARM64 SPU Scratch", ios_experimental_mode::automatic };
 		cfg::_enum<ios_experimental_mode> persistent_spu_object_cache{ this, "Persistent SPU Object Cache", ios_experimental_mode::automatic };
 	} ios_experimental{ this };
 #endif

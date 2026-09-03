@@ -22,8 +22,17 @@ namespace vk
 		// Capture managed ring buffers snapshot at current time
 		managed_heap_snapshot_t get_heap_snapshot();
 
-		// Synchronize heap with snapshot
-		void restore_snapshot(const managed_heap_snapshot_t& snapshot);
+		// Per-command-buffer reclamation is boot-scoped on iOS so an
+		// affected title can return to RPCS3's frame-only behavior.
+		bool use_command_buffer_reclamation() noexcept;
+
+		// Monotonic tickets prevent an older completion from rolling a
+		// ring's get pointer behind a newer completion.
+		u64 next_snapshot_id();
+
+		// Synchronize heap with snapshot. An id of zero preserves the
+		// original unconditional frame-only behavior.
+		void restore_snapshot(const managed_heap_snapshot_t& snapshot, u64 id = 0);
 
 		// Reset all managed heap allocations
 		void reset_heap_allocations();
