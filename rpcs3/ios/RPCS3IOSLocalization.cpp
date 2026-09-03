@@ -66,6 +66,10 @@ localized_source overlay_source(id value) noexcept
 	case id::RSX_OVERLAYS_TROPHY_GOLD: return {"core.RSX_OVERLAYS_TROPHY_GOLD", "You have earned a gold trophy.\n%0"};
 	case id::RSX_OVERLAYS_TROPHY_PLATINUM: return {"core.RSX_OVERLAYS_TROPHY_PLATINUM", "You have earned a platinum trophy.\n%0"};
 	case id::RSX_OVERLAYS_COMPILING_SHADERS: return {"core.RSX_OVERLAYS_COMPILING_SHADERS", "Compiling shaders"};
+	case id::RSX_OVERLAYS_COMPILING_SHADERS_TITLE: return {"core.RSX_OVERLAYS_COMPILING_SHADERS_TITLE", "Shader Compilation"};
+	case id::RSX_OVERLAYS_COMPILING_SHADERS_VULKAN: return {"core.RSX_OVERLAYS_COMPILING_SHADERS_VULKAN", "Building base variant %0..."};
+	case id::RSX_OVERLAYS_COMPILING_SHADERS_OPENGL_BUILD: return {"core.RSX_OVERLAYS_COMPILING_SHADERS_OPENGL_BUILD", "Building variant %0..."};
+	case id::RSX_OVERLAYS_COMPILING_SHADERS_OPENGL_LINK: return {"core.RSX_OVERLAYS_COMPILING_SHADERS_OPENGL_LINK", "Linking variant %0..."};
 	case id::RSX_OVERLAYS_COMPILING_PPU_MODULES: return {"core.RSX_OVERLAYS_COMPILING_PPU_MODULES", "Compiling PPU Modules"};
 	case id::RSX_OVERLAYS_MSG_DIALOG_YES: return {"core.RSX_OVERLAYS_MSG_DIALOG_YES", "Yes"};
 	case id::RSX_OVERLAYS_MSG_DIALOG_NO: return {"core.RSX_OVERLAYS_MSG_DIALOG_NO", "No"};
@@ -352,6 +356,7 @@ localized_source overlay_source(id value) noexcept
 	case id::BIG_PICTURE_MENU_GAMES: return {"core.BIG_PICTURE_MENU_GAMES", "Games"};
 	case id::BIG_PICTURE_MENU_EXIT: return {"core.BIG_PICTURE_MENU_EXIT", "Exit Big Picture Mode"};
 	case id::BIG_PICTURE_NO_GAMES_FOUND: return {"core.BIG_PICTURE_NO_GAMES_FOUND", "No games found.\nAdd games in the main RPCS3 window."};
+	case id::BIG_PICTURE_LOADING: return {"core.BIG_PICTURE_LOADING", "Loading games..."};
 	case id::BIG_PICTURE_GAME_DETAILS_START: return {"core.BIG_PICTURE_GAME_DETAILS_START", "Start"};
 	case id::BIG_PICTURE_HINT_BACK: return {"core.BIG_PICTURE_HINT_BACK", "Back"};
 	case id::BIG_PICTURE_HINT_SELECT: return {"core.BIG_PICTURE_HINT_SELECT", "Select"};
