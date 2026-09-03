@@ -66,7 +66,10 @@ typedef enum rpcs3_ios_status
     RPCS3_IOS_SETTINGS_PRESET_INVALID = 42,
     RPCS3_IOS_SETTINGS_PRESET_EXISTS = 43,
     RPCS3_IOS_SETTINGS_PRESET_NOT_FOUND = 44,
-    RPCS3_IOS_GAME_CACHE_FAILED = 45
+    RPCS3_IOS_GAME_CACHE_FAILED = 45,
+    RPCS3_IOS_SAVESTATE_INVALID = 46,
+    RPCS3_IOS_SAVESTATE_NOT_FOUND = 47,
+    RPCS3_IOS_SAVESTATE_STORAGE_FAILED = 48
 } rpcs3_ios_status;
 
 typedef enum rpcs3_ios_state
@@ -570,6 +573,23 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_savestates(
     const char* title_id,
     rpcs3_ios_savestate_callback callback,
     void* user_context) RPCS3_IOS_NOEXCEPT;
+// Duplicate and delete resolve only opaque identifiers returned by enumeration.
+// Import/export transport paths must remain below the configured cache root.
+// Imports accept RPCS3's native .SAVESTAT, .SAVESTAT.zst, and .SAVESTAT.gz
+// formats, verify their embedded title ID, and atomically add a new native entry.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_duplicate_savestate(
+    const char* title_id,
+    const char* savestate_id) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_delete_savestate(
+    const char* title_id,
+    const char* savestate_id) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_import_savestate(
+    const char* title_id,
+    const char* source_path) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_export_savestate(
+    const char* title_id,
+    const char* savestate_id,
+    const char* destination_path) RPCS3_IOS_NOEXCEPT;
 // Enumerates registered trophy data for one installed title and the active PS3
 // user. The read-only path never generates or repairs TROPUSR.DAT.
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_trophies(

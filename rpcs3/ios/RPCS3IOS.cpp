@@ -90,10 +90,12 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 namespace
 {
@@ -148,6 +150,128 @@ std::vector<ios_savestate> enumerate_title_savestates(
 	}
 
 	return savestates;
+}
+
+std::string_view savestate_file_suffix(std::string_view path)
+{
+	for (const std::string_view suffix : {
+		".SAVESTAT.zst"sv,
+		".SAVESTAT.gz"sv,
+		".SAVESTAT"sv,
+	})
+	{
+		if (path.ends_with(suffix))
+		{
+			return suffix;
+		}
+	}
+	return {};
+}
+
+std::optional<ios_savestate> find_title_savestate(
+	const rpcs3::ios::installed_game& game,
+	std::string_view identifier)
+{
+	if (identifier.empty() || identifier.size() > 255)
+	{
+		return std::nullopt;
+	}
+
+	const auto savestates = enumerate_title_savestates(game.title_id, game.path);
+	const auto found = std::ranges::find(savestates, identifier, &ios_savestate::identifier);
+	if (found == savestates.end())
+	{
+		return std::nullopt;
+	}
+	return *found;
+}
+
+std::string next_title_savestate_path(
+	const rpcs3::ios::installed_game& game,
+	std::string_view suffix)
+{
+	std::string destination = get_savestate_file(game.title_id, game.path, 0);
+	const std::string_view generated_suffix = savestate_file_suffix(destination);
+	if (destination.empty() || generated_suffix.empty() || suffix.empty())
+	{
+		return {};
+	}
+	destination.resize(destination.size() - generated_suffix.size());
+	destination.append(suffix);
+	return destination;
+}
+
+bool copy_file_atomically(std::string_view source_path, std::string_view destination_path)
+{
+	fs::file source{std::string{source_path}, fs::read};
+	if (!source)
+	{
+		return false;
+	}
+
+	const u64 source_size = source.size();
+	if (!source_size)
+	{
+		return false;
+	}
+
+	fs::pending_file destination{destination_path};
+	if (!destination.file)
+	{
+		return false;
+	}
+
+	std::vector<u8> buffer(1024 * 1024);
+	u64 remaining = source_size;
+	while (remaining)
+	{
+		const u64 size = std::min<u64>(remaining, buffer.size());
+		if (source.read(buffer.data(), size) != size ||
+			destination.file.write(buffer.data(), size) != size)
+		{
+			return false;
+		}
+		remaining -= size;
+	}
+
+	return source.size() == source_size &&
+		destination.file.size() == source_size &&
+		destination.commit(false);
+}
+
+bool savestate_matches_title(std::string_view path, std::string_view title_id)
+{
+	const auto reader = make_savestate_reader(std::string{path});
+	if (!reader)
+	{
+		return false;
+	}
+
+	const auto header = reader->try_read<savestate_header>().second;
+	if (header.magic != "RPCS3SAV"_u64 ||
+		header.LE_format != (std::endian::native == std::endian::little) ||
+		header.offset >= reader->get_size(header.offset))
+	{
+		return false;
+	}
+
+	if (header.flag_versions_is_following_data)
+	{
+		if (header.offset != reader->pos)
+		{
+			return false;
+		}
+		reader->pop<std::vector<version_entry>>();
+	}
+
+	if (!reader->pop<b8>())
+	{
+		return false;
+	}
+	reader->pop<std::string>(); // RPCS3 build
+	reader->pop<std::string>(); // Creation date
+	const std::string application_title = reader->pop<std::string>();
+	return application_title.ends_with(" [" + std::string{title_id} + "]");
 }
 
 struct boot_progress_snapshot
@@ -353,6 +477,20 @@ rpcs3_ios_status validate_game_settings_preset_operation(
 		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
 	{
 		set_error(fmt::format("Stop emulation before %s game-settings presets", action));
+		return result;
+	}
+	return validate_game_settings_target(title_id, installed_game);
+}
+
+rpcs3_ios_status validate_savestate_operation(
+	const char* title_id,
+	std::string_view action,
+	rpcs3::ios::installed_game* installed_game)
+{
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error(fmt::format("Stop emulation before %s save states", action));
 		return result;
 	}
 	return validate_game_settings_target(title_id, installed_game);
@@ -1094,7 +1232,7 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
-	return "{\"abi\":30,\"frontend\":\"ios\",\"upstream\":\"fdcfded8dfd3060af66bda0a3ac4635458980038\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies-big-picture-savestate-enumeration-selected-boot\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop-big-picture\",\"media_codecs\":true}";
+	return "{\"abi\":30,\"frontend\":\"ios\",\"upstream\":\"fdcfded8dfd3060af66bda0a3ac4635458980038\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies-big-picture-savestate-management-selected-boot\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop-big-picture\",\"media_codecs\":true}";
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -2120,6 +2258,212 @@ extern "C" rpcs3_ios_status rpcs3_ios_enumerate_savestates(
 	catch (...)
 	{
 		set_error("Unknown exception while enumerating savestates");
+	}
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_duplicate_savestate(
+	const char* title_id,
+	const char* savestate_id) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!savestate_id || !savestate_id[0])
+	{
+		set_error("A save-state identifier is required");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+
+	rpcs3::ios::installed_game game;
+	if (const auto result = validate_savestate_operation(title_id, "duplicating", &game);
+		result != RPCS3_IOS_OK)
+	{
+		return result;
+	}
+
+	try
+	{
+		const auto source = find_title_savestate(game, savestate_id);
+		if (!source)
+		{
+			set_error("The selected save state was not found");
+			return RPCS3_IOS_SAVESTATE_NOT_FOUND;
+		}
+		const std::string destination = next_title_savestate_path(
+			game, savestate_file_suffix(source->path));
+		if (destination.empty() || !fs::create_path(fs::get_parent_dir(destination)) ||
+			!copy_file_atomically(source->path, destination))
+		{
+			set_error("RPCS3 could not atomically duplicate the selected save state");
+			return RPCS3_IOS_SAVESTATE_STORAGE_FAILED;
+		}
+		emit_log(4, fmt::format("Duplicated save state for %s: %s", game.title_id, savestate_id));
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while duplicating a save state");
+	}
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_delete_savestate(
+	const char* title_id,
+	const char* savestate_id) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!savestate_id || !savestate_id[0])
+	{
+		set_error("A save-state identifier is required");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+
+	rpcs3::ios::installed_game game;
+	if (const auto result = validate_savestate_operation(title_id, "deleting", &game);
+		result != RPCS3_IOS_OK)
+	{
+		return result;
+	}
+
+	try
+	{
+		const auto savestate = find_title_savestate(game, savestate_id);
+		if (!savestate)
+		{
+			set_error("The selected save state was not found");
+			return RPCS3_IOS_SAVESTATE_NOT_FOUND;
+		}
+		if (!fs::remove_file(savestate->path))
+		{
+			set_error("RPCS3 could not delete the selected save state");
+			return RPCS3_IOS_SAVESTATE_STORAGE_FAILED;
+		}
+		emit_log(4, fmt::format("Deleted save state for %s: %s", game.title_id, savestate_id));
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while deleting a save state");
+	}
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_import_savestate(
+	const char* title_id,
+	const char* source_path) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!source_path || !source_path[0])
+	{
+		set_error("A cache-staged save-state file is required");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+
+	const std::string source{source_path};
+	const std::string_view suffix = savestate_file_suffix(source);
+	if (suffix.empty() || !rpcs3::ios::is_resolved_within_path(g_cache_path, source))
+	{
+		set_error("Save states may be imported only from a native RPCS3 file staged under RPCS3's cache");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+
+	rpcs3::ios::installed_game game;
+	if (const auto result = validate_savestate_operation(title_id, "importing", &game);
+		result != RPCS3_IOS_OK)
+	{
+		return result;
+	}
+
+	try
+	{
+		if (!savestate_matches_title(source, game.title_id))
+		{
+			set_error(fmt::format(
+				"The selected file is not a valid RPCS3 save state for %s", game.title_id));
+			return RPCS3_IOS_SAVESTATE_INVALID;
+		}
+		const std::string destination = next_title_savestate_path(game, suffix);
+		if (destination.empty() || !fs::create_path(fs::get_parent_dir(destination)) ||
+			!copy_file_atomically(source, destination))
+		{
+			set_error("RPCS3 could not atomically import the selected save state");
+			return RPCS3_IOS_SAVESTATE_STORAGE_FAILED;
+		}
+		emit_log(4, fmt::format("Imported save state for %s", game.title_id));
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while importing a save state");
+	}
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_export_savestate(
+	const char* title_id,
+	const char* savestate_id,
+	const char* destination_path) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!savestate_id || !savestate_id[0] || !destination_path || !destination_path[0])
+	{
+		set_error("A save-state identifier and cache export path are required");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+
+	const std::string destination{destination_path};
+	if (!rpcs3::ios::is_resolved_within_path(g_cache_path, destination))
+	{
+		set_error("Save states may be exported only under RPCS3's cache");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+
+	rpcs3::ios::installed_game game;
+	if (const auto result = validate_savestate_operation(title_id, "exporting", &game);
+		result != RPCS3_IOS_OK)
+	{
+		return result;
+	}
+
+	try
+	{
+		const auto savestate = find_title_savestate(game, savestate_id);
+		if (!savestate)
+		{
+			set_error("The selected save state was not found");
+			return RPCS3_IOS_SAVESTATE_NOT_FOUND;
+		}
+		if (savestate_file_suffix(destination) != savestate_file_suffix(savestate->path))
+		{
+			set_error("The save-state export path must preserve the native RPCS3 file extension");
+			return RPCS3_IOS_INVALID_ARGUMENT;
+		}
+		if (!copy_file_atomically(savestate->path, destination))
+		{
+			set_error("RPCS3 could not export the selected save state");
+			return RPCS3_IOS_SAVESTATE_STORAGE_FAILED;
+		}
+		emit_log(4, fmt::format("Exported save state for %s: %s", game.title_id, savestate_id));
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error)
+	{
+		set_error(error.what());
+	}
+	catch (...)
+	{
+		set_error("Unknown exception while exporting a save state");
 	}
 	return RPCS3_IOS_INTERNAL_ERROR;
 }
