@@ -218,7 +218,12 @@ static u8* add_jit_memory(usz size, usz align)
 #ifndef CAN_OVERCOMMIT
 		// Commit more memory.
 #ifdef RPCS3_IOS
-		ensure(rpcs3::ios::jit::claim_runtime(Executable, olda, newa - olda));
+		if (!rpcs3::ios::jit::claim_runtime(Executable, olda, newa - olda)) [[unlikely]]
+		{
+			jit_log.fatal("Unable to extend iOS JIT %s runtime allocation (offset=0x%x, size=0x%x): %s",
+				Executable ? "code" : "data", olda, newa - olda, rpcs3::ios::jit::last_error());
+			return nullptr;
+		}
 #else
 		utils::memory_commit(pointer + olda, newa - olda, Prot);
 #endif
