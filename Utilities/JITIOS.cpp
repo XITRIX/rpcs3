@@ -9,10 +9,12 @@
 #include <algorithm>
 #include <cerrno>
 #include <csignal>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <mutex>
 #include <string>
+#include <string_view>
 
 #include <libkern/OSCacheControl.h>
 #include <mach/mach.h>
@@ -48,6 +50,7 @@ struct arena_state
 	usz peak_code_bytes = 0;
 	usz peak_data_bytes = 0;
 	rpcs3::ios::jit::arena_backend backend = rpcs3::ios::jit::arena_backend::legacy_debugger;
+	bool expanded = false;
 	bool prepared = false;
 	bool sealed = false;
 };
@@ -62,11 +65,46 @@ struct sigaction g_previous_trap_action{};
 // Keep the stable code/data layout out of the anonymous heap VM range. XNU
 // reserves tags 240-255 for application-specific mappings.
 constexpr int jit_vm_tag = VM_MAKE_TAG(VM_MEMORY_APPLICATION_SPECIFIC_1);
+constexpr char expanded_jit_arena_environment[] = "RPCS3_IOS_EXPANDED_JIT_ARENA";
+
+bool process_expanded_jit_arena_requested() noexcept
+{
+	const char* const value = std::getenv(expanded_jit_arena_environment);
+	return value && value[0] == '1' && value[1] == '\0';
+}
 
 void set_error(std::string message) noexcept
 {
 	std::lock_guard lock(g_error_mutex);
 	g_last_error = std::move(message);
+}
+
+// The caller holds g_arena_mutex, so read the allocator and counters directly
+// instead of taking another arena snapshot while reporting the failed request.
+void set_arena_exhaustion_error(bool executable, std::string_view allocation_kind,
+	usz size, usz alignment, usz required_offset = std::numeric_limits<usz>::max()) noexcept
+{
+	const auto& allocator = executable ? g_arena.code_allocator : g_arena.data_allocator;
+	const usz live = executable ? g_arena.live_code_bytes : g_arena.live_data_bytes;
+	const usz runtime = executable ? g_arena.runtime_code_bytes : g_arena.runtime_data_bytes;
+	const usz peak = executable ? g_arena.peak_code_bytes : g_arena.peak_data_bytes;
+	std::string message = "JIT_ARENA_EXHAUSTED: ";
+	message += executable ? "code" : "data";
+	message += " arena could not satisfy ";
+	message += allocation_kind;
+	message += " (requested=" + std::to_string(size);
+	message += " bytes, alignment=" + std::to_string(alignment);
+	if (required_offset != std::numeric_limits<usz>::max())
+	{
+		message += ", required_offset=" + std::to_string(required_offset);
+	}
+	message += ", free=" + std::to_string(allocator.free_bytes());
+	message += " bytes, largest_free=" + std::to_string(allocator.largest_free_bytes());
+	message += " bytes, live=" + std::to_string(live);
+	message += " bytes, runtime=" + std::to_string(runtime);
+	message += " bytes, peak=" + std::to_string(peak);
+	message += " bytes, capacity=" + std::to_string(g_arena.capacity) + " bytes)";
+	set_error(std::move(message));
 }
 
 void forward_trap(int signal, siginfo_t* info, void* context)
@@ -274,9 +312,19 @@ bool is_ready() noexcept
 
 bool prepare_arena() noexcept
 {
+	return prepare_arena(process_expanded_jit_arena_requested());
+}
+
+bool prepare_arena(bool expanded) noexcept
+{
 	std::lock_guard lock(g_arena_mutex);
 	if (g_arena.prepared)
 	{
+		if (g_arena.expanded != expanded)
+		{
+			set_error("JIT arena capacity policy changed after the arena was prepared; relaunch is required");
+			return false;
+		}
 		return true;
 	}
 
@@ -286,7 +334,7 @@ bool prepare_arena() noexcept
 		return false;
 	}
 
-	const usz capacity = choose_arena_capacity(physical_memory_size());
+	const usz capacity = choose_arena_capacity(physical_memory_size(), expanded);
 	if (!capacity || capacity > std::numeric_limits<usz>::max() / 2)
 	{
 		set_error("Invalid JIT arena capacity");
@@ -395,6 +443,7 @@ bool prepare_arena() noexcept
 	g_arena.capacity = capacity;
 	g_arena.preparation_chunks = preparation_chunks;
 	g_arena.backend = backend;
+	g_arena.expanded = expanded;
 	g_arena.prepared = true;
 	return true;
 }
@@ -477,7 +526,7 @@ bool claim_runtime(bool executable, usz offset, usz size) noexcept
 		{
 			allocator.release(allocation.offset, allocation.size);
 		}
-		set_error("The JIT arena is exhausted or fragmented at the runtime boundary");
+		set_arena_exhaustion_error(executable, "a runtime-boundary extension", size, 1, offset);
 		return false;
 	}
 
@@ -524,7 +573,7 @@ void* allocate(bool executable, usz size, usz alignment) noexcept
 	arena_range allocation;
 	if (!allocator.allocate_highest(size, alignment, allocation))
 	{
-		set_error("The JIT arena is exhausted by a temporary allocation");
+		set_arena_exhaustion_error(executable, "a temporary allocation", size, alignment);
 		return nullptr;
 	}
 
@@ -586,18 +635,23 @@ void flush(const void* executable, usz size) noexcept
 arena_statistics get_statistics() noexcept
 {
 	std::lock_guard lock(g_arena_mutex);
-	return {
-		g_arena.capacity,
-		g_arena.preparation_chunks,
-		g_arena.runtime_code_bytes,
-		g_arena.runtime_data_bytes,
-		g_arena.live_code_bytes,
-		g_arena.live_data_bytes,
-		g_arena.peak_code_bytes,
-		g_arena.peak_data_bytes,
-		g_arena.backend,
-		g_arena.sealed,
-	};
+	arena_statistics result;
+	result.capacity = g_arena.capacity;
+	result.preparation_chunks = g_arena.preparation_chunks;
+	result.runtime_code_bytes = g_arena.runtime_code_bytes;
+	result.runtime_data_bytes = g_arena.runtime_data_bytes;
+	result.live_code_bytes = g_arena.live_code_bytes;
+	result.live_data_bytes = g_arena.live_data_bytes;
+	result.free_code_bytes = g_arena.code_allocator.free_bytes();
+	result.free_data_bytes = g_arena.data_allocator.free_bytes();
+	result.largest_free_code_bytes = g_arena.code_allocator.largest_free_bytes();
+	result.largest_free_data_bytes = g_arena.data_allocator.largest_free_bytes();
+	result.peak_code_bytes = g_arena.peak_code_bytes;
+	result.peak_data_bytes = g_arena.peak_data_bytes;
+	result.backend = g_arena.backend;
+	result.expanded = g_arena.expanded;
+	result.sealed = g_arena.sealed;
+	return result;
 }
 
 const char* last_error() noexcept

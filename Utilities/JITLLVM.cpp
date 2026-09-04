@@ -14,7 +14,9 @@
 #include "JITIOS.h"
 #endif
 
+#include <atomic>
 #include <charconv>
+#include <limits>
 
 #if defined(__APPLE__) && !defined(RPCS3_IOS)
 #include <pthread.h>
@@ -61,6 +63,63 @@ LOG_CHANNEL(jit_log, "JIT");
 namespace
 {
 	thread_local std::string* g_llvm_fatal_message = nullptr;
+
+#ifdef RPCS3_IOS
+	std::atomic<usz> g_next_code_arena_warning{std::numeric_limits<usz>::max()};
+	std::atomic<usz> g_next_data_arena_warning{std::numeric_limits<usz>::max()};
+
+	void maybe_log_ios_jit_arena_pressure(bool executable)
+	{
+		const auto stats = rpcs3::ios::jit::get_statistics();
+		const usz free = executable ? stats.free_code_bytes : stats.free_data_bytes;
+		const usz largest_free = executable ? stats.largest_free_code_bytes : stats.largest_free_data_bytes;
+		const usz live = executable ? stats.live_code_bytes : stats.live_data_bytes;
+		const usz runtime = executable ? stats.runtime_code_bytes : stats.runtime_data_bytes;
+		const usz peak = executable ? stats.peak_code_bytes : stats.peak_data_bytes;
+		auto& next_warning = executable ? g_next_code_arena_warning : g_next_data_arena_warning;
+
+		usz threshold = next_warning.load(std::memory_order_relaxed);
+		if (threshold == std::numeric_limits<usz>::max())
+		{
+			const usz initial_threshold = stats.capacity / 4;
+			if (next_warning.compare_exchange_strong(threshold, initial_threshold,
+				std::memory_order_relaxed, std::memory_order_relaxed))
+			{
+				threshold = initial_threshold;
+			}
+		}
+
+		bool crossed_threshold = false;
+		while (threshold && free <= threshold)
+		{
+			constexpr usz final_warning_threshold = 1024 * 1024;
+			const usz following_threshold = threshold > final_warning_threshold ? threshold / 2 : 0;
+			if (next_warning.compare_exchange_weak(threshold, following_threshold,
+				std::memory_order_relaxed, std::memory_order_relaxed))
+			{
+				crossed_threshold = true;
+				threshold = following_threshold;
+			}
+		}
+
+		if (crossed_threshold)
+		{
+			constexpr usz mib = 1024 * 1024;
+			jit_log.warning(
+				"JIT_ARENA_LOW_SPACE: iOS JIT %s arena has live=%u MiB, free=%u MiB (%llu bytes), "
+				"largest_free=%u MiB (%llu bytes), runtime=%u MiB, peak=%u MiB, capacity=%u MiB",
+				executable ? "code" : "data",
+				live / mib,
+				free / mib,
+				static_cast<u64>(free),
+				largest_free / mib,
+				static_cast<u64>(largest_free),
+				runtime / mib,
+				peak / mib,
+				stats.capacity / mib);
+		}
+	}
+#endif
 
 	template <typename F>
 	bool run_recoverable_llvm(F&& func, std::string& error)
@@ -394,6 +453,7 @@ struct MemoryManager1 : llvm::RTDyldMemoryManager
 		u8* const local = ensure(static_cast<u8*>(rpcs3::ios::jit::writable(target, size)));
 		m_pending_code.push_back({local, target, size});
 		m_code.push_back({local, target, size});
+		maybe_log_ios_jit_arena_pressure(true);
 		return local;
 #else
 		u8* const target = allocate(code_ptr, m_code_mems, size, align, utils::protection::wx);
@@ -425,6 +485,7 @@ struct MemoryManager1 : llvm::RTDyldMemoryManager
 			return nullptr;
 		}
 		m_data.push_back({target, size});
+		maybe_log_ios_jit_arena_pressure(false);
 		return target;
 #else
 		if (is_ro)

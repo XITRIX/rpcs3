@@ -9,8 +9,12 @@ int main()
 
 	static_assert(choose_arena_capacity(0) == 384 * mib);
 	static_assert(choose_arena_capacity(4ull * 1024 * mib) == 256 * mib);
+	static_assert(choose_arena_capacity(4ull * 1024 * mib, true) == 512 * mib);
 	static_assert(choose_arena_capacity(6ull * 1024 * mib) == 384 * mib);
+	static_assert(choose_arena_capacity(6ull * 1024 * mib, true) == 512 * mib);
 	static_assert(choose_arena_capacity(8ull * 1024 * mib) == 512 * mib);
+	static_assert(choose_arena_capacity(8'000'000'000ull) == 448 * mib);
+	static_assert(choose_arena_capacity(8'000'000'000ull, true) == 512 * mib);
 
 	arena_allocator allocator{1024};
 	arena_range low;
@@ -24,6 +28,7 @@ int main()
 	assert(allocator.allocate_lowest(100, 128, aligned));
 	assert(aligned.offset == 128);
 	assert(allocator.free_bytes() == 744);
+	assert(allocator.largest_free_bytes() == 668);
 	assert(!allocator.allocate_lowest(1, 3, aligned));
 	assert(!allocator.release(64, 128));
 
@@ -31,11 +36,12 @@ int main()
 	assert(allocator.release(aligned.offset, aligned.size));
 	assert(allocator.release(high.offset, high.size));
 	assert(allocator.free_bytes() == 1024);
+	assert(allocator.largest_free_bytes() == 1024);
 	assert(!allocator.release(high.offset, high.size));
 
 	arena_range whole;
 	assert(allocator.allocate_highest(1024, 1, whole));
-	assert(whole.offset == 0 && allocator.free_bytes() == 0);
+	assert(whole.offset == 0 && allocator.free_bytes() == 0 && allocator.largest_free_bytes() == 0);
 	assert(!allocator.allocate_lowest(1, 1, low));
 	assert(allocator.release(whole.offset, whole.size));
 	assert(allocator.free_bytes() == 1024);

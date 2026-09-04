@@ -30,6 +30,7 @@ int main()
 	static_assert(sizeof(rpcs3_ios_setting_info) == 104);
 	static_assert(sizeof(rpcs3_ios_setting_option) == 32);
 	static_assert(sizeof(rpcs3_ios_performance_metrics) == 48);
+	static_assert(sizeof(rpcs3_ios_config) == 56);
 	static_assert(RPCS3_IOS_PERFORMANCE_FPS_VALID == 1);
 	static_assert(RPCS3_IOS_PERFORMANCE_MEMORY_VALID == 8);
 	static_assert(RPCS3_IOS_SETTING_BOOLEAN == 0);
@@ -45,6 +46,13 @@ int main()
 	config.application_support_path = "/tmp/rpcs3-support";
 	config.cache_path = "/tmp/rpcs3-cache";
 	assert(validate_config_contract(&config) == RPCS3_IOS_OK);
+	config.expanded_jit_arena = 2;
+	assert(validate_config_contract(&config) == RPCS3_IOS_INVALID_ARGUMENT);
+	config.expanded_jit_arena = 1;
+	assert(validate_config_contract(&config) == RPCS3_IOS_OK);
+	config.reserved = 1;
+	assert(validate_config_contract(&config) == RPCS3_IOS_INVALID_ARGUMENT);
+	config.reserved = 0;
 	config.cache_path = "relative";
 	assert(validate_config_contract(&config) == RPCS3_IOS_INVALID_ARGUMENT);
 

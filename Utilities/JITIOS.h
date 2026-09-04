@@ -35,14 +35,20 @@ struct arena_statistics
 	usz runtime_data_bytes = 0;
 	usz live_code_bytes = 0;
 	usz live_data_bytes = 0;
+	usz free_code_bytes = 0;
+	usz free_data_bytes = 0;
+	usz largest_free_code_bytes = 0;
+	usz largest_free_data_bytes = 0;
 	usz peak_code_bytes = 0;
 	usz peak_data_bytes = 0;
 	arena_backend backend = arena_backend::legacy_debugger;
+	bool expanded = false;
 	bool sealed = false;
 };
 
 bool is_ready() noexcept;
 bool prepare_arena() noexcept;
+bool prepare_arena(bool expanded) noexcept;
 bool seal_arena() noexcept;
 void* runtime_memory(bool executable) noexcept;
 usz arena_capacity() noexcept;
