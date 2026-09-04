@@ -134,6 +134,16 @@ public:
 		return result;
 	}
 
+	usz largest_free_bytes() const noexcept
+	{
+		usz result = 0;
+		for (const arena_range& item : m_free)
+		{
+			result = std::max(result, item.size);
+		}
+		return result;
+	}
+
 private:
 	static bool is_power_of_two(usz value) noexcept
 	{
