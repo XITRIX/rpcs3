@@ -369,6 +369,32 @@ void emit_log(int32_t level, std::string_view message)
 	g_config.log_callback(g_config.user_context, level, terminated.c_str());
 }
 
+void emit_jit_arena_statistics(std::string_view phase)
+{
+	constexpr usz mib = 1024 * 1024;
+	const auto stats = rpcs3::ios::jit::get_statistics();
+	emit_log(4, fmt::format(
+		"iOS JIT arena %s: code live=%u MiB, free=%u MiB (%llu bytes), largest_free=%u MiB (%llu bytes), "
+		"runtime=%u MiB, peak=%u MiB; data live=%u MiB, free=%u MiB (%llu bytes), "
+		"largest_free=%u MiB (%llu bytes), runtime=%u MiB, peak=%u MiB; capacity=%u MiB each",
+		phase,
+		stats.live_code_bytes / mib,
+		stats.free_code_bytes / mib,
+		static_cast<u64>(stats.free_code_bytes),
+		stats.largest_free_code_bytes / mib,
+		static_cast<u64>(stats.largest_free_code_bytes),
+		stats.runtime_code_bytes / mib,
+		stats.peak_code_bytes / mib,
+		stats.live_data_bytes / mib,
+		stats.free_data_bytes / mib,
+		static_cast<u64>(stats.free_data_bytes),
+		stats.largest_free_data_bytes / mib,
+		static_cast<u64>(stats.largest_free_data_bytes),
+		stats.runtime_data_bytes / mib,
+		stats.peak_data_bytes / mib,
+		stats.capacity / mib));
+}
+
 class callback_log_listener final : public logs::listener
 {
 public:
@@ -1260,7 +1286,8 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		g_lifecycle.finish_initialize(false);
 		return RPCS3_IOS_JIT_UNAVAILABLE;
 	}
-	if (!rpcs3::ios::jit::prepare_arena() || !rpcs3::ios::jit::seal_arena())
+	if (!rpcs3::ios::jit::prepare_arena(config->expanded_jit_arena != 0) ||
+		!rpcs3::ios::jit::seal_arena())
 	{
 		set_error(rpcs3::ios::jit::last_error());
 		g_lifecycle.finish_initialize(false);
@@ -1309,14 +1336,17 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		if (jit_stats.backend == rpcs3::ios::jit::arena_backend::universal_mirrored)
 		{
 			emit_log(4, fmt::format(
-				"Prepared and sealed a %u MiB Universal JIT arena in %u bounded command-1 chunks; StikDebug may now disconnect",
-				jit_stats.capacity / (1024 * 1024), jit_stats.preparation_chunks));
+				"Prepared and sealed a %u MiB Universal JIT arena using the %s capacity policy in %u bounded command-1 chunks; StikDebug may now disconnect",
+				jit_stats.capacity / (1024 * 1024),
+				jit_stats.expanded ? "expanded" : "standard",
+				jit_stats.preparation_chunks));
 		}
 		else
 		{
 			emit_log(4, fmt::format(
-				"Prepared and sealed a %u MiB legacy debugger-enabled JIT arena; no Universal commands were required",
-				jit_stats.capacity / (1024 * 1024)));
+				"Prepared and sealed a %u MiB legacy debugger-enabled JIT arena using the %s capacity policy; no Universal commands were required",
+				jit_stats.capacity / (1024 * 1024),
+				jit_stats.expanded ? "expanded" : "standard"));
 		}
 		Emu.SetCallbacks(make_callbacks());
 		Emu.SetSupportedRenderers({video_renderer::vulkan});
@@ -1333,6 +1363,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		g_accept_display_surfaces = true;
 		g_accept_pad_state = true;
 		emit_log(4, "RPCS3 Emu.Init completed with the iOS Vulkan/MoltenVK and RemoteIO frontend");
+		emit_jit_arena_statistics("after core initialization");
 		return RPCS3_IOS_OK;
 	}
 	catch (const std::exception& error)
@@ -4694,6 +4725,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_stop_emulation(void) noexcept
 		}
 
 		rpcs3::ios::shared_pad_feedback().clear();
+		emit_jit_arena_statistics("after emulation stop");
 		emit_log(4, "PlayStation 3 emulation stopped; RPCS3Core remains initialized");
 		return RPCS3_IOS_OK;
 	}
@@ -4754,12 +4786,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_shutdown(void) noexcept
 		g_rpcn_client.reset();
 		g_cfg_rpcn.clear_runtime_credentials();
 		g_display_surface.clear();
-		const auto jit_stats = rpcs3::ios::jit::get_statistics();
-		emit_log(4, fmt::format(
-			"Universal JIT arena peak usage: code %u MiB, data %u MiB of %u MiB each",
-			jit_stats.peak_code_bytes / (1024 * 1024),
-			jit_stats.peak_data_bytes / (1024 * 1024),
-			jit_stats.capacity / (1024 * 1024)));
+		emit_jit_arena_statistics("before core shutdown completion");
 		logs::listener::sync_all();
 		g_lifecycle.finish_shutdown(true);
 		emit_log(4, "RPCS3Core shutdown completed");
