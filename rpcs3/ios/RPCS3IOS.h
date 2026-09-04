@@ -139,6 +139,8 @@ typedef struct rpcs3_ios_config
     rpcs3_ios_log_callback log_callback;
     rpcs3_ios_main_thread_callback main_thread_callback;
     void* user_context;
+    uint32_t expanded_jit_arena;
+    uint32_t reserved;
 } rpcs3_ios_config;
 
 // The wrapper owns metal_layer for the complete attached lifetime. Width and
