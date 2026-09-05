@@ -25,6 +25,7 @@ def main():
     parser.add_argument("--llvm-config", default=os.environ.get("LLVM_CONFIG", shutil.which("llvm-config")))
     parser.add_argument("--output-dir", type=pathlib.Path)
     parser.add_argument("--benchmark", action="store_true")
+    parser.add_argument("--interrupts", action="store_true", help="test the generated interrupt fast path instead of checksum reduction")
     args = parser.parse_args()
     if platform.machine() not in ("arm64", "aarch64"):
         parser.error("generated-code execution requires an ARM64 host")
@@ -44,14 +45,15 @@ def main():
     with tempfile.TemporaryDirectory(prefix="rpcs3-spu-checksum-") as temporary:
         output = (args.output_dir or pathlib.Path(temporary)).resolve()
         output.mkdir(parents=True, exist_ok=True)
-        generator = output / "SPUChecksumCodegen"
-        runner = output / "SPUChecksumTests"
+        probe = "SPUInterrupt" if args.interrupts else "SPUChecksum"
+        generator = output / f"{probe}Codegen"
+        runner = output / f"{probe}Tests"
         ir = output / "checksum.ll"
         assembly = output / "checksum.s"
         obj = output / "checksum.o"
         flags = shlex.split(llvm_config("--cxxflags", "--ldflags", "--libs", "core", "--system-libs"))
         run([cxx, *flags, "-std=c++20", "-O2", "-I", sources.parents[1],
-             sources / "SPUChecksumCodegen.cpp", "-o", generator])
+             sources / f"{probe}Codegen.cpp", "-o", generator])
         with ir.open("w") as stream:
             run([generator], stdout=stream)
 
@@ -62,8 +64,8 @@ def main():
         run([llc, "-O2", *target, ir, "-o", assembly])
         run([llc, "-O2", *target, "-filetype=obj", ir, "-o", obj])
         run([cxx, "-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror",
-             sources / "SPUChecksumTests.cpp", obj, "-o", runner])
-        print(f"Executing production checksum emitter with host LLVM {version}", flush=True)
+             sources / f"{probe}Tests.cpp", obj, "-o", runner])
+        print(f"Executing production {probe} emitter with host LLVM {version}", flush=True)
         run([runner, *(["--benchmark"] if args.benchmark else [])])
         if args.output_dir:
             print(f"Generated IR, assembly, object, and executables: {output}")

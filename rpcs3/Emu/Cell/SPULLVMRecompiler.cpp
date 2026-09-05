@@ -63,6 +63,7 @@ const extern spu_decoder<spu_iflag> g_spu_iflag;
 #ifdef ARCH_ARM64
 #include "Emu/CPU/Backends/AArch64/AArch64JIT.h"
 #include "Emu/CPU/Backends/AArch64/SPUChecksum.h"
+#include "Emu/CPU/Backends/AArch64/SPUInterrupts.h"
 
 namespace
 {
@@ -9787,7 +9788,15 @@ public:
 
 		if (op.e)
 		{
+#ifdef ARCH_ARM64
+			addr.value = aarch64::spu_check_interrupts(*m_ir, spu_ptr(&spu_thread::ch_events),
+				spu_ptr(&spu_thread::interrupts_enabled), addr.value, SPU_EVENT_INTR_BUSY_CHECK, [&]
+				{
+					return call("spu_check_interrupts", &exec_check_interrupts, m_thread, addr.value);
+				});
+#else
 			addr.value = call("spu_check_interrupts", &exec_check_interrupts, m_thread, addr.value);
+#endif
 		}
 
 		if (op.d)
