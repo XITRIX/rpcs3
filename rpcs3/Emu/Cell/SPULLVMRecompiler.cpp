@@ -62,6 +62,7 @@ const extern spu_decoder<spu_iflag> g_spu_iflag;
 
 #ifdef ARCH_ARM64
 #include "Emu/CPU/Backends/AArch64/AArch64JIT.h"
+#include "Emu/CPU/Backends/AArch64/SPUChecksum.h"
 
 namespace
 {
@@ -2230,23 +2231,15 @@ public:
 					check_iterations++;
 				}
 
-				llvm::Value* elem = nullptr;
+				std::array<llvm::Value*, 4> differences;
 
 				for (u32 part = 0; part < 4; part++)
 				{
 					auto* const_vector = ConstantDataVector::get(m_context, llvm::ArrayRef(checksum + part * 4, 4));
-					llvm::Value* acc = m_ir->CreateXor(checksum_parts[part], const_vector);
-					acc = m_ir->CreateBitCast(acc, get_type<u64[2]>());
-
-					for (u32 i = 0; i < 2; i++)
-					{
-						const auto lane = m_ir->CreateExtractElement(acc, i);
-						elem = elem ? m_ir->CreateOr(elem, lane) : lane;
-					}
+					differences[part] = m_ir->CreateXor(checksum_parts[part], const_vector);
 				}
 
-				// Compare result with zero
-				const auto cond = m_ir->CreateICmpNE(elem, m_ir->getInt64(0));
+				const auto cond = aarch64::spu_checksum_mismatch(*m_ir, differences);
 				m_ir->CreateCondBr(cond, label_diff, label_body, m_md_unlikely);
 #endif
 			}
