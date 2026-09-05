@@ -5046,15 +5046,31 @@ public:
 		set_vr(op.rt, insert(splat<u32[4]>(0), 3, res));
 	}
 
-	static void exec_wrch(spu_thread* _spu, u32 ch, u32 value)
+	static void exec_wrch_result(spu_thread* _spu, bool completed)
 	{
-		if (!_spu->set_ch_value(ch, value) || _spu->state & cpu_flag::again)
+		if (!completed || _spu->state & cpu_flag::again)
 		{
 			spu_runtime::g_escape(_spu);
 		}
 
 		static_cast<void>(_spu->test_stopped());
 	}
+
+	static void exec_wrch(spu_thread* _spu, u32 ch, u32 value)
+	{
+		exec_wrch_result(_spu, _spu->set_ch_value(ch, value));
+	}
+
+#ifdef ARCH_ARM64
+	static void exec_mfc_wrch(spu_thread* _spu, u32 value)
+	{
+		// The channel is known even when the command is not. Preserve the
+		// generic WRCH retry/stop contract; exec_mfc_cmd assumes no abort.
+		spu_log.trace("set_ch_value(ch=%s, value=0x%x)", "MFC_Cmd", value);
+		_spu->ch_mfc_cmd.cmd = MFC(value & 0xff);
+		exec_wrch_result(_spu, _spu->process_mfc_cmd());
+	}
+#endif
 
 	static void exec_list_unstall(spu_thread* _spu, u32 tag)
 	{
@@ -5605,6 +5621,13 @@ public:
 
 		update_pc();
 		ensure_gpr_stores();
+#ifdef ARCH_ARM64
+		if (op.ra == MFC_Cmd)
+		{
+			call("spu_write_mfc_command", &exec_mfc_wrch, m_thread, val.value);
+			return;
+		}
+#endif
 		call("spu_write_channel", &exec_wrch, m_thread, m_ir->getInt32(op.ra), val.value);
 	}
 
