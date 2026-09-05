@@ -3,7 +3,6 @@
 #include "GameLibrary.h"
 
 #include "Emu/System.h"
-#include "Emu/VFS.h"
 #include "Emu/system_utils.hpp"
 #include "Loader/TROPUSR.h"
 #include "Utilities/File.h"
@@ -131,8 +130,10 @@ std::vector<trophy_info> installed_trophies(std::string_view title_id)
 
 	const std::unordered_set<std::string> expected_sets = source_trophy_sets(*game);
 	const std::string expected_title = normalized_title(game->title);
-	const std::string trophy_vfs_root = "/dev_hdd0/home/" + Emu.GetUsr() + "/trophy/";
-	const std::string trophy_root = vfs::get(trophy_vfs_root);
+	// Stop clears the session VFS manager. Frontend enumeration must use the
+	// configured host directory, which remains available while the core is idle.
+	const std::string trophy_root = rpcs3::utils::get_hdd0_dir() +
+		"home/" + Emu.GetUsr() + "/trophy/";
 
 	for (auto&& entry : fs::dir{trophy_root})
 	{
@@ -157,7 +158,7 @@ std::vector<trophy_info> installed_trophies(std::string_view title_id)
 		}
 
 		TROPUSRLoader user_trophies;
-		if (!user_trophies.LoadExisting(trophy_vfs_root + entry.name + "/TROPUSR.DAT"))
+		if (!user_trophies.LoadExistingFromHostPath(physical_set_path + "/TROPUSR.DAT"))
 		{
 			continue;
 		}
