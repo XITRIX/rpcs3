@@ -97,8 +97,9 @@ public:
 
 	[[nodiscard]] load_result Load(std::string_view filepath, std::string_view configpath);
 	// Loads an already registered trophy database without generating, repairing,
-	// or saving it. Frontends use this path for read-only trophy presentation.
-	[[nodiscard]] bool LoadExisting(std::string_view filepath);
+	// or saving it. Accepts a resolved host path so frontend presentation works
+	// before boot and after Stop destroys the session VFS manager.
+	[[nodiscard]] bool LoadExistingFromHostPath(std::string_view filepath);
 	[[nodiscard]] bool Save(std::string_view filepath);
 
 	[[nodiscard]] u32 GetTrophiesCount() const;
