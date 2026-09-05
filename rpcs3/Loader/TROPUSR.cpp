@@ -74,13 +74,13 @@ TROPUSRLoader::load_result TROPUSRLoader::Load(std::string_view filepath, std::s
 	return res;
 }
 
-bool TROPUSRLoader::LoadExisting(std::string_view filepath)
+bool TROPUSRLoader::LoadExistingFromHostPath(std::string_view filepath)
 {
 	m_tableHeaders.clear();
 	m_table4.clear();
 	m_table6.clear();
 
-	if (!m_file.open(vfs::get(filepath)) ||
+	if (!m_file.open(std::string{filepath}) ||
 		!LoadHeader() || !LoadTableHeaders() || !LoadTables())
 	{
 		m_file.close();
