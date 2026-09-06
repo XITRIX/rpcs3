@@ -143,3 +143,14 @@ mkdir -p "${OUTPUT_ROOT}"
     "${SCRIPT_DIR}/IOSReservationLockPolicyTests.cpp" \
     -o "${OUTPUT_ROOT}/IOSReservationLockPolicyTests"
 "${OUTPUT_ROOT}/IOSReservationLockPolicyTests"
+
+# Execute the production NEON reservation scan only on an ARM64 host.
+case "$(uname -m)" in
+    arm64|aarch64)
+        "${CXX_COMPILER}" -std=c++20 -O2 -Wall -Wextra -Werror \
+            -I "${SOURCE_ROOT}/rpcs3" \
+            "${SCRIPT_DIR}/SPUReservationScanTests.cpp" \
+            -o "${OUTPUT_ROOT}/SPUReservationScanTests"
+        "${OUTPUT_ROOT}/SPUReservationScanTests"
+        ;;
+esac
