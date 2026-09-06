@@ -27,6 +27,9 @@
 
 #ifdef RPCS3_IOS
 #include "ios/RPCS3IOSExperimentalPolicy.h"
+#ifdef ARCH_ARM64
+#include "Emu/CPU/Backends/AArch64/SPUReservationScan.h"
+#endif
 #endif
 
 #include "Emu/RSX/Core/RSXReservationLock.hpp"
@@ -343,6 +346,9 @@ static FORCE_INLINE void mov_rdata_avx(__m256i* dst, const __m256i* src)
 // Returning its position, or -1 if that is not the situation
 static inline usz scan16_rdata(const decltype(spu_thread::rdata)& _lhs, const decltype(spu_thread::rdata)& _rhs)
 {
+#if defined(ARCH_ARM64) && defined(RPCS3_IOS)
+	return aarch64::spu_scan16_rdata(_lhs, _rhs);
+#else
 	const auto lhs = reinterpret_cast<const v128*>(_lhs);
 	const auto rhs = reinterpret_cast<const v128*>(_rhs);
 
@@ -364,6 +370,7 @@ static inline usz scan16_rdata(const decltype(spu_thread::rdata)& _lhs, const de
 	}
 
 	return umax;
+#endif
 }
 
 #ifdef _MSC_VER
