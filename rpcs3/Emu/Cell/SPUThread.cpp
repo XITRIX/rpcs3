@@ -27,6 +27,7 @@
 
 #ifdef RPCS3_IOS
 #include "ios/RPCS3IOSExperimentalPolicy.h"
+#include "ios/IOSDMACopy.h"
 #ifdef ARCH_ARM64
 #include "Emu/CPU/Backends/AArch64/SPUReservationScan.h"
 #endif
@@ -1850,6 +1851,7 @@ spu_thread::spu_thread(lv2_spu_group* group, u32 index, std::string_view name, u
 #ifdef RPCS3_IOS
 	ios_getllar_backoff = rpcs3::ios::get_experimental_policy().getllar_backoff;
 	ios_mobile_spu_scheduling = rpcs3::ios::get_experimental_policy().mobile_spu_scheduling;
+	ios_dma_copy_specialization = rpcs3::ios::get_experimental_policy().dma_copy_specialization;
 #endif
 
 	if (g_cfg.core.mfc_debug)
@@ -1917,6 +1919,7 @@ spu_thread::spu_thread(utils::serial& ar, lv2_spu_group* group)
 #ifdef RPCS3_IOS
 	ios_getllar_backoff = rpcs3::ios::get_experimental_policy().getllar_backoff;
 	ios_mobile_spu_scheduling = rpcs3::ios::get_experimental_policy().mobile_spu_scheduling;
+	ios_dma_copy_specialization = rpcs3::ios::get_experimental_policy().dma_copy_specialization;
 #endif
 
 	if (g_cfg.core.mfc_debug)
@@ -2277,6 +2280,13 @@ void spu_thread::do_dma_transfer(spu_thread* _this, const spu_mfc_cmd& args, u8*
 				}
 				default:
 				{
+#ifdef RPCS3_IOS
+					if (size0 >= 64 && _this && _this->ios_dma_copy_specialization)
+					{
+						rpcs3::ios::copy_dma_vectors<v128>(dst0, src, size0);
+						break;
+					}
+#endif
 					auto dst1 = dst0;
 					auto src1 = src;
 					auto size1 = size0;
@@ -2611,6 +2621,14 @@ void spu_thread::do_dma_transfer(spu_thread* _this, const spu_mfc_cmd& args, u8*
 			{
 				vm::range_lock(range_lock, eal, size);
 
+#ifdef RPCS3_IOS
+				if (size >= 64 && _this && _this->ios_dma_copy_specialization)
+				{
+					rpcs3::ios::copy_dma_vectors<v128>(dst, src, size);
+					range_lock->release(0);
+					break;
+				}
+#endif
 				while (size)
 				{
 					*reinterpret_cast<v128*>(dst) = *reinterpret_cast<const v128*>(src);
