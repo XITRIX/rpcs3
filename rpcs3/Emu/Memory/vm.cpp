@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "vm_locking.h"
 #include "VMLayoutPolicy.h"
+#include "VMReservationRange.h"
 #include "vm_ptr.h"
 #include "vm_reservation.h"
 
@@ -575,27 +576,10 @@ namespace vm
 						return 0;
 					}
 
-					// Split and check every 64K page separately
-					for (u64 hi = addr2 >> 16, max = (addr2 + size2 - 1) >> 16; hi <= max; hi++)
+					return reservation_range_overlaps(point, static_cast<u32>(addr2), size2, [](u64 page)
 					{
-						u64 addr3 = addr2;
-						u64 size3 = std::min<u64>(addr2 + size2, utils::align(addr2, 0x10000)) - addr2;
-
-						if (u64 is_shared = g_shmem[hi]) [[unlikely]]
-						{
-							addr3 = static_cast<u16>(addr2) | is_shared;
-						}
-
-						if (point - (addr3 / 128) <= (addr3 + size3 - 1) / 128 - (addr3 / 128)) [[unlikely]]
-						{
-							return 1;
-						}
-
-						addr2 += size3;
-						size2 -= static_cast<u32>(size3);
-					}
-
-					return 0;
+						return +g_shmem[page];
+					}) ? 1 : 0;
 				});
 
 				if (!to_clear) [[likely]]
