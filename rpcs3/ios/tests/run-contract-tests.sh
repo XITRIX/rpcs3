@@ -166,3 +166,9 @@ case "$(uname -m)" in
         "${OUTPUT_ROOT}/SPUReservationScanTests"
         ;;
 esac
+
+"${CXX_COMPILER}" -std=c++20 -O2 -Wall -Wextra -Werror \
+    -I "${SOURCE_ROOT}/rpcs3" \
+    "${SCRIPT_DIR}/BoundedSwizzleTests.cpp" \
+    -o "${OUTPUT_ROOT}/BoundedSwizzleTests"
+"${OUTPUT_ROOT}/BoundedSwizzleTests"
