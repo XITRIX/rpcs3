@@ -6,6 +6,7 @@
 #include "Utilities/File.h"
 #ifdef RPCS3_IOS
 #include "ios/RPCS3IOSBootProgress.h"
+#include "Emu/cache_utils.hpp"
 #endif
 #include <vulkan/vulkan_core.h>
 #ifdef __APPLE__
@@ -38,7 +39,22 @@ namespace vk
 
 		std::string get_pipeline_cache_path()
 		{
+#ifdef RPCS3_IOS
+			// MoltenVK eagerly compiles every cached Metal library on restore.
+			// Use the same executable-scoped root as RPCS3's native shader cache
+			// so one title never warms the entire library's accumulated shaders.
+			if (g_cfg.video.disable_on_disk_shader_cache)
+			{
+				return {};
+			}
+			if (std::string root = rpcs3::cache::get_ppu_cache(); !root.empty())
+			{
+				return root + "shaders_cache/vk_pipeline_cache.bin";
+			}
+			return {}; // Guestless sessions keep only the in-memory cache.
+#else
 			return fs::get_cache_dir() + "vk_pipeline_cache.bin";
+#endif
 		}
 	}
 
@@ -58,11 +74,20 @@ namespace vk
 		{
 			return static_cast<u64>(std::chrono::duration_cast<std::chrono::milliseconds>(clock::now() - start).count());
 		};
+		m_pipeline_cache_path = get_pipeline_cache_path();
 		const auto read_started = clock::now();
 		rsx_log.notice("Vulkan driver pipeline cache: starting file read and validation.");
 		std::vector<u8> initial_data;
-		const std::string path = get_pipeline_cache_path();
-		fs::file cache_file{path, fs::read};
+		fs::file cache_file;
+		if (!m_pipeline_cache_path.empty())
+		{
+			rsx_log.notice("Vulkan driver pipeline cache path: %s", m_pipeline_cache_path);
+			cache_file.open(m_pipeline_cache_path, fs::read);
+		}
+		else
+		{
+			rsx_log.notice("Vulkan driver pipeline cache: using an in-memory cache for this session.");
+		}
 
 		if (cache_file)
 		{
@@ -151,7 +176,7 @@ namespace vk
 
 	void render_device::save_pipeline_cache() const
 	{
-		if (!dev || !m_pipeline_cache)
+		if (!dev || !m_pipeline_cache || m_pipeline_cache_path.empty())
 		{
 			return;
 		}
@@ -200,8 +225,8 @@ namespace vk
 		header.device_id = pgpu->props.deviceID;
 		std::memcpy(header.pipeline_cache_uuid, pgpu->props.pipelineCacheUUID, VK_UUID_SIZE);
 
-		const std::string path = get_pipeline_cache_path();
-		if (!fs::create_path(fs::get_cache_dir()))
+		const std::string& path = m_pipeline_cache_path;
+		if (!fs::create_path(fs::get_parent_dir(path)))
 		{
 			rsx_log.warning("Vulkan driver pipeline cache directory could not be created.");
 			return;
@@ -230,6 +255,7 @@ namespace vk
 		save_pipeline_cache();
 		vkDestroyPipelineCache(dev, m_pipeline_cache, nullptr);
 		m_pipeline_cache = VK_NULL_HANDLE;
+		m_pipeline_cache_path.clear();
 	}
 
 	void physical_device::get_physical_device_features(bool allow_extensions)
