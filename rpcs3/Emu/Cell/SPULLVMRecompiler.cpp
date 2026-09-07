@@ -9971,6 +9971,9 @@ public:
 
 
 #ifdef ARCH_X64
+		// Packing every byte into a scalar mask is cheap on x86. ARM64 uses
+		// the preferred-lane test below instead of a NEON mask reduction.
+
 		// Check sign bit instead (optimization)
 		if (match_vr<s32[4], s64[2]>(op.rt, [&](auto c, auto MP)
 		{
@@ -10034,6 +10037,9 @@ public:
 
 
 #ifdef ARCH_X64
+		// Packing every byte into a scalar mask is cheap on x86. ARM64 uses
+		// the preferred-lane test below instead of a NEON mask reduction.
+
 		// Check sign bit instead (optimization)
 		if (match_vr<s32[4], s64[2]>(op.rt, [&](auto c, auto MP)
 		{
@@ -10067,6 +10073,9 @@ public:
 		if (m_block) m_block->block_end = m_ir->GetInsertBlock();
 
 #ifdef ARCH_X64
+		// Packing every byte into a scalar mask is cheap on x86. ARM64 uses
+		// the preferred-lane test below instead of a NEON mask reduction.
+
 		// Check sign bits of 2 vector elements (optimization)
 		if (match_vr<s8[16], s16[8], s32[4], s64[2]>(op.rt, [&](auto c, auto MP)
 		{
@@ -10100,6 +10109,9 @@ public:
 		if (m_block) m_block->block_end = m_ir->GetInsertBlock();
 
 #ifdef ARCH_X64
+		// Packing every byte into a scalar mask is cheap on x86. ARM64 uses
+		// the preferred-lane test below instead of a NEON mask reduction.
+
 		// Check sign bits of 2 vector elements (optimization)
 		if (match_vr<s8[16], s16[8], s32[4], s64[2]>(op.rt, [&](auto c, auto MP)
 		{
@@ -10299,6 +10311,9 @@ public:
 
 
 #ifdef ARCH_X64
+		// Packing every byte into a scalar mask is cheap on x86. ARM64 uses
+		// the preferred-lane test below instead of a NEON mask reduction.
+
 		// Check sign bit instead (optimization)
 		if (match_vr<s32[4], s64[2]>(op.rt, [&](auto c, auto MP)
 		{
@@ -10376,6 +10391,9 @@ public:
 		}
 
 #ifdef ARCH_X64
+		// Packing every byte into a scalar mask is cheap on x86. ARM64 uses
+		// the preferred-lane test below instead of a NEON mask reduction.
+
 		// Check sign bit instead (optimization)
 		if (match_vr<s32[4], s64[2]>(op.rt, [&](auto c, auto MP)
 		{
@@ -10422,6 +10440,9 @@ public:
 		const u32 target = spu_branch_target(m_pos, op.i16);
 
 #ifdef ARCH_X64
+		// Packing every byte into a scalar mask is cheap on x86. ARM64 uses
+		// the preferred-lane test below instead of a NEON mask reduction.
+
 		// Check sign bits of 2 vector elements (optimization)
 		if (match_vr<s8[16], s16[8], s32[4], s64[2]>(op.rt, [&](auto c, auto MP)
 		{
@@ -10468,6 +10489,9 @@ public:
 		const u32 target = spu_branch_target(m_pos, op.i16);
 
 #ifdef ARCH_X64
+		// Packing every byte into a scalar mask is cheap on x86. ARM64 uses
+		// the preferred-lane test below instead of a NEON mask reduction.
+
 		// Check sign bits of 2 vector elements (optimization)
 		if (match_vr<s8[16], s16[8], s32[4], s64[2]>(op.rt, [&](auto c, auto MP)
 		{

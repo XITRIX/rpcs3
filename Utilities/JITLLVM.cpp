@@ -12,6 +12,7 @@
 
 #ifdef RPCS3_IOS
 #include "JITIOS.h"
+#include "JITProfile.h"
 #endif
 
 #include <atomic>
@@ -247,6 +248,17 @@ static u64 make_null_function(const std::string& name)
 
 struct JITAnnouncer : llvm::JITEventListener
 {
+#ifdef RPCS3_IOS
+	jit_profile::pending_batch pending;
+
+	void finalized(bool success)
+	{
+		pending.complete(jit_profile::spu_writer(), success);
+	}
+#else
+	void finalized(bool) {}
+#endif
+
 	void notifyObjectLoaded(u64, const llvm::object::ObjectFile& obj, const llvm::RuntimeDyld::LoadedObjectInfo& info) override
 	{
 		using namespace llvm;
@@ -277,6 +289,14 @@ struct JITAnnouncer : llvm::JITEventListener
 				continue;
 
 			jit_announce(*addr, size, {name->data(), name->size()});
+#ifdef RPCS3_IOS
+			const std::string_view label{name->data(), name->size()};
+			if (jit_profile::spu_writer().enabled() && size &&
+				(label.starts_with("__spu-") || label.starts_with("___spu-")))
+			{
+				pending.add(*addr, size, label);
+			}
+#endif
 		}
 	}
 };
@@ -971,7 +991,8 @@ jit_compiler::jit_compiler(const std::unordered_map<std::string, u64>& _link, st
 	if (!_link.empty() || !(flags & 0x1))
 	{
 		m_engine->RegisterJITEventListener(llvm::JITEventListener::createIntelJITEventListener());
-		m_engine->RegisterJITEventListener(new JITAnnouncer);
+		m_announcer = std::make_unique<JITAnnouncer>();
+		m_engine->RegisterJITEventListener(m_announcer.get());
 	}
 
 	if (!m_engine)
@@ -993,6 +1014,7 @@ jit_compiler& jit_compiler::operator=(thread_state s) noexcept
 	{
 		// Release resources explicitly
 		m_engine.reset();
+		m_announcer.reset();
 		m_context.reset();
 	}
 
@@ -1033,6 +1055,7 @@ bool jit_compiler::try_add(std::unique_ptr<llvm::Module> _module, const std::str
 		m_engine->generateCodeForModule(ptr);
 	}, error))
 	{
+		if (m_announcer) m_announcer->finalized(false);
 		return false;
 	}
 
@@ -1070,6 +1093,7 @@ bool jit_compiler::try_add(std::unique_ptr<llvm::Module> _module, std::string& e
 		m_engine->generateCodeForModule(ptr);
 	}, error))
 	{
+		if (m_announcer) m_announcer->finalized(false);
 		return false;
 	}
 
@@ -1131,14 +1155,17 @@ void jit_compiler::update_global_mapping(const std::string& name, u64 addr)
 void jit_compiler::fin()
 {
 	m_engine->finalizeObject();
+	if (m_announcer) m_announcer->finalized(true);
 }
 
 bool jit_compiler::try_fin(std::string& error)
 {
-	return run_recoverable_llvm([&]()
+	const bool success = run_recoverable_llvm([&]()
 	{
 		m_engine->finalizeObject();
 	}, error);
+	if (m_announcer) m_announcer->finalized(success);
+	return success;
 }
 
 u64 jit_compiler::get(const std::string& name)
