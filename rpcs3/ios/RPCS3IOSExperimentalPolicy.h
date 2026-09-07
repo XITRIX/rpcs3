@@ -10,6 +10,8 @@ struct experimental_policy
 	bool neon_primitive_restart = false;
 	bool precomputed_indices = false;
 	bool mobile_spu_scheduling = false;
+	bool dma_copy_specialization = false;
+	bool texture_hash_hybrid = false;
 	u32 fifo_cache_bytes = 1024;
 	bool fifo_idle_wfe = false;
 	bool deferred_get_publishing = false;

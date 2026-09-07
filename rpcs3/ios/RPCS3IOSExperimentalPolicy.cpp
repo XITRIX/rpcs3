@@ -43,6 +43,10 @@ void resolve_experimental_policy() noexcept
 #endif
 
 	experimental_policy resolved{};
+	// Local experiments are opt-in until the batch has physical FPS evidence.
+	const bool fps_batch = resolve_mode(g_cfg.ios_experimental.fps_optimization_batch, false);
+	resolved.dma_copy_specialization = arm64_default && resolve_mode(g_cfg.ios_experimental.dma_copy_specialization, fps_batch);
+	resolved.texture_hash_hybrid = arm64_default && resolve_mode(g_cfg.ios_experimental.texture_hash_hybrid, fps_batch);
 	resolved.neon_byte_swap = resolve_mode(g_cfg.ios_experimental.neon_byte_swap, arm64_default);
 	resolved.neon_primitive_restart = resolve_mode(g_cfg.ios_experimental.neon_primitive_restart, arm64_default);
 	resolved.precomputed_indices = resolve_mode(g_cfg.ios_experimental.precomputed_indices, arm64_default);
@@ -65,6 +69,8 @@ void resolve_experimental_policy() noexcept
 	}
 
 	s_policy = resolved;
+	ios_experimental_log.notice("FPS experiment batch: requested=%d dma_copy=%d texture_hash_hybrid=%d",
+		fps_batch, resolved.dma_copy_specialization, resolved.texture_hash_hybrid);
 	configure_buffer_optimizations(resolved.neon_byte_swap, resolved.neon_primitive_restart, resolved.precomputed_indices);
 
 	ios_experimental_log.notice(
