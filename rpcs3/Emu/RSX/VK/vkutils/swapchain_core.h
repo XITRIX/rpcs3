@@ -80,6 +80,9 @@ namespace vk
 			return dev;
 		}
 
+		u32 get_width() const { return m_width; }
+		u32 get_height() const { return m_height; }
+
 		VkFormat get_surface_format() const
 		{
 			return m_surface_format;
