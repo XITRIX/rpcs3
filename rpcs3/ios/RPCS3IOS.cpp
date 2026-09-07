@@ -1,5 +1,6 @@
 #include "RPCS3IOS.h"
 #include "RPCS3IOSBigPicture.h"
+#include "RPCS3IOSBootProgress.h"
 #include "RPCS3IOSCapabilities.h"
 #include "RPCS3IOSConfigDatabase.h"
 #include "RPCS3IOSContract.h"
@@ -289,6 +290,13 @@ struct boot_progress_snapshot
 
 boot_progress_snapshot capture_boot_progress()
 {
+	// Renderer construction precedes the native compilation dialog. Prefer its
+	// independently published stage and do not expose stale module percentages.
+	if (auto stage = rpcs3::ios::boot_stages().snapshot(); !stage.empty())
+	{
+		return boot_progress_snapshot{std::move(stage)};
+	}
+
 	auto read = []()
 	{
 		return boot_progress_snapshot{
