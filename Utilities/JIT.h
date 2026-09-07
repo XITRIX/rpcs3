@@ -551,10 +551,15 @@ namespace llvm
 enum class thread_state : u32;
 
 // Temporary compiler interface
+struct JITAnnouncer;
+
 class jit_compiler final
 {
 	// Local LLVM context
 	std::unique_ptr<llvm::LLVMContext> m_context{};
+
+	// Keep the listener alive until after the execution engine is destroyed.
+	std::unique_ptr<JITAnnouncer> m_announcer{};
 
 	// Execution instance
 	std::unique_ptr<llvm::ExecutionEngine> m_engine{};
