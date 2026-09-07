@@ -118,6 +118,10 @@ struct cfg_root : cfg::node
 	{
 		node_ios_experimental(cfg::node* _this) : cfg::node(_this, "iOS Experimental") {}
 
+		cfg::_enum<ios_experimental_mode> fps_optimization_batch{ this, "FPS Optimization Batch", ios_experimental_mode::automatic };
+		cfg::_enum<ios_experimental_mode> dma_copy_specialization{ this, "DMA Copy Specialization", ios_experimental_mode::automatic };
+		cfg::_enum<ios_experimental_mode> texture_hash_hybrid{ this, "Hybrid Texture Hash", ios_experimental_mode::automatic };
+
 		cfg::_enum<ios_experimental_mode> neon_byte_swap{ this, "ARM64 Byte-Swap Uploads", ios_experimental_mode::automatic };
 		cfg::_enum<ios_experimental_mode> neon_primitive_restart{ this, "ARM64 Primitive-Restart Uploads", ios_experimental_mode::automatic };
 		cfg::_enum<ios_experimental_mode> precomputed_indices{ this, "Precomputed Non-Native Indices", ios_experimental_mode::automatic };

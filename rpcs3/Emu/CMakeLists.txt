@@ -110,6 +110,9 @@ if(RPCS3_FRONTEND STREQUAL "IOS")
         ../ios/FrontendSupport.cpp
 		../ios/RPCS3IOSExperimentalPolicy.cpp
 		../ios/RPCS3IOSExperimentalPolicy.h
+		../ios/IOSTextureHash.cpp
+		../ios/IOSTextureHash.h
+		../ios/IOSDMACopy.h
         ../ios/UPnPStubs.cpp
         ../ios/USBStubs.c
         ../Input/mouse_gyro_handler.cpp

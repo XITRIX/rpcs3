@@ -8,6 +8,8 @@
 #include "texture_cache_helpers.h"
 #include "texture_cache_blit_helpers.h"
 #ifdef RPCS3_IOS
+#include "ios/IOSTextureHash.h"
+#include "ios/RPCS3IOSExperimentalPolicy.h"
 #define XXH_INLINE_ALL
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wold-style-cast"
@@ -194,6 +196,12 @@ namespace rsx
 		if (hash_length <= XXH3_MIDSIZE_MAX)
 		{
 			return static_cast<u64>(XXH3_64bits_withSeed(src, hash_length, rpcs3::fnv_seed));
+		}
+
+		if (hash_length >= 4096 && rpcs3::ios::get_experimental_policy().texture_hash_hybrid)
+		{
+			return rpcs3::ios::texture_hash_hybrid(src, hash_length,
+				g_ios_xxh3_seeded_secret.bytes, sizeof(g_ios_xxh3_seeded_secret.bytes), rpcs3::fnv_seed);
 		}
 
 		return static_cast<u64>(XXH3_64bits_withSecretandSeed(
