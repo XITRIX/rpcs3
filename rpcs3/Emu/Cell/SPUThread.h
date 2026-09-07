@@ -819,6 +819,7 @@ public:
 	u32 getllar_spin_count = 0;
 	bool ios_getllar_backoff = false;
 	bool ios_mobile_spu_scheduling = false;
+	bool ios_dma_copy_specialization = false;
 	u32 getllar_cs_pc = umax;
 	u32 getllar_cs_sp = umax;
 	u32 getllar_cs_lr = umax;
