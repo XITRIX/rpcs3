@@ -156,6 +156,12 @@ mkdir -p "${OUTPUT_ROOT}"
     -o "${OUTPUT_ROOT}/VMReservationRangeTests"
 "${OUTPUT_ROOT}/VMReservationRangeTests"
 
+"${CXX_COMPILER}" -std=c++20 -O2 -Wall -Wextra -Werror \
+    -I "${SOURCE_ROOT}" -I "${SOURCE_ROOT}/rpcs3" \
+    "${SCRIPT_DIR}/IOSFPSBatchTests.cpp" "${SCRIPT_DIR}/../IOSTextureHash.cpp" \
+    -o "${OUTPUT_ROOT}/IOSFPSBatchTests"
+"${OUTPUT_ROOT}/IOSFPSBatchTests"
+
 # Execute the production NEON reservation scan only on an ARM64 host.
 case "$(uname -m)" in
     arm64|aarch64)
