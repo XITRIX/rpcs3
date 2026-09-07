@@ -147,6 +147,8 @@ namespace vk
 		std::unique_ptr<mem_allocator_base> m_allocator;
 		VkDevice dev = VK_NULL_HANDLE;
 		VkPipelineCache m_pipeline_cache = VK_NULL_HANDLE;
+		// Captured at creation: Emu's active title may change during teardown.
+		std::string m_pipeline_cache_path;
 
 		VkQueue m_graphics_queue = VK_NULL_HANDLE;
 		VkQueue m_present_queue = VK_NULL_HANDLE;
