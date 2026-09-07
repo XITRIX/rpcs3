@@ -296,7 +296,24 @@ namespace vk
 
 		swap_info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 		swap_info.preTransform = pre_transform;
-		swap_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+		// The surface must support the requested composition mode. Prefer opaque output.
+		constexpr VkCompositeAlphaFlagBitsKHR alpha_modes[] =
+		{
+			VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+			VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+			VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+			VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR
+		};
+		const auto alpha_mode = std::find_if(std::begin(alpha_modes), std::end(alpha_modes), [&](auto mode)
+		{
+			return (surface_descriptors.supportedCompositeAlpha & mode) != 0;
+		});
+		if (alpha_mode == std::end(alpha_modes))
+		{
+			rsx_log.error("Swapchain surface reports no supported composite alpha mode (0x%x).", surface_descriptors.supportedCompositeAlpha);
+			return false;
+		}
+		swap_info.compositeAlpha = *alpha_mode;
 		swap_info.imageArrayLayers = 1;
 		swap_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 		swap_info.presentMode = swapchain_present_mode;
@@ -335,6 +352,9 @@ namespace vk
 			_vkDestroySwapchainKHR(dev, old_swapchain, nullptr);
 		}
 
+		// Report the actual WSI extent, including the surface minimum-size clamp.
+		m_width = swap_info.imageExtent.width;
+		m_height = swap_info.imageExtent.height;
 		init_swapchain_images(dev);
 		return true;
 	}

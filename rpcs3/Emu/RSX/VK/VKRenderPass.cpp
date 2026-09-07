@@ -2,6 +2,7 @@
 
 #include "Utilities/mutex.h"
 #include "VKRenderPass.h"
+#include "VKHelpers.h"
 #include "vkutils/image.h"
 
 #include "Emu/RSX/Common/unordered_map.hpp"
@@ -55,7 +56,10 @@ namespace vk
 			case 3:
 				return static_cast<VkImageLayout>(encoded);
 			case 4:
-				return VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT;
+				// Cached keys may have been written with a different device's capabilities.
+				return vk::get_current_renderer()->get_framebuffer_loops_support()
+					? VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT
+					: VK_IMAGE_LAYOUT_GENERAL;
 			default:
 				fmt::throw_exception("Unsupported layout encoding 0x%llx here", encoded);
 			}
