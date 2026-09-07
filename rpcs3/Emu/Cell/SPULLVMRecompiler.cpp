@@ -9924,6 +9924,10 @@ public:
 		}
 
 
+#ifndef ARCH_ARM64
+		// Packing every byte into a scalar mask is cheap on x86. ARM64 uses
+		// the preferred-lane test below instead of a NEON mask reduction.
+
 		// Check sign bit instead (optimization)
 		if (match_vr<s32[4], s64[2]>(op.rt, [&](auto c, auto MP)
 		{
@@ -9944,6 +9948,7 @@ public:
 		{
 			return;
 		}
+#endif
 
 		const auto cond = eval(extract(get_vr(op.rt), 3) == 0);
 		const auto addr = eval(extract(get_vr(op.ra), 3) & 0x3fffc);
@@ -9985,6 +9990,10 @@ public:
 		}
 
 
+#ifndef ARCH_ARM64
+		// Packing every byte into a scalar mask is cheap on x86. ARM64 uses
+		// the preferred-lane test below instead of a NEON mask reduction.
+
 		// Check sign bit instead (optimization)
 		if (match_vr<s32[4], s64[2]>(op.rt, [&](auto c, auto MP)
 		{
@@ -10005,6 +10014,7 @@ public:
 		{
 			return;
 		}
+#endif
 
 		const auto cond = eval(extract(get_vr(op.rt), 3) != 0);
 		const auto addr = eval(extract(get_vr(op.ra), 3) & 0x3fffc);
@@ -10015,6 +10025,10 @@ public:
 	void BIHZ(spu_opcode_t op) //
 	{
 		if (m_block) m_block->block_end = m_ir->GetInsertBlock();
+
+#ifndef ARCH_ARM64
+		// Packing every byte into a scalar mask is cheap on x86. ARM64 uses
+		// the preferred-lane test below instead of a NEON mask reduction.
 
 		// Check sign bits of 2 vector elements (optimization)
 		if (match_vr<s8[16], s16[8], s32[4], s64[2]>(op.rt, [&](auto c, auto MP)
@@ -10036,6 +10050,7 @@ public:
 		{
 			return;
 		}
+#endif
 
 		const auto cond = eval(extract(get_vr<u16[8]>(op.rt), 6) == 0);
 		const auto addr = eval(extract(get_vr(op.ra), 3) & 0x3fffc);
@@ -10046,6 +10061,10 @@ public:
 	void BIHNZ(spu_opcode_t op) //
 	{
 		if (m_block) m_block->block_end = m_ir->GetInsertBlock();
+
+#ifndef ARCH_ARM64
+		// Packing every byte into a scalar mask is cheap on x86. ARM64 uses
+		// the preferred-lane test below instead of a NEON mask reduction.
 
 		// Check sign bits of 2 vector elements (optimization)
 		if (match_vr<s8[16], s16[8], s32[4], s64[2]>(op.rt, [&](auto c, auto MP)
@@ -10067,6 +10086,7 @@ public:
 		{
 			return;
 		}
+#endif
 
 		const auto cond = eval(extract(get_vr<u16[8]>(op.rt), 6) != 0);
 		const auto addr = eval(extract(get_vr(op.ra), 3) & 0x3fffc);
@@ -10244,6 +10264,10 @@ public:
 		}
 
 
+#ifndef ARCH_ARM64
+		// Packing every byte into a scalar mask is cheap on x86. ARM64 uses
+		// the preferred-lane test below instead of a NEON mask reduction.
+
 		// Check sign bit instead (optimization)
 		if (match_vr<s32[4], s64[2]>(op.rt, [&](auto c, auto MP)
 		{
@@ -10266,6 +10290,7 @@ public:
 		{
 			return;
 		}
+#endif
 
 		if (target != m_pos + 4)
 		{
@@ -10319,6 +10344,10 @@ public:
 			}
 		}
 
+#ifndef ARCH_ARM64
+		// Packing every byte into a scalar mask is cheap on x86. ARM64 uses
+		// the preferred-lane test below instead of a NEON mask reduction.
+
 		// Check sign bit instead (optimization)
 		if (match_vr<s32[4], s64[2]>(op.rt, [&](auto c, auto MP)
 		{
@@ -10341,6 +10370,7 @@ public:
 		{
 			return;
 		}
+#endif
 
 		if (target != m_pos + 4)
 		{
@@ -10362,6 +10392,10 @@ public:
 		}
 
 		const u32 target = spu_branch_target(m_pos, op.i16);
+
+#ifndef ARCH_ARM64
+		// Packing every byte into a scalar mask is cheap on x86. ARM64 uses
+		// the preferred-lane test below instead of a NEON mask reduction.
 
 		// Check sign bits of 2 vector elements (optimization)
 		if (match_vr<s8[16], s16[8], s32[4], s64[2]>(op.rt, [&](auto c, auto MP)
@@ -10385,6 +10419,7 @@ public:
 		{
 			return;
 		}
+#endif
 
 		if (target != m_pos + 4)
 		{
@@ -10406,6 +10441,10 @@ public:
 		}
 
 		const u32 target = spu_branch_target(m_pos, op.i16);
+
+#ifndef ARCH_ARM64
+		// Packing every byte into a scalar mask is cheap on x86. ARM64 uses
+		// the preferred-lane test below instead of a NEON mask reduction.
 
 		// Check sign bits of 2 vector elements (optimization)
 		if (match_vr<s8[16], s16[8], s32[4], s64[2]>(op.rt, [&](auto c, auto MP)
@@ -10429,6 +10468,7 @@ public:
 		{
 			return;
 		}
+#endif
 
 		if (target != m_pos + 4)
 		{

@@ -52,6 +52,7 @@
 #include "Utilities/File.h"
 #include "Utilities/JIT.h"
 #include "Utilities/JITIOS.h"
+#include "Utilities/JITProfile.h"
 #include "Utilities/StrFmt.h"
 #include "util/logs.hpp"
 #include "util/asm.hpp"
@@ -1321,6 +1322,31 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 
 		g_log_listener = std::make_unique<callback_log_listener>();
 		logs::listener::add(g_log_listener.get());
+
+		// A developer can request one bounded SPU profile through the injected
+		// cache root. Consume the request so subsequent launches stay unchanged.
+		const std::string profile_request = fs::get_cache_dir() + "jit-profile.once";
+		if (fs::file request{profile_request, fs::read}; request && request.size() == 1)
+		{
+			char enabled = 0;
+			if (request.read(&enabled, 1) == 1 && enabled == '1' && fs::remove_file(profile_request))
+			{
+				const auto timestamp = std::chrono::duration_cast<std::chrono::microseconds>(
+					std::chrono::system_clock::now().time_since_epoch()).count();
+				const std::string stem = fs::get_cache_dir() + "spu-jit-profile-" + std::to_string(timestamp);
+				if (jit_profile::spu_writer().open(stem,
+					reinterpret_cast<std::uintptr_t>(rpcs3::ios::jit::runtime_memory(true)), rpcs3::ios::jit::arena_capacity()))
+				{
+					emit_log(4, "SPU JIT diagnostic capture enabled: " + stem +
+						".{map,bin} (v1; at most 65536 symbols, 8 MiB map and 32 MiB code; finalized snapshots, later patches not recorded)");
+				}
+				else
+				{
+					emit_log(3, "SPU JIT diagnostic capture could not create its output files; continuing without capture");
+				}
+			}
+		}
+
 		g_preferred_language = rpcs3::ios::preferred_language_identifier();
 		rpcs3::ios::set_localization_resolver(&rpcs3::ios::localized_application_string);
 		emit_log(4, "Using iOS preferred language for native overlays: " + g_preferred_language);
