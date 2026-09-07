@@ -4,11 +4,15 @@
 #include "util/logs.hpp"
 #include "Emu/system_config.h"
 #include "Utilities/File.h"
+#ifdef RPCS3_IOS
+#include "ios/RPCS3IOSBootProgress.h"
+#endif
 #include <vulkan/vulkan_core.h>
 #ifdef __APPLE__
 #include <vulkan/vulkan_beta.h>
 #endif
 
+#include <chrono>
 #include <cstring>
 
 namespace vk
@@ -46,6 +50,16 @@ namespace vk
 		ensure(dev && pgpu);
 		ensure(!m_pipeline_cache);
 
+#ifdef RPCS3_IOS
+		rpcs3::ios::scoped_boot_stage progress{"Reading graphics cache"};
+#endif
+		using clock = std::chrono::steady_clock;
+		const auto elapsed_ms = [](clock::time_point start)
+		{
+			return static_cast<u64>(std::chrono::duration_cast<std::chrono::milliseconds>(clock::now() - start).count());
+		};
+		const auto read_started = clock::now();
+		rsx_log.notice("Vulkan driver pipeline cache: starting file read and validation.");
 		std::vector<u8> initial_data;
 		const std::string path = get_pipeline_cache_path();
 		fs::file cache_file{path, fs::read};
@@ -84,11 +98,22 @@ namespace vk
 			}
 		}
 
+		rsx_log.notice("Vulkan driver pipeline cache: file read and validation finished in %llu ms (%llu usable bytes).",
+			elapsed_ms(read_started), static_cast<u64>(initial_data.size()));
+
+#ifdef RPCS3_IOS
+		progress.update("Preparing graphics cache");
+#endif
 		VkPipelineCacheCreateInfo create_info{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
 		create_info.initialDataSize = initial_data.size();
 		create_info.pInitialData = initial_data.empty() ? nullptr : initial_data.data();
 
+		rsx_log.notice("Vulkan driver pipeline cache: starting driver preparation from %llu bytes; shader library compilation may take several minutes.",
+			static_cast<u64>(initial_data.size()));
+		const auto driver_started = clock::now();
 		VkResult result = vkCreatePipelineCache(dev, &create_info, nullptr, &m_pipeline_cache);
+		rsx_log.notice("Vulkan driver pipeline cache: driver preparation returned VkResult %d after %llu ms.",
+			static_cast<s32>(result), elapsed_ms(driver_started));
 		if (result != VK_SUCCESS && !initial_data.empty())
 		{
 			rsx_log.warning(
@@ -96,7 +121,13 @@ namespace vk
 				static_cast<u64>(initial_data.size()), static_cast<s32>(result));
 			create_info.initialDataSize = 0;
 			create_info.pInitialData = nullptr;
+#ifdef RPCS3_IOS
+			progress.update("Preparing a fresh graphics cache");
+#endif
+			const auto retry_started = clock::now();
 			result = vkCreatePipelineCache(dev, &create_info, nullptr, &m_pipeline_cache);
+			rsx_log.notice("Vulkan driver pipeline cache: empty-cache retry returned VkResult %d after %llu ms.",
+				static_cast<s32>(result), elapsed_ms(retry_started));
 		}
 
 		if (result != VK_SUCCESS)
@@ -106,7 +137,7 @@ namespace vk
 			return;
 		}
 
-		if (initial_data.empty())
+		if (!create_info.initialDataSize)
 		{
 			rsx_log.notice("Vulkan driver pipeline cache initialized empty.");
 		}
