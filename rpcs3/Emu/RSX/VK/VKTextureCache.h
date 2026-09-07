@@ -9,6 +9,7 @@
 #include "../Common/texture_cache.h"
 #include "../Common/tiled_dma_copy.hpp"
 #include "../Utils/image_utils.hpp"
+#include "../Utils/bounded_swizzle.hpp"
 
 #include <memory>
 #include <vector>
@@ -344,20 +345,24 @@ namespace vk
 				// If this is happening, usually it means it was not a planned readback (e.g shared pages situation)
 				rsx_log.trace("[Performance warning] CPU readback of swizzled data");
 
-				// Read-modify-write to avoid corrupting already resident memory outside texture region
-				void* data = get_ptr(range.start);
-				rsx::simple_array<u8> tmp_data(rsx_pitch * height);
+				// Morton offsets may exceed the linear region, especially for non-POT
+				// dimensions. Bound both the snapshot and every write to the owned range.
+				auto* data = static_cast<u8*>(get_ptr(range.start));
+				const auto linear_size = std::min<u64>(range.length(), u64{rsx_pitch} * height);
+				rsx::simple_array<u8> tmp_data(linear_size);
 				std::memcpy(tmp_data.data(), data, tmp_data.size());
+				const std::span<const u8> source{tmp_data.data(), tmp_data.size()};
+				const std::span<u8> destination{data, tmp_data.size()};
 
 				switch (gcm_format)
 				{
 				case CELL_GCM_TEXTURE_A8R8G8B8:
 				case CELL_GCM_TEXTURE_DEPTH24_D8:
-					rsx::convert_linear_swizzle<u32, false>(tmp_data.data(), data, width, height, rsx_pitch);
+					rsx::convert_linear_swizzle_bounded<u32>(source, destination, width, height, rsx_pitch);
 					break;
 				case CELL_GCM_TEXTURE_R5G6B5:
 				case CELL_GCM_TEXTURE_DEPTH16:
-					rsx::convert_linear_swizzle<u16, false>(tmp_data.data(), data, width, height, rsx_pitch);
+					rsx::convert_linear_swizzle_bounded<u16>(source, destination, width, height, rsx_pitch);
 					break;
 				default:
 					rsx_log.error("Unexpected swizzled texture format 0x%x", gcm_format);
