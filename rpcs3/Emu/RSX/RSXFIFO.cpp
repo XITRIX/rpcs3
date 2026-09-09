@@ -14,6 +14,7 @@
 #endif
 
 #include "util/asm.hpp"
+#include "util/sysinfo.hpp"
 
 #include <thread>
 
@@ -57,6 +58,13 @@ namespace rsx
 
 		void FIFO_control::sync_get_force() const
 		{
+			if (!m_deferred_get_publishing)
+			{
+				// Original RPCS3 publishes unconditionally before waiting for an argument.
+				sync_get();
+				return;
+			}
+
 			m_get_sync_counter = 0;
 			const u32 get = get_sync_position();
 			if (m_cache_size || m_published_get != get)
@@ -67,14 +75,25 @@ namespace rsx
 
 		void FIFO_control::idle_wait()
 		{
-			if (m_fifo_idle_wfe && m_idle_spins++ >= 8)
+#if defined(ARCH_ARM64)
+			if (m_fifo_idle_wfe)
 			{
-				utils::wait_for_event();
+				// Match ARMSX3: eight short spins, then an event wait when available.
+				if (m_idle_spins < 8)
+				{
+					m_idle_spins++;
+					utils::pause();
+					return;
+				}
+				if (utils::has_wfe_event_stream())
+				{
+					utils::wait_for_event();
+					return;
+				}
 			}
-			else
-			{
-				std::this_thread::yield();
-			}
+#endif
+			// Original RPCS3, also ARMSX3's fallback without ARM event waits.
+			std::this_thread::yield();
 		}
 
 		void FIFO_control::restore_state(u32 cmd, u32 count, u32 position)
@@ -178,21 +197,19 @@ namespace rsx
 
 				u64 start_time = 0;
 				u32 bytes_read = 0;
-				const auto next_cache_line = [&](u32 current)
+				const auto next_cache_line = [&](int current)
 				{
-					for (u32 offset = 1; offset <= m_cache_line_count; offset++)
+					if (m_cache_line_count == 8)
 					{
-						const u32 candidate = (current + offset) % m_cache_line_count;
-						if (to_fetch & (1u << candidate))
-						{
-							return candidate;
-						}
+						// Original RPCS3's 1 KiB cache traversal.
+						return (std::countr_zero<u32>(std::rotl<u8>(static_cast<u8>(to_fetch), 0 - current - 1)) + current + 1) % 8;
 					}
-					return 0u;
+					// ARMSX3's 4 KiB cache traversal.
+					return (std::countr_zero<u32>(std::rotl<u32>(to_fetch, 0 - current - 1)) + current + 1) % 32;
 				};
 
 				// Find the next set bit after every iteration
-				for (u32 i = 0;; i = next_cache_line(i))
+				for (int i = 0;; i = next_cache_line(i))
 				{
 					// If a reservation is being updated, try to load another
 					const auto& res = vm::reservation_acquire(addr1 + i * 128);
@@ -251,7 +268,7 @@ namespace rsx
 
 					if (strict_fetch_ordering)
 					{
-						i = (i + m_cache_line_count - 1) % m_cache_line_count;
+						i = (i - 1) % static_cast<int>(m_cache_line_count);
 					}
 				}
 
@@ -730,12 +747,12 @@ namespace rsx
 					performance_counters.state = FIFO::state::nop;
 				}
 
-				fifo_ctrl->sync_get_force();
+				fifo_ctrl->sync_get_on_idle();
 				return;
 			}
 			case FIFO::FIFO_EMPTY:
 			{
-				fifo_ctrl->sync_get_force();
+				fifo_ctrl->sync_get_on_idle();
 
 				if (performance_counters.state == FIFO::state::running)
 				{
@@ -752,7 +769,7 @@ namespace rsx
 			}
 			case FIFO::FIFO_BUSY:
 			{
-				fifo_ctrl->sync_get_force();
+				fifo_ctrl->sync_get_on_idle();
 				return;
 			}
 			case FIFO::FIFO_ERROR:

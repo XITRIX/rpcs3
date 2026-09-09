@@ -43,18 +43,18 @@ void resolve_experimental_policy() noexcept
 #endif
 
 	experimental_policy resolved{};
-	// Local experiments are opt-in until the batch has physical FPS evidence.
-	const bool fps_batch = resolve_mode(g_cfg.ios_experimental.fps_optimization_batch, false);
-	resolved.dma_copy_specialization = arm64_default && resolve_mode(g_cfg.ios_experimental.dma_copy_specialization, fps_batch);
-	resolved.texture_hash_hybrid = arm64_default && resolve_mode(g_cfg.ios_experimental.texture_hash_hybrid, fps_batch);
+	// Each supported experiment defaults on independently. The retired batch
+	// entry is accepted in old configs but no longer controls either path.
+	resolved.dma_copy_specialization = arm64_default && resolve_mode(g_cfg.ios_experimental.dma_copy_specialization, true);
+	resolved.texture_hash_hybrid = arm64_default && resolve_mode(g_cfg.ios_experimental.texture_hash_hybrid, true);
 	resolved.neon_byte_swap = resolve_mode(g_cfg.ios_experimental.neon_byte_swap, arm64_default);
 	resolved.neon_primitive_restart = resolve_mode(g_cfg.ios_experimental.neon_primitive_restart, arm64_default);
 	resolved.precomputed_indices = resolve_mode(g_cfg.ios_experimental.precomputed_indices, arm64_default);
-	resolved.mobile_spu_scheduling = resolve_mode(g_cfg.ios_experimental.mobile_spu_scheduling, false);
+	resolved.mobile_spu_scheduling = resolve_mode(g_cfg.ios_experimental.mobile_spu_scheduling, true);
 	resolved.fifo_cache_bytes = g_cfg.ios_experimental.fifo_cache_size == ios_fifo_cache_size::_4_kib ? 4096 : 1024;
 	resolved.fifo_idle_wfe = g_cfg.ios_experimental.fifo_idle_mode == ios_fifo_idle_mode::wait_for_event;
-	resolved.deferred_get_publishing = resolve_mode(g_cfg.ios_experimental.deferred_get_publishing, false);
-	resolved.getllar_backoff = resolve_mode(g_cfg.ios_experimental.getllar_backoff, false);
+	resolved.deferred_get_publishing = resolve_mode(g_cfg.ios_experimental.deferred_get_publishing, true);
+	resolved.getllar_backoff = resolve_mode(g_cfg.ios_experimental.getllar_backoff, true);
 	resolved.rsx_dma_wait_parking = resolve_mode(g_cfg.ios_experimental.rsx_dma_wait_parking, arm64_default);
 	resolved.vulkan_command_buffer_reclamation = resolve_mode(g_cfg.ios_experimental.vulkan_command_buffer_reclamation, arm64_default);
 	resolved.expanded_spu_scratch = resolve_mode(g_cfg.ios_experimental.expanded_spu_scratch, arm64_default);
@@ -69,8 +69,8 @@ void resolve_experimental_policy() noexcept
 	}
 
 	s_policy = resolved;
-	ios_experimental_log.notice("FPS experiment batch: requested=%d dma_copy=%d texture_hash_hybrid=%d",
-		fps_batch, resolved.dma_copy_specialization, resolved.texture_hash_hybrid);
+	ios_experimental_log.notice("Resolved DMA/hash policy: dma_copy=%d texture_hash_hybrid=%d",
+		resolved.dma_copy_specialization, resolved.texture_hash_hybrid);
 	configure_buffer_optimizations(resolved.neon_byte_swap, resolved.neon_primitive_restart, resolved.precomputed_indices);
 
 	ios_experimental_log.notice(
