@@ -177,6 +177,14 @@ namespace rsx
 			u32 last_cmd() const { return m_cmd; }
 			void sync_get() const;
 			void sync_get_force() const;
+			void sync_get_on_idle() const
+			{
+				// Only deferred publishing adds stores on NOP/EMPTY/BUSY exits.
+				if (m_deferred_get_publishing)
+				{
+					sync_get_force();
+				}
+			}
 			void reset_idle_wait() { m_idle_spins = 0; }
 			void idle_wait();
 			std::span<const u32> get_current_arg_ptr(u32 length_in_words) const;
