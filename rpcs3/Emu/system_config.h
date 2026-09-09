@@ -118,6 +118,8 @@ struct cfg_root : cfg::node
 	{
 		node_ios_experimental(cfg::node* _this) : cfg::node(_this, "iOS Experimental") {}
 
+		// Retired master switch: parse older configs/presets without affecting
+		// the independent DMA and hash settings. Not exposed in the iOS catalog.
 		cfg::_enum<ios_experimental_mode> fps_optimization_batch{ this, "FPS Optimization Batch", ios_experimental_mode::automatic };
 		cfg::_enum<ios_experimental_mode> dma_copy_specialization{ this, "DMA Copy Specialization", ios_experimental_mode::automatic };
 		cfg::_enum<ios_experimental_mode> texture_hash_hybrid{ this, "Hybrid Texture Hash", ios_experimental_mode::automatic };
@@ -126,13 +128,15 @@ struct cfg_root : cfg::node
 		cfg::_enum<ios_experimental_mode> neon_primitive_restart{ this, "ARM64 Primitive-Restart Uploads", ios_experimental_mode::automatic };
 		cfg::_enum<ios_experimental_mode> precomputed_indices{ this, "Precomputed Non-Native Indices", ios_experimental_mode::automatic };
 		cfg::_enum<ios_experimental_mode> mobile_spu_scheduling{ this, "Mobile SPU Compile Scheduling", ios_experimental_mode::automatic };
-		cfg::_enum<ios_fifo_cache_size> fifo_cache_size{ this, "RSX FIFO Read Cache", ios_fifo_cache_size::_1_kib };
-		cfg::_enum<ios_fifo_idle_mode> fifo_idle_mode{ this, "RSX FIFO Idle Wait", ios_fifo_idle_mode::yield };
+		cfg::_enum<ios_fifo_cache_size> fifo_cache_size{ this, "RSX FIFO Read Cache", ios_fifo_cache_size::_4_kib };
+		cfg::_enum<ios_fifo_idle_mode> fifo_idle_mode{ this, "RSX FIFO Idle Wait", ios_fifo_idle_mode::wait_for_event };
 		cfg::_enum<ios_experimental_mode> deferred_get_publishing{ this, "Deferred FIFO GET Publishing", ios_experimental_mode::automatic };
 		cfg::_enum<ios_experimental_mode> getllar_backoff{ this, "GETLLAR Mobile Backoff", ios_experimental_mode::automatic };
 		cfg::_enum<ios_experimental_mode> rsx_dma_wait_parking{ this, "RSX DMA Wait Parking", ios_experimental_mode::automatic };
 		cfg::_enum<ios_experimental_mode> vulkan_command_buffer_reclamation{ this, "Vulkan Command-Buffer Reclamation", ios_experimental_mode::automatic };
 		cfg::_enum<ios_experimental_mode> expanded_spu_scratch{ this, "Expanded ARM64 SPU Scratch", ios_experimental_mode::automatic };
+		// Compatibility only: ARM64 objects are not relocatable across launches.
+		// Keep accepting the old entry, but do not offer an unavailable control.
 		cfg::_enum<ios_experimental_mode> persistent_spu_object_cache{ this, "Persistent SPU Object Cache", ios_experimental_mode::automatic };
 	} ios_experimental{ this };
 #endif
