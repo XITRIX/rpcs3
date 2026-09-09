@@ -391,6 +391,21 @@ bool utils::has_neon()
 	return g_value;
 }
 
+bool utils::has_wfe_event_stream()
+{
+	static const bool g_value = []() -> bool
+	{
+#if defined(__linux__)
+		return (getauxval(AT_HWCAP) & HWCAP_EVTSTRM) != 0;
+#else
+		// Match ARMSX3's non-Linux ARM64 policy. This preserves its wait shape;
+		// it is not a measured event-stream capability or wake-latency guarantee.
+		return true;
+#endif
+	}();
+	return g_value;
+}
+
 bool utils::has_sha3()
 {
 	static const bool g_value = []() -> bool
