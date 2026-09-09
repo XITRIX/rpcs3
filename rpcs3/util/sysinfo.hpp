@@ -66,6 +66,8 @@ namespace utils
 	bool has_lse2();
 #endif
 
+	bool has_wfe_event_stream();
+
 	bool has_sha3();
 
 	bool has_dotprod();
