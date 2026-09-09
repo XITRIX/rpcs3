@@ -57,6 +57,8 @@ namespace utils
 #ifdef ARCH_ARM64
 	bool has_neon();
 
+	bool has_wfe_event_stream();
+
 	bool has_sha3();
 
 	bool has_dotprod();
