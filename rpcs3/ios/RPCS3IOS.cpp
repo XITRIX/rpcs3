@@ -385,7 +385,7 @@ void emit_jit_arena_statistics(std::string_view phase)
 	emit_log(4, fmt::format(
 		"iOS JIT arena %s: code live=%u MiB, free=%u MiB (%llu bytes), largest_free=%u MiB (%llu bytes), "
 		"runtime=%u MiB, peak=%u MiB; data live=%u MiB, free=%u MiB (%llu bytes), "
-		"largest_free=%u MiB (%llu bytes), runtime=%u MiB, peak=%u MiB; capacity=%u MiB each",
+		"largest_free=%u MiB (%llu bytes), runtime=%u MiB, peak=%u MiB; capacity=%u MiB code/%u MiB data",
 		phase,
 		stats.live_code_bytes / mib,
 		stats.free_code_bytes / mib,
@@ -401,7 +401,8 @@ void emit_jit_arena_statistics(std::string_view phase)
 		static_cast<u64>(stats.largest_free_data_bytes),
 		stats.runtime_data_bytes / mib,
 		stats.peak_data_bytes / mib,
-		stats.capacity / mib));
+		stats.capacity / mib,
+		stats.data_capacity / mib));
 }
 
 class callback_log_listener final : public logs::listener
@@ -1295,7 +1296,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		g_lifecycle.finish_initialize(false);
 		return RPCS3_IOS_JIT_UNAVAILABLE;
 	}
-	if (!rpcs3::ios::jit::prepare_arena(config->expanded_jit_arena != 0) ||
+	if (!rpcs3::ios::jit::prepare_arena(config->expanded_jit_arena) ||
 		!rpcs3::ios::jit::seal_arena())
 	{
 		set_error(rpcs3::ios::jit::last_error());

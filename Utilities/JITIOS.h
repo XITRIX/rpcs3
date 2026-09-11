@@ -30,6 +30,7 @@ constexpr arena_backend backend_for_ios_major(u32 major_version) noexcept
 struct arena_statistics
 {
 	usz capacity = 0;
+	usz data_capacity = 0;
 	u32 preparation_chunks = 0;
 	usz runtime_code_bytes = 0;
 	usz runtime_data_bytes = 0;
@@ -48,10 +49,10 @@ struct arena_statistics
 
 bool is_ready() noexcept;
 bool prepare_arena() noexcept;
-bool prepare_arena(bool expanded) noexcept;
+bool prepare_arena(u32 expanded_capacity_mib) noexcept;
 bool seal_arena() noexcept;
 void* runtime_memory(bool executable) noexcept;
-usz arena_capacity() noexcept;
+usz arena_capacity(bool executable = true) noexcept;
 bool claim_runtime(bool executable, usz offset, usz size) noexcept;
 void reset_runtime() noexcept;
 void* allocate(bool executable, usz size, usz alignment) noexcept;
