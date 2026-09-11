@@ -72,6 +72,7 @@ namespace
 	void maybe_log_ios_jit_arena_pressure(bool executable)
 	{
 		const auto stats = rpcs3::ios::jit::get_statistics();
+		const usz capacity = executable ? stats.capacity : stats.data_capacity;
 		const usz free = executable ? stats.free_code_bytes : stats.free_data_bytes;
 		const usz largest_free = executable ? stats.largest_free_code_bytes : stats.largest_free_data_bytes;
 		const usz live = executable ? stats.live_code_bytes : stats.live_data_bytes;
@@ -82,7 +83,7 @@ namespace
 		usz threshold = next_warning.load(std::memory_order_relaxed);
 		if (threshold == std::numeric_limits<usz>::max())
 		{
-			const usz initial_threshold = stats.capacity / 4;
+			const usz initial_threshold = capacity / 4;
 			if (next_warning.compare_exchange_strong(threshold, initial_threshold,
 				std::memory_order_relaxed, std::memory_order_relaxed))
 			{
@@ -117,7 +118,7 @@ namespace
 				static_cast<u64>(largest_free),
 				runtime / mib,
 				peak / mib,
-				stats.capacity / mib);
+				capacity / mib);
 		}
 	}
 #endif
