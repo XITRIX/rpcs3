@@ -1,9 +1,11 @@
 #include "stdafx.h"
 #include "Utilities/JIT.h"
 #ifdef RPCS3_IOS
+#include "Utilities/JITIOS.h"
 #include "Utilities/JITIOSLayoutPolicy.h"
 #include "ios/IOSMemoryPressurePolicy.h"
 #include "ios/RPCS3IOSPerformance.h"
+#include <mach/mach.h>
 #endif
 #include "Utilities/StrUtil.h"
 #include "util/serialization.hpp"
@@ -5922,6 +5924,27 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 				index++;
 
 				ensure(sim);
+#ifdef RPCS3_IOS
+				// Capture the mapping before executing generated code: an instruction
+				// fault alone cannot distinguish an alias from an unprepared RX page.
+				const auto address = reinterpret_cast<uptr>(sim);
+				void* const alias = rpcs3::ios::jit::writable(reinterpret_cast<const void*>(address));
+				vm_address_t region = address;
+				vm_size_t region_size = 0;
+				vm_region_basic_info_data_64_t region_info{};
+				mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+				mach_port_t object = MACH_PORT_NULL;
+				const kern_return_t result = vm_region_64(mach_task_self(), &region, &region_size,
+					VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&region_info), &count, &object);
+				if (object != MACH_PORT_NULL)
+				{
+					mach_port_deallocate(mach_task_self(), object);
+				}
+				ppu_log.notice("iOS PPU resolver #%u: target=0x%x, alias=%p, arena=%p, capacity=%u MiB, region_result=%d, region=0x%x+0x%x, protection=0x%x, max_protection=0x%x, instruction=0x%08x",
+					index, address, alias, rpcs3::ios::jit::runtime_memory(true),
+					rpcs3::ios::jit::arena_capacity() / (1024 * 1024), result, region, region_size,
+					region_info.protection, region_info.max_protection, alias ? read_from_ptr_unsafe<u32>(static_cast<const u8*>(alias)) : 0);
+#endif
 				sim(vm::g_exec_addr, info.segs[0].addr);
 
 				ppu_log.notice("Executed symbol resolver #%u", index);
