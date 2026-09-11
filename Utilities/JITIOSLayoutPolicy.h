@@ -2,27 +2,49 @@
 
 #include "util/types.hpp"
 
+#include <charconv>
+#include <limits>
+#include <string_view>
+
 namespace rpcs3::ios::jit
 {
 inline constexpr usz mib = 1024 * 1024;
 inline constexpr usz arena_min_capacity = 256 * mib;
 inline constexpr usz arena_default_capacity = 384 * mib;
-inline constexpr usz arena_max_capacity = 512 * mib;
+inline constexpr usz arena_standard_max_capacity = 512 * mib;
+inline constexpr usz arena_max_capacity = 1024 * mib;
 inline constexpr usz arena_capacity_step = 64 * mib;
 inline constexpr usz arena_prepare_chunk_size = 16 * mib;
 inline constexpr u32 ppu_modules_per_jit = 25;
 
 // Preparing an executable page causes debugserver to touch it, so size the
 // one-time arena conservatively from physical RAM instead of always reserving
-// RPCS3's desktop-sized 1 GiB code window. Expanded mode opts directly into
-// the existing 512 MiB ceiling for titles that exhaust the standard arena,
-// while lower-memory devices retain conservative sizing by default. Code and
-// data receive the same capacity.
-constexpr usz choose_arena_capacity(u64 physical_memory, bool expanded = false) noexcept
+// RPCS3's desktop-sized 1 GiB code window. Expanded mode opts into 512–1024
+// MiB for titles that exhaust the standard arena. Data initially requests the
+// same capacity, but may use a smaller nearby reserve when low virtual
+// address space is constrained. Preserve 1 as the legacy request for 512 MiB.
+constexpr bool valid_expanded_arena_capacity(u32 value) noexcept
 {
-	if (expanded)
+	return value <= 1 || (value >= 512 && value <= 1024);
+}
+
+inline u32 parse_expanded_arena_capacity(std::string_view value) noexcept
+{
+	u32 capacity = 0;
+	const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), capacity);
+	return error == std::errc{} && end == value.data() + value.size() && valid_expanded_arena_capacity(capacity)
+		? capacity : std::numeric_limits<u32>::max();
+}
+
+constexpr usz choose_arena_capacity(u64 physical_memory, u32 expanded_capacity_mib = 0) noexcept
+{
+	if (!valid_expanded_arena_capacity(expanded_capacity_mib))
 	{
-		return arena_max_capacity;
+		return 0;
+	}
+	if (expanded_capacity_mib)
+	{
+		return expanded_capacity_mib == 1 ? 512 * mib : static_cast<usz>(expanded_capacity_mib) * mib;
 	}
 
 	usz capacity = arena_default_capacity;
@@ -36,9 +58,9 @@ constexpr usz choose_arena_capacity(u64 physical_memory, bool expanded = false) 
 	{
 		capacity = arena_min_capacity;
 	}
-	else if (candidate > arena_max_capacity)
+	else if (candidate > arena_standard_max_capacity)
 	{
-		capacity = arena_max_capacity;
+		capacity = arena_standard_max_capacity;
 	}
 	else
 	{
@@ -77,7 +99,7 @@ static_assert(choose_arena_capacity(8'000'000'000ull) == 448 * mib);
 static_assert(choose_arena_capacity(8'000'000'000ull, true) == 512 * mib);
 static_assert(arena_prepare_chunk_count(0) == 0);
 static_assert(arena_prepare_chunk_count(448 * mib) == 28);
-static_assert(arena_prepare_chunk_count(arena_max_capacity) == 32);
+static_assert(arena_prepare_chunk_count(arena_max_capacity) == 64);
 static_assert(arena_prepare_chunk_count(17 * mib) == 2);
 static_assert(arena_prepare_chunk_length(17 * mib, 0) == 16 * mib);
 static_assert(arena_prepare_chunk_length(17 * mib, 1) == 1 * mib);

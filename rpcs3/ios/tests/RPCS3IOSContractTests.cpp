@@ -50,6 +50,18 @@ int main()
 	assert(validate_config_contract(&config) == RPCS3_IOS_INVALID_ARGUMENT);
 	config.expanded_jit_arena = 1;
 	assert(validate_config_contract(&config) == RPCS3_IOS_OK);
+	for (uint32_t size = 512; size <= 1024; ++size)
+	{
+		config.expanded_jit_arena = size;
+		assert(validate_config_contract(&config) == RPCS3_IOS_OK);
+	}
+	config.expanded_jit_arena = 511;
+	assert(validate_config_contract(&config) == RPCS3_IOS_INVALID_ARGUMENT);
+	config.expanded_jit_arena = 1025;
+	assert(validate_config_contract(&config) == RPCS3_IOS_INVALID_ARGUMENT);
+	config.expanded_jit_arena = UINT32_MAX;
+	assert(validate_config_contract(&config) == RPCS3_IOS_INVALID_ARGUMENT);
+	config.expanded_jit_arena = 1024;
 	config.reserved = 1;
 	assert(validate_config_contract(&config) == RPCS3_IOS_INVALID_ARGUMENT);
 	config.reserved = 0;
