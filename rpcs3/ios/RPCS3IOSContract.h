@@ -34,7 +34,9 @@ inline rpcs3_ios_status validate_config_contract(const rpcs3_ios_config* config)
 		config->struct_size < sizeof(rpcs3_ios_config) ||
 		!config->application_support_path || !config->cache_path ||
 		config->application_support_path[0] != '/' || config->cache_path[0] != '/' ||
-		config->expanded_jit_arena > 1 || config->reserved != 0)
+		(config->expanded_jit_arena > 1 &&
+			(config->expanded_jit_arena < 512 || config->expanded_jit_arena > 1024)) ||
+		config->reserved != 0)
 	{
 		return RPCS3_IOS_INVALID_ARGUMENT;
 	}

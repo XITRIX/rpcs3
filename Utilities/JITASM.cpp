@@ -155,7 +155,7 @@ static u8* add_jit_memory(usz size, usz align)
 	// Select subrange
 	u8* pointer = ensure(get_jit_memory(Executable));
 #ifdef RPCS3_IOS
-	const u64 capacity = rpcs3::ios::jit::arena_capacity();
+	const u64 capacity = rpcs3::ios::jit::arena_capacity(Executable);
 	ensure(capacity);
 #else
 	constexpr u64 capacity = 0x40000000;
