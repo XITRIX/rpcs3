@@ -20,6 +20,7 @@
 #include <mach/mach.h>
 #include <mach/vm_map.h>
 #include <mach/vm_statistics.h>
+#include <os/log.h>
 #include <sys/mman.h>
 #include <sys/sysctl.h>
 #include <sys/ucontext.h>
@@ -40,6 +41,7 @@ struct arena_state
 	u8* writable_code = nullptr;
 	u8* data = nullptr;
 	usz capacity = 0;
+	usz data_capacity = 0;
 	u32 preparation_chunks = 0;
 	rpcs3::ios::jit::arena_allocator code_allocator;
 	rpcs3::ios::jit::arena_allocator data_allocator;
@@ -66,15 +68,127 @@ struct sigaction g_previous_trap_action{};
 // reserves tags 240-255 for application-specific mappings.
 constexpr int jit_vm_tag = VM_MAKE_TAG(VM_MEMORY_APPLICATION_SPECIFIC_1);
 constexpr char expanded_jit_arena_environment[] = "RPCS3_IOS_EXPANDED_JIT_ARENA";
+constexpr vm_address_t arena_address_begin = 0x1'0000'0000;
+constexpr vm_address_t arena_address_end = 0x10'0000'0000;
+constexpr vm_size_t arena_address_step = 64 * 1024 * 1024;
 
-bool process_expanded_jit_arena_requested() noexcept
+u8* reserve_arena_layout(usz size, vm_address_t begin = arena_address_begin,
+	vm_address_t end = arena_address_end) noexcept
+{
+	// An unconstrained reservation can land in the extended high-address range,
+	// where Universal preparation can acknowledge RX pages that still fault on
+	// execution. Search a bounded low address window, leaving shared libraries
+	// and RPCS3's guest reservations in place.
+	// VM_FLAGS_FIXED without VM_FLAGS_OVERWRITE fails on occupied addresses;
+	// only the successfully reserved range may later receive MAP_FIXED mappings.
+	if (!size || begin < arena_address_begin || end > arena_address_end || begin >= end || size > end - begin)
+	{
+		return nullptr;
+	}
+
+	begin = (begin + arena_address_step - 1) & ~(arena_address_step - 1);
+	for (vm_address_t candidate = begin; candidate <= end - size; candidate += arena_address_step)
+	{
+		usz reserved = 0;
+		while (reserved < size)
+		{
+			const usz length = std::min(size - reserved, rpcs3::ios::jit::arena_prepare_chunk_size);
+			vm_address_t address = candidate + reserved;
+			if (::vm_map(mach_task_self(), &address, static_cast<vm_size_t>(length), 0,
+				VM_FLAGS_FIXED | jit_vm_tag, MACH_PORT_NULL, 0, false,
+				VM_PROT_NONE, VM_PROT_ALL, VM_INHERIT_DEFAULT) != KERN_SUCCESS)
+			{
+				break;
+			}
+			reserved += length;
+		}
+		if (reserved == size)
+		{
+			return reinterpret_cast<u8*>(candidate);
+		}
+		if (reserved)
+		{
+			::vm_deallocate(mach_task_self(), candidate, static_cast<vm_size_t>(reserved));
+		}
+	}
+	return nullptr;
+}
+
+u8* reserve_code_data_layout(usz code_capacity, u8*& data, usz& data_capacity) noexcept
+{
+	using namespace rpcs3::ios::jit;
+	data_capacity = 0;
+	data = nullptr;
+	if (code_capacity < arena_min_capacity || code_capacity > arena_max_capacity)
+	{
+		return nullptr;
+	}
+
+	// Prefer the original adjacent, equal-capacity layout when space permits.
+	if (u8* code = reserve_arena_layout(code_capacity * 2))
+	{
+		data = code + code_capacity;
+		data_capacity = code_capacity;
+		return code;
+	}
+
+	// Shared libraries/stacks can split the remaining low address space. Keep
+	// the requested code capacity and search separate nearby gaps for data.
+	// The combined span must fit within 4 GiB so every code/data page pair is
+	// in signed ADRP reach. Never place data in the distant writable-alias range.
+	constexpr vm_size_t reach = 0x1'0000'0000;
+	vm_address_t next_code = arena_address_begin;
+	while (u8* code = reserve_arena_layout(code_capacity, next_code))
+	{
+		const auto code_address = reinterpret_cast<vm_address_t>(code);
+		const vm_address_t data_begin = std::max(arena_address_begin, code_address + code_capacity - reach);
+		const vm_address_t data_end = std::min(arena_address_end, code_address + reach);
+		data_capacity = code_capacity;
+		for (;;)
+		{
+			if ((data = reserve_arena_layout(data_capacity, data_begin, data_end)))
+			{
+				return code;
+			}
+			if (data_capacity == arena_min_capacity)
+			{
+				break;
+			}
+			data_capacity = std::max(arena_min_capacity,
+				(data_capacity / 2) & ~(arena_capacity_step - 1));
+		}
+		::vm_deallocate(mach_task_self(), code_address, static_cast<vm_size_t>(code_capacity));
+		next_code = code_address + arena_address_step;
+	}
+	data_capacity = 0;
+	return nullptr;
+}
+
+bool map_arena_region(u8* address, usz size, int protection) noexcept
+{
+	for (usz offset = 0; offset < size;)
+	{
+		const usz length = std::min(size - offset, rpcs3::ios::jit::arena_prepare_chunk_size);
+		if (::mmap(address + offset, length, protection,
+			MAP_FIXED | MAP_PRIVATE | MAP_ANON, jit_vm_tag, 0) != address + offset)
+		{
+			return false;
+		}
+		offset += length;
+	}
+	return true;
+}
+
+u32 process_expanded_jit_arena_capacity() noexcept
 {
 	const char* const value = std::getenv(expanded_jit_arena_environment);
-	return value && value[0] == '1' && value[1] == '\0';
+	return value ? rpcs3::ios::jit::parse_expanded_arena_capacity(value) : 0;
 }
 
 void set_error(std::string message) noexcept
 {
+	// Core constructors can fail before the frontend log callback is installed.
+	os_log_error(OS_LOG_DEFAULT, "RPCS3 JIT: %{public}s", message.c_str());
 	std::lock_guard lock(g_error_mutex);
 	g_last_error = std::move(message);
 }
@@ -89,6 +203,12 @@ void set_arena_exhaustion_error(bool executable, std::string_view allocation_kin
 	const usz runtime = executable ? g_arena.runtime_code_bytes : g_arena.runtime_data_bytes;
 	const usz peak = executable ? g_arena.peak_code_bytes : g_arena.peak_data_bytes;
 	std::string message = "JIT_ARENA_EXHAUSTED: ";
+	if (!executable && g_arena.data_capacity < g_arena.capacity)
+	{
+		// Increasing executable capacity cannot recover a data reserve that was
+		// constrained by address space. Do not trigger the expansion proposal.
+		message = "JIT_DATA_ADDRESS_SPACE_EXHAUSTED: ";
+	}
 	message += executable ? "code" : "data";
 	message += " arena could not satisfy ";
 	message += allocation_kind;
@@ -103,7 +223,7 @@ void set_arena_exhaustion_error(bool executable, std::string_view allocation_kin
 	message += " bytes, live=" + std::to_string(live);
 	message += " bytes, runtime=" + std::to_string(runtime);
 	message += " bytes, peak=" + std::to_string(peak);
-	message += " bytes, capacity=" + std::to_string(g_arena.capacity) + " bytes)";
+	message += " bytes, capacity=" + std::to_string(allocator.capacity()) + " bytes)";
 	set_error(std::move(message));
 }
 
@@ -227,15 +347,19 @@ u64 physical_memory_size() noexcept
 	return ::sysctlbyname("hw.memsize", &value, &size, nullptr, 0) == 0 ? value : 0;
 }
 
-void discard_layout(u8* layout, usz total_size, vm_address_t writable_alias, usz capacity) noexcept
+void discard_layout(u8* code, usz capacity, u8* data, usz data_capacity, vm_address_t writable_alias) noexcept
 {
 	if (writable_alias)
 	{
 		::vm_deallocate(mach_task_self(), writable_alias, static_cast<vm_size_t>(capacity));
 	}
-	if (layout)
+	if (code)
 	{
-		::munmap(layout, total_size);
+		::munmap(code, capacity);
+	}
+	if (data)
+	{
+		::munmap(data, data_capacity);
 	}
 }
 
@@ -312,15 +436,22 @@ bool is_ready() noexcept
 
 bool prepare_arena() noexcept
 {
-	return prepare_arena(process_expanded_jit_arena_requested());
+	return prepare_arena(process_expanded_jit_arena_capacity());
 }
 
-bool prepare_arena(bool expanded) noexcept
+bool prepare_arena(u32 expanded_capacity_mib) noexcept
 {
 	std::lock_guard lock(g_arena_mutex);
+	if (!valid_expanded_arena_capacity(expanded_capacity_mib))
+	{
+		set_error("Invalid JIT arena capacity; expected 0, 1, or 512–1024 MiB");
+		return false;
+	}
+	const bool expanded = expanded_capacity_mib != 0;
 	if (g_arena.prepared)
 	{
-		if (g_arena.expanded != expanded)
+		if (g_arena.expanded != expanded ||
+			(expanded && g_arena.capacity != choose_arena_capacity(0, expanded_capacity_mib)))
 		{
 			set_error("JIT arena capacity policy changed after the arena was prepared; relaunch is required");
 			return false;
@@ -334,41 +465,32 @@ bool prepare_arena(bool expanded) noexcept
 		return false;
 	}
 
-	const usz capacity = choose_arena_capacity(physical_memory_size(), expanded);
-	if (!capacity || capacity > std::numeric_limits<usz>::max() / 2)
+	const usz capacity = choose_arena_capacity(physical_memory_size(), expanded_capacity_mib);
+	usz data_capacity = 0;
+	u8* data = nullptr;
+	u8* const layout = reserve_code_data_layout(capacity, data, data_capacity);
+	if (!layout)
 	{
-		set_error("Invalid JIT arena capacity");
-		return false;
-	}
-
-	const usz total_size = capacity * 2;
-	auto* const layout = static_cast<u8*>(::mmap(nullptr, total_size, PROT_NONE,
-		MAP_PRIVATE | MAP_ANON, jit_vm_tag, 0));
-	if (layout == MAP_FAILED)
-	{
-		set_error("Unable to reserve the JIT arena layout: " + std::string{std::strerror(errno)});
+		set_error("Unable to reserve the JIT arena layout in low virtual address space (code=" +
+			std::to_string(capacity) + ", minimum data=" + std::to_string(arena_min_capacity) + " bytes)");
 		return false;
 	}
 
 	const int initial_code_protection = backend == arena_backend::universal_mirrored
 		? PROT_READ | PROT_EXEC
 		: PROT_READ | PROT_WRITE;
-	void* const code = ::mmap(layout, capacity, initial_code_protection,
-		MAP_FIXED | MAP_PRIVATE | MAP_ANON, jit_vm_tag, 0);
-	if (code != layout)
+	if (!map_arena_region(layout, capacity, initial_code_protection))
 	{
 		const std::string detail = std::strerror(errno);
-		discard_layout(layout, total_size, 0, capacity);
+		discard_layout(layout, capacity, data, data_capacity, 0);
 		set_error("Unable to map the JIT code arena: " + detail);
 		return false;
 	}
 
-	void* const data = ::mmap(layout + capacity, capacity, PROT_READ | PROT_WRITE,
-		MAP_FIXED | MAP_PRIVATE | MAP_ANON, jit_vm_tag, 0);
-	if (data != layout + capacity)
+	if (!map_arena_region(data, data_capacity, PROT_READ | PROT_WRITE))
 	{
 		const std::string detail = std::strerror(errno);
-		discard_layout(layout, total_size, 0, capacity);
+		discard_layout(layout, capacity, data, data_capacity, 0);
 		set_error("Unable to map the JIT data arena: " + detail);
 		return false;
 	}
@@ -382,11 +504,14 @@ bool prepare_arena(bool expanded) noexcept
 			const usz offset = static_cast<usz>(chunk_index) * arena_prepare_chunk_size;
 			const usz chunk_length = arena_prepare_chunk_length(capacity, chunk_index);
 			u8* const chunk = layout + offset;
-			if (!chunk_length || protocol_call(command_prepare_region, chunk, chunk_length) != reinterpret_cast<uptr>(chunk))
+			const u64 response = chunk_length ? protocol_call(command_prepare_region, chunk, chunk_length) : 0;
+			if (!chunk_length || response != reinterpret_cast<uptr>(chunk))
 			{
-				discard_layout(layout, total_size, 0, capacity);
+				discard_layout(layout, capacity, data, data_capacity, 0);
 				set_error("The debugger did not prepare Universal JIT arena chunk " +
-					std::to_string(chunk_index + 1) + " of " + std::to_string(preparation_chunks));
+					std::to_string(chunk_index + 1) + " of " + std::to_string(preparation_chunks) +
+					" (address=" + std::to_string(reinterpret_cast<uptr>(chunk)) +
+					", length=" + std::to_string(chunk_length) + ", response=" + std::to_string(response) + ")");
 				return false;
 			}
 		}
@@ -409,7 +534,7 @@ bool prepare_arena(bool expanded) noexcept
 		VM_INHERIT_SHARE);
 	if (remap_result != KERN_SUCCESS)
 	{
-		discard_layout(layout, total_size, 0, capacity);
+		discard_layout(layout, capacity, data, data_capacity, 0);
 		set_error("mach_vm_remap failed while creating the arena's writable alias");
 		return false;
 	}
@@ -417,7 +542,7 @@ bool prepare_arena(bool expanded) noexcept
 	if (::vm_protect(mach_task_self(), alias, static_cast<vm_size_t>(capacity), false,
 		VM_PROT_READ | VM_PROT_WRITE) != KERN_SUCCESS)
 	{
-		discard_layout(layout, total_size, alias, capacity);
+		discard_layout(layout, capacity, data, data_capacity, alias);
 		set_error("mach_vm_protect failed for the arena's writable alias");
 		return false;
 	}
@@ -429,18 +554,19 @@ bool prepare_arena(bool expanded) noexcept
 		::mprotect(layout, capacity, PROT_READ | PROT_EXEC) != 0)
 	{
 		const std::string detail = std::strerror(errno);
-		discard_layout(layout, total_size, alias, capacity);
+		discard_layout(layout, capacity, data, data_capacity, alias);
 		set_error("Unable to transition the legacy JIT arena from writable to executable: " + detail);
 		return false;
 	}
 
 	g_arena.code_allocator.reset(capacity);
-	g_arena.data_allocator.reset(capacity);
+	g_arena.data_allocator.reset(data_capacity);
 
 	g_arena.code = layout;
 	g_arena.writable_code = reinterpret_cast<u8*>(alias);
-	g_arena.data = layout + capacity;
+	g_arena.data = data;
 	g_arena.capacity = capacity;
+	g_arena.data_capacity = data_capacity;
 	g_arena.preparation_chunks = preparation_chunks;
 	g_arena.backend = backend;
 	g_arena.expanded = expanded;
@@ -495,7 +621,7 @@ void* runtime_memory(bool executable) noexcept
 	return executable ? static_cast<void*>(g_arena.code) : static_cast<void*>(g_arena.data);
 }
 
-usz arena_capacity() noexcept
+usz arena_capacity(bool executable) noexcept
 {
 	if (!prepare_arena())
 	{
@@ -503,7 +629,7 @@ usz arena_capacity() noexcept
 	}
 
 	std::lock_guard lock(g_arena_mutex);
-	return g_arena.capacity;
+	return executable ? g_arena.capacity : g_arena.data_capacity;
 }
 
 bool claim_runtime(bool executable, usz offset, usz size) noexcept
@@ -594,7 +720,7 @@ void release_allocation(bool executable, void* address, usz size) noexcept
 	std::lock_guard lock(g_arena_mutex);
 	usz offset = 0;
 	u8* const base = executable ? g_arena.code : g_arena.data;
-	if (!contains(base, g_arena.capacity, address, size, offset))
+	if (!contains(base, executable ? g_arena.capacity : g_arena.data_capacity, address, size, offset))
 	{
 		set_error("Attempted to release an address outside the JIT arena");
 		return;
@@ -637,6 +763,7 @@ arena_statistics get_statistics() noexcept
 	std::lock_guard lock(g_arena_mutex);
 	arena_statistics result;
 	result.capacity = g_arena.capacity;
+	result.data_capacity = g_arena.data_capacity;
 	result.preparation_chunks = g_arena.preparation_chunks;
 	result.runtime_code_bytes = g_arena.runtime_code_bytes;
 	result.runtime_data_bytes = g_arena.runtime_data_bytes;
