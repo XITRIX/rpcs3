@@ -139,6 +139,7 @@ typedef struct rpcs3_ios_config
     rpcs3_ios_log_callback log_callback;
     rpcs3_ios_main_thread_callback main_thread_callback;
     void* user_context;
+    // 0: adaptive standard size; 1: legacy 512 MiB; 512–1024: explicit MiB.
     uint32_t expanded_jit_arena;
     uint32_t reserved;
 } rpcs3_ios_config;
