@@ -15,6 +15,46 @@ int main()
 	static_assert(choose_arena_capacity(8ull * 1024 * mib) == 512 * mib);
 	static_assert(choose_arena_capacity(8'000'000'000ull) == 448 * mib);
 	static_assert(choose_arena_capacity(8'000'000'000ull, true) == 512 * mib);
+	static_assert(choose_arena_capacity(64ull * 1024 * mib) == 512 * mib);
+	static_assert(choose_arena_capacity(0, 512) == 512 * mib);
+	static_assert(choose_arena_capacity(0, 612) == 612 * mib);
+	static_assert(choose_arena_capacity(0, 1024) == 1024 * mib);
+	static_assert(choose_arena_capacity(0, 511) == 0);
+	static_assert(choose_arena_capacity(0, 1025) == 0);
+
+	for (const auto value : {"0", "1", "512", "612", "1024"})
+	{
+		assert(choose_arena_capacity(0, parse_expanded_arena_capacity(value)) != 0);
+	}
+	for (const auto value : {"", "-1", "+512", " 512", "512MiB", "511", "1025", "4294967296"})
+	{
+		assert(choose_arena_capacity(0, parse_expanded_arena_capacity(value)) == 0);
+	}
+
+	// Every slider value must prepare the entire code range in bounded chunks,
+	// including the partial final chunk for 100 MiB recovery increments.
+	for (u32 size = 512; size <= 1024; ++size)
+	{
+		const usz capacity = choose_arena_capacity(0, size);
+		usz prepared = 0;
+		for (u32 chunk = 0; chunk < arena_prepare_chunk_count(capacity); ++chunk)
+		{
+			const usz length = arena_prepare_chunk_length(capacity, chunk);
+			assert(length > 0 && length <= 16 * mib);
+			assert(length % (16 * 1024) == 0);
+			prepared += length;
+		}
+		assert(prepared == capacity);
+		assert(arena_prepare_chunk_length(capacity, arena_prepare_chunk_count(capacity)) == 0);
+	}
+
+	// Exercise offsets at the new ceiling without mapping physical JIT pages.
+	arena_allocator large{arena_max_capacity};
+	arena_range end;
+	assert(large.allocate_highest(100 * mib, 16384, end));
+	assert(end.offset == 924 * mib);
+	assert(large.release(end.offset, end.size));
+	assert(large.free_bytes() == arena_max_capacity);
 
 	arena_allocator allocator{1024};
 	arena_range low;
