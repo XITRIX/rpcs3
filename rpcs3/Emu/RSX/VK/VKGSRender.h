@@ -41,6 +41,9 @@ namespace vk
 class VKGSRender : public GSRender, public ::rsx::reports::ZCULL_control
 {
 private:
+#ifdef RPCS3_IOS
+	u64 m_ios_graphics_generation = 0;
+#endif
 	enum frame_context_state : u32
 	{
 		dirty = 1
