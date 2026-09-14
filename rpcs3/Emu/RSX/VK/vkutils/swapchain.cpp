@@ -1,4 +1,7 @@
 #include "stdafx.h"
+#ifdef RPCS3_IOS
+#include "ios/IOSGraphicsLifecycle.h"
+#endif
 #include "swapchain.h"
 
 namespace vk
@@ -361,6 +364,9 @@ namespace vk
 
 	VkResult swapchain_WSI::present(VkSemaphore semaphore, u32 image)
 	{
+#ifdef RPCS3_IOS
+		auto graphics_scope = rpcs3::ios::graphics_lifecycle_state().begin_submission();
+#endif
 		VkPresentInfoKHR present = {};
 		present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 		present.pNext = nullptr;

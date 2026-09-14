@@ -6,6 +6,7 @@
 #include "Utilities/File.h"
 #ifdef RPCS3_IOS
 #include "ios/RPCS3IOSBootProgress.h"
+#include "ios/IOSGraphicsLifecycle.h"
 #include "Emu/cache_utils.hpp"
 #endif
 #include <vulkan/vulkan_core.h>
@@ -1087,6 +1088,15 @@ namespace vk
 			vk::die_with_error(error);
 		}
 
+#ifdef RPCS3_IOS
+		rpcs3::ios::graphics_lifecycle_state().register_device(this, [](void* context)
+		{
+			auto* device = static_cast<render_device*>(context);
+			const VkResult result = vkDeviceWaitIdle(*device);
+			if (result != VK_SUCCESS)
+				rsx_log.error("iOS graphics background drain failed: %d", static_cast<int>(result));
+		});
+#endif
 		// Dump some diagnostics to the log
 		rsx_log.notice("%u extensions loaded:", ::size32(requested_extensions));
 		for (const auto& ext : requested_extensions)
@@ -1142,6 +1152,9 @@ namespace vk
 
 	void render_device::destroy()
 	{
+#ifdef RPCS3_IOS
+		rpcs3::ios::graphics_lifecycle_state().unregister_device(this);
+#endif
 		if (g_render_device == this)
 		{
 			g_render_device = nullptr;
