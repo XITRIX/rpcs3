@@ -8,6 +8,11 @@ CXX_COMPILER="${CXX:-clang++}"
 
 mkdir -p "${OUTPUT_ROOT}"
 
+"${CXX_COMPILER}" -std=c++20 -pthread -Wall -Wextra -Werror \
+    "${SCRIPT_DIR}/IOSGraphicsLifecycleTests.cpp" \
+    -o "${OUTPUT_ROOT}/IOSGraphicsLifecycleTests"
+"${OUTPUT_ROOT}/IOSGraphicsLifecycleTests"
+
 "${CXX_COMPILER}" -std=c++20 -Wall -Wextra -Werror \
     "${SCRIPT_DIR}/RPCS3IOSContractTests.cpp" \
     -o "${OUTPUT_ROOT}/RPCS3IOSContractTests"

@@ -11,6 +11,9 @@
 #include "upscalers/nearest_pass.hpp"
 #include "util/asm.hpp"
 #include "util/video_provider.h"
+#ifdef RPCS3_IOS
+#include "ios/IOSGraphicsLifecycle.h"
+#endif
 
 extern atomic_t<bool> g_user_asked_for_screenshot;
 extern atomic_t<recording_mode> g_recording_mode;
@@ -428,6 +431,25 @@ vk::viewable_image* VKGSRender::get_present_source(/* inout */ vk::present_surfa
 
 void VKGSRender::flip(const rsx::display_flip_info_t& info)
 {
+#ifdef RPCS3_IOS
+	auto& graphics = rpcs3::ios::graphics_lifecycle_state();
+	auto frame_scope = graphics.try_begin_frame();
+	if (!frame_scope)
+	{
+		// Compilation dialogs call flip synchronously. Skip their drawing so
+		// PPU/SPU and shader preparation can continue without background GPU use.
+		m_frame->flip(m_context, true);
+		rsx::thread::flip(info);
+		return;
+	}
+	const auto generation = graphics.generation();
+	if (m_ios_graphics_generation && m_ios_graphics_generation != generation)
+	{
+		rsx_log.notice("iOS graphics: recreating swapchain after foreground activation");
+		should_reinitialize_swapchain = true;
+	}
+	m_ios_graphics_generation = generation;
+#endif
 	// Check swapchain condition/status
 	if (!m_swapchain->supports_automatic_wm_reports())
 	{
@@ -604,6 +626,16 @@ void VKGSRender::flip(const rsx::display_flip_info_t& info)
 		case VK_TIMEOUT:
 		case VK_NOT_READY:
 		{
+#ifdef RPCS3_IOS
+			// A hidden CAMetalLayer may never supply another drawable. Release
+			// this frame so UIKit can drain the device and finish suspending.
+			if (!graphics.active())
+			{
+				m_frame->flip(m_context, true);
+				rsx::thread::flip(info);
+				return;
+			}
+#endif
 			// In some cases, after a fullscreen switch, the driver only allows N-1 images to be acquirable, where N = number of available swap images.
 			// This means that any acquired images have to be released
 			// before acquireNextImage can return successfully. This is despite the driver reporting 2 swap chain images available

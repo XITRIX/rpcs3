@@ -1,4 +1,8 @@
 #include "RPCS3IOSPlatform.h"
+#include "IOSGraphicsLifecycle.h"
+#include "util/logs.hpp"
+
+LOG_CHANNEL(ios_graphics_log, "iOS Graphics");
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wold-style-cast"
@@ -9,8 +13,53 @@
 
 #include <dispatch/dispatch.h>
 
+@interface RPCS3GraphicsLifecycleObserver : NSObject
+- (void)willResignActive:(NSNotification*)notification;
+- (void)didBecomeActive:(NSNotification*)notification;
+@end
+
+@implementation RPCS3GraphicsLifecycleObserver
+- (void)willResignActive:(NSNotification*)notification
+{
+	(void)notification;
+	rpcs3::ios::graphics_lifecycle_state().set_active(false);
+	ios_graphics_log.notice("Vulkan submissions suspended and GPU work drained before backgrounding");
+}
+- (void)didBecomeActive:(NSNotification*)notification
+{
+	(void)notification;
+	rpcs3::ios::graphics_lifecycle_state().set_active(true);
+	ios_graphics_log.notice("Vulkan submissions resumed; next frame will refresh the swapchain");
+}
+@end
+
 namespace rpcs3::ios
 {
+graphics_lifecycle& graphics_lifecycle_state()
+{
+	static graphics_lifecycle state;
+	return state;
+}
+
+void initialize_graphics_lifecycle()
+{
+	// Never dispatch synchronously to UIKit while holding the lifecycle ABI lock.
+	static std::once_flag once;
+	std::call_once(once, []
+	{
+		dispatch_async(dispatch_get_main_queue(), ^
+		{
+			static RPCS3GraphicsLifecycleObserver* observer = [RPCS3GraphicsLifecycleObserver new];
+			NSNotificationCenter* center = NSNotificationCenter.defaultCenter;
+			[center addObserver:observer selector:@selector(willResignActive:)
+				name:UIApplicationWillResignActiveNotification object:nil];
+			[center addObserver:observer selector:@selector(didBecomeActive:)
+				name:UIApplicationDidBecomeActiveNotification object:nil];
+			graphics_lifecycle_state().set_active(UIApplication.sharedApplication.applicationState == UIApplicationStateActive);
+		});
+	});
+}
+
 namespace
 {
 #if !TARGET_OS_VISION
