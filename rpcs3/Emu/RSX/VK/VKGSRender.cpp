@@ -1,5 +1,8 @@
 #include "Emu/RSX/VK/vkutils/descriptors.h"
 #include "stdafx.h"
+#ifdef RPCS3_IOS
+#include "ios/IOSGraphicsLifecycle.h"
+#endif
 #include "../Overlays/overlay_compile_notification.h"
 #include "../Overlays/Shaders/shader_loading_dialog_native.h"
 
@@ -1794,6 +1797,10 @@ void VKGSRender::do_local_task(rsx::FIFO::state state)
 		const auto should_ignore = in_begin_end && state != rsx::FIFO::state::empty;
 		if ((async_flip_requested & flip_request::native_ui) && !should_ignore && !is_stopped())
 		{
+#ifdef RPCS3_IOS
+			auto frame_scope = rpcs3::ios::graphics_lifecycle_state().try_begin_frame();
+			if (!frame_scope) return;
+#endif
 			flush_command_queue(true);
 			rsx::display_flip_info_t info{};
 			info.buffer = current_display_buffer;
