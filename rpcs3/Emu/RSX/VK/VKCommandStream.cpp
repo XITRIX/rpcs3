@@ -8,6 +8,9 @@
 #include "Emu/RSX/RSXOffload.h"
 #include "Emu/RSX/RSXThread.h"
 #include "Emu/system_config.h"
+#ifdef RPCS3_IOS
+#include "ios/IOSGraphicsLifecycle.h"
+#endif
 
 namespace vk
 {
@@ -27,6 +30,10 @@ namespace vk
 	FORCE_INLINE
 	static void queue_submit_impl(const queue_submit_t& submit_info)
 	{
+#ifdef RPCS3_IOS
+		// Preserve recorded work. Wait before taking the Vulkan submit mutex.
+		auto graphics_scope = rpcs3::ios::graphics_lifecycle_state().begin_submission();
+#endif
 		ensure(submit_info.pfence);
 		acquire_global_submit_lock();
 		VkSubmitInfo info

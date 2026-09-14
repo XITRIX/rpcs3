@@ -51,6 +51,9 @@ namespace vk
 class VKGSRender : public rsx::render_backend, public ::rsx::reports::occlusion_query_provider
 {
 private:
+#ifdef RPCS3_IOS
+	u64 m_ios_graphics_generation = 0;
+#endif
 	enum frame_context_state : u32
 	{
 		dirty = 1
