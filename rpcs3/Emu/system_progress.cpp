@@ -198,6 +198,21 @@ void progress_dialog_server::operator()()
 		{
 			const auto [text_new, ftotal_new, fdone_new, ftotal_bits_new, fknown_bits_new, ptotal_new, pdone_new] = get_state();
 
+			// Check before either UI path can continue. The compact overlay keeps
+			// text1 as its last non-empty label, so an empty text_new otherwise
+			// looks changed forever and bypasses completion/counter cleanup.
+			// This also handles work finishing before the first dialog update.
+			if (text_new.empty() && ftotal_new == fdone_new && ptotal_new == pdone_new)
+			{
+				ftotal = ftotal_new;
+				fdone = fdone_new;
+				ftotal_bits = ftotal_bits_new;
+				fknown_bits = fknown_bits_new;
+				ptotal = ptotal_new;
+				pdone = pdone_new;
+				break;
+			}
+
 			// Force-update every 20 seconds to update remaining time
 			if (wait_no_update_count == 100u * 20 || ftotal != ftotal_new || fdone != fdone_new || fknown_bits != fknown_bits_new
 				|| ftotal_bits != ftotal_bits_new || ptotal != ptotal_new || pdone != pdone_new || text_new != text1)
@@ -377,13 +392,6 @@ void progress_dialog_server::operator()()
 			{
 				// Make sure to update any pending messages. PPU compilation may freeze the image.
 				rsx::overlays::refresh_message_queue();
-			}
-
-			// Leave only if total count is equal to done count
-			if (ftotal == fdone && ptotal == pdone && text_new.empty())
-			{
-				// Complete state, empty message: close dialog
-				break;
 			}
 
 			sleep_for = 10'000;
