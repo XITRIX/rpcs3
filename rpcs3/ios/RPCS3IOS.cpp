@@ -9,6 +9,7 @@
 #include "RPCS3IOSOverlayMedia.h"
 #include "RPCS3IOSPath.h"
 #include "RPCS3IOSPlatform.h"
+#include "IOSGraphicsLifecycle.h"
 #include "RPCS3IOSPerformance.h"
 #include "RAPLicenseContract.h"
 #include "RPCS3IOSRuntimePatches.h"
@@ -1307,6 +1308,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 	try
 	{
 		g_application_support_path = config->application_support_path;
+		rpcs3::ios::initialize_graphics_lifecycle();
 		g_cache_path = config->cache_path;
 		g_config = *config;
 		g_config.application_support_path = g_application_support_path.c_str();
