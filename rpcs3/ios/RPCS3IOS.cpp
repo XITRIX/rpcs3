@@ -25,6 +25,7 @@
 #include "Emu/Io/IOS/IOSPadHandler.h"
 
 #include "Emu/System.h"
+#include "Emu/emu_callbacks.h"
 #include "Emu/IdManager.h"
 #include "Emu/Audio/IOS/IOSAudioBackend.h"
 #include "Emu/Audio/Null/null_enumerator.h"
@@ -885,9 +886,9 @@ void invoke_main_thread_payload(void* raw_payload)
 	}
 }
 
-EmuCallbacks make_callbacks()
+emu_callbacks make_callbacks()
 {
-	EmuCallbacks callbacks{};
+	emu_callbacks callbacks{};
 
 	callbacks.call_from_main_thread = [](std::function<void()> function, atomic_t<u32>* wake_up)
 	{
@@ -1385,7 +1386,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 				jit_stats.capacity / (1024 * 1024),
 				jit_stats.expanded ? "expanded" : "standard"));
 		}
-		Emu.SetCallbacks(make_callbacks());
+		g_emu_callbacks = make_callbacks();
 		Emu.SetSupportedRenderers({video_renderer::vulkan});
 		Emu.SetDefaultRenderer(video_renderer::vulkan);
 		// The configured name only satisfies RPCS3's pre-init invariant. The
