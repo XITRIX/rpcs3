@@ -2413,7 +2413,7 @@ game_boot_result Emulator::Load(const std::string& title_id, bool is_disc_patch,
 			{
 				bool install_success = true;
 #ifdef RPCS3_IOS
-				install_success = GetCallbacks().on_install_pkgs(pkgs, launching_from_optical_drive);
+				install_success = g_emu_callbacks.on_install_pkgs(pkgs, launching_from_optical_drive);
 #else
 				BlockingCallFromMainThread([this, &pkgs, &install_success, launching_from_optical_drive]()
 				{
