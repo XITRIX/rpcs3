@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Emu/Audio/AudioBackend.h"
+#include "ios/IOSAudioDiagnostics.h"
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wold-style-cast"
@@ -48,11 +49,17 @@ private:
 
 	void close_unlocked();
 	void notify_error();
+	void log_diagnostics(bool force);
 
 	std::mutex m_control_mutex;
 	AudioComponent m_component = nullptr;
 	AudioUnit m_unit = nullptr;
-	std::array<u8, sizeof(float) * output_channel_count> m_last_frame{};
+	rpcs3::ios::audio_detail::stereo_fader m_fader;
+	rpcs3::ios::audio_detail::callback_diagnostics m_diagnostics;
+	std::atomic_bool m_needs_fade_reset = false;
+	std::mutex m_diagnostics_log_mutex;
+	u64 m_next_diagnostics_us = 0;
+	u64 m_reported_callbacks = 0;
 	u32 m_bytes_per_frame = 0;
 	std::atomic_bool m_operational = false;
 };

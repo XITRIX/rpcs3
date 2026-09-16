@@ -69,6 +69,20 @@ mkdir -p "${OUTPUT_ROOT}"
     -o "${OUTPUT_ROOT}/IOSAudioBufferContractTests"
 "${OUTPUT_ROOT}/IOSAudioBufferContractTests"
 
+"${CXX_COMPILER}" -std=c++20 -pthread -Wall -Wextra -Werror \
+    -I "${SOURCE_ROOT}/rpcs3" \
+    "${SCRIPT_DIR}/IOSAudioRecoveryTests.cpp" \
+    -o "${OUTPUT_ROOT}/IOSAudioRecoveryTests"
+"${OUTPUT_ROOT}/IOSAudioRecoveryTests"
+
+"${CXX_COMPILER}" -std=c++20 -pthread -Wall -Wextra -Werror \
+    -I "${SOURCE_ROOT}/rpcs3" \
+    "${SCRIPT_DIR}/IOSAudioDiagnosticsTests.cpp" \
+    -o "${OUTPUT_ROOT}/IOSAudioDiagnosticsTests"
+
+bash "${SCRIPT_DIR}/run-audio-tempo-tests.sh"
+"${OUTPUT_ROOT}/IOSAudioDiagnosticsTests"
+
 "${CXX_COMPILER}" -std=c++20 -Wall -Wextra -Werror \
     -I "${SOURCE_ROOT}" -I "${SOURCE_ROOT}/rpcs3" \
     "${SCRIPT_DIR}/RPCS3IOSOverlayMediaTests.cpp" \

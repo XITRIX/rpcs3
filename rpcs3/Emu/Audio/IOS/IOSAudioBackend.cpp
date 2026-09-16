@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "IOSAudioBackend.h"
 #include "ios/IOSAudioBufferContract.h"
+#include "Emu/Cell/timers.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -52,6 +53,7 @@ bool IOSAudioBackend::Initialized()
 
 bool IOSAudioBackend::Operational()
 {
+	log_diagnostics(false);
 	return m_operational.load(std::memory_order_acquire);
 }
 
@@ -81,7 +83,7 @@ bool IOSAudioBackend::Open(
 	setup_channel_layout(static_cast<u32>(ch_cnt), output_channel_count, layout, IOSAudio);
 
 	const u32 bytes_per_frame = get_channels() * get_sample_size();
-	if (bytes_per_frame == 0 || bytes_per_frame > m_last_frame.size())
+	if (bytes_per_frame == 0 || bytes_per_frame > sizeof(float) * output_channel_count)
 	{
 		IOSAudio.error("Invalid RemoteIO frame size %u", bytes_per_frame);
 		return false;
@@ -155,9 +157,10 @@ bool IOSAudioBackend::Open(
 		std::lock_guard callback_lock{m_cb_mutex};
 		m_unit = unit;
 		m_bytes_per_frame = bytes_per_frame;
-		m_last_frame.fill(0);
+		m_fader.reset(get_sampling_rate());
 		m_playing = false;
 	}
+	m_needs_fade_reset.store(false, std::memory_order_relaxed);
 	m_operational.store(true, std::memory_order_release);
 
 	IOSAudio.notice(
@@ -187,10 +190,12 @@ void IOSAudioBackend::close_unlocked()
 		check_status(AudioComponentInstanceDispose(unit), "AudioComponentInstanceDispose");
 	}
 
+	m_diagnostics.reset_timing();
+	log_diagnostics(true);
 	std::lock_guard callback_lock{m_cb_mutex};
 	m_unit = nullptr;
 	m_bytes_per_frame = 0;
-	m_last_frame.fill(0);
+	m_fader.reset(get_sampling_rate());
 	m_playing = false;
 }
 
@@ -223,6 +228,7 @@ void IOSAudioBackend::Play()
 		{
 			return;
 		}
+		m_diagnostics.reset_timing();
 		m_playing = true;
 	}
 
@@ -231,7 +237,7 @@ void IOSAudioBackend::Play()
 		{
 			std::lock_guard callback_lock{m_cb_mutex};
 			m_playing = false;
-			m_last_frame.fill(0);
+			m_fader.reset(get_sampling_rate());
 		}
 		m_operational.store(false, std::memory_order_release);
 		notify_error();
@@ -261,7 +267,7 @@ void IOSAudioBackend::Pause()
 	{
 		std::lock_guard callback_lock{m_cb_mutex};
 		m_playing = false;
-		m_last_frame.fill(0);
+		m_fader.reset(get_sampling_rate());
 	}
 
 	if (!stopped)
@@ -269,6 +275,22 @@ void IOSAudioBackend::Pause()
 		m_operational.store(false, std::memory_order_release);
 		notify_error();
 	}
+}
+
+void IOSAudioBackend::log_diagnostics(bool force)
+{
+	// Operational() is polled by cellAudio, never by the render callback.
+	std::unique_lock lock{m_diagnostics_log_mutex, std::try_to_lock};
+	if (!lock) return;
+	const u64 now = get_system_time();
+	if (!force && now < m_next_diagnostics_us) return;
+	m_next_diagnostics_us = now + 2'000'000;
+	const auto d = m_diagnostics.snapshot();
+	if (d.callbacks == m_reported_callbacks) return;
+	m_reported_callbacks = d.callbacks;
+	IOSAudio.notice("RemoteIO diagnostics: cumulative callbacks=%llu requested_frames=%llu delivered_frames=%llu filler_frames=%llu short_reads=%llu zero_reads=%llu inactive=%llu lock_misses=%llu callback_frames=%llu..%llu max_gap_us=%llu late_callbacks=%llu",
+		d.callbacks, d.requested, d.delivered, d.filler, d.short_reads, d.zero_reads, d.inactive, d.lock_misses,
+		d.min_frames, d.max_frames, d.max_gap_us, d.late_callbacks);
 }
 
 void IOSAudioBackend::notify_error()
@@ -325,29 +347,38 @@ OSStatus IOSAudioBackend::render_callback(
 	}
 
 	auto* output = static_cast<u8*>(buffer.mData);
+	const u32 requested_frames = requested / bytes_per_frame;
+	const u64 callback_time = get_system_time();
+	using rpcs3::ios::audio_detail::callback_outcome;
 	std::unique_lock callback_lock{backend->m_cb_mutex, std::defer_lock};
-	if (!callback_lock.try_lock() || !backend->m_write_callback || !backend->m_playing)
+	if (!callback_lock.try_lock())
 	{
 		std::memset(output, 0, requested);
+		backend->m_needs_fade_reset.store(true, std::memory_order_relaxed);
+		backend->m_diagnostics.record(requested_frames, 0, callback_outcome::lock_miss, callback_time, backend->get_sampling_rate());
+		return noErr;
+	}
+	if (!backend->m_write_callback || !backend->m_playing)
+	{
+		std::memset(output, 0, requested);
+		backend->m_diagnostics.record(requested_frames, 0, callback_outcome::inactive, callback_time, backend->get_sampling_rate());
 		return noErr;
 	}
 
 	u32 written = backend->m_write_callback(requested, output);
-	written = rpcs3::ios::audio::aligned_written_byte_count(
-		written,
-		requested,
-		bytes_per_frame);
-	if (written >= bytes_per_frame)
+	written = rpcs3::ios::audio::aligned_written_byte_count(written, requested, bytes_per_frame);
+	if (backend->m_needs_fade_reset.exchange(false, std::memory_order_relaxed))
 	{
-		std::memcpy(
-			backend->m_last_frame.data(),
-			output + written - bytes_per_frame,
-			bytes_per_frame);
+		backend->m_fader.reset(backend->get_sampling_rate());
 	}
-
-	for (u32 offset = written; offset < requested; offset += bytes_per_frame)
+	if (backend->get_convert_to_s16())
 	{
-		std::memcpy(output + offset, backend->m_last_frame.data(), bytes_per_frame);
+		backend->m_fader.process(reinterpret_cast<s16*>(output), requested_frames, written / bytes_per_frame);
 	}
+	else
+	{
+		backend->m_fader.process(reinterpret_cast<f32*>(output), requested_frames, written / bytes_per_frame);
+	}
+	backend->m_diagnostics.record(requested_frames, written / bytes_per_frame, callback_outcome::rendered, callback_time, backend->get_sampling_rate());
 	return noErr;
 }

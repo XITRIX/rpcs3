@@ -10,6 +10,11 @@
 #include "Emu/Audio/audio_resampler.h"
 #include "Emu/system_config_types.h"
 
+#ifdef RPCS3_IOS
+#include "ios/IOSAudioDiagnostics.h"
+#include "ios/IOSAudioTempo.h"
+#endif
+
 struct lv2_event_queue;
 struct lv2_memory;
 class ppu_thread;
@@ -320,6 +325,12 @@ private:
 	std::unique_ptr<float[]> buffer[MAX_AUDIO_BUFFERS]{};
 
 	simple_ringbuf cb_ringbuf{};
+#ifdef RPCS3_IOS
+	rpcs3::ios::audio_detail::refill_controller m_refill;
+	rpcs3::ios::audio_detail::tempo_controller m_tempo;
+	std::atomic_bool m_refill_reset_requested = false;
+	u64 m_next_diagnostics_us = 0;
+#endif
 	audio_resampler resampler{};
 
 	atomic_t<bool> backend_active = false;
@@ -345,6 +356,11 @@ private:
 	void backend_state_callback(AudioStateEvent event);
 
 public:
+#ifdef RPCS3_IOS
+	rpcs3::ios::audio_detail::queue_diagnostics diagnostics;
+	void log_diagnostics(u64 timestamp, bool force = false);
+	void update_tempo(u64 timestamp, u64 queued_us, bool active_ports);
+#endif
 	audio_ringbuffer(cell_audio_config &cfg);
 	~audio_ringbuffer();
 
