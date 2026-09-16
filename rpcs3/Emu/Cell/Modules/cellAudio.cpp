@@ -166,6 +166,14 @@ audio_ringbuffer::audio_ringbuffer(cell_audio_config& _cfg)
 	}();
 
 	cb_ringbuf.set_buf_size(static_cast<u32>(cfg.backend_ch_cnt * cfg.audio_sampling_rate * cfg.audio_sample_size * buffer_dur_mult));
+#ifdef RPCS3_IOS
+	const u32 capacity_frames = static_cast<u32>(cb_ringbuf.get_total_size() / (cfg.backend_ch_cnt * cfg.audio_sample_size));
+	const u32 target_frames = static_cast<u32>(cfg.desired_buffer_duration * cfg.audio_sampling_rate / 1'000'000);
+	m_refill.configure(cfg.audio_sampling_rate, target_frames, capacity_frames, cfg.buffering_enabled);
+	cellAudio.notice("Apple mobile audio recovery: buffer=%llu us capacity=%u frames refill=%u frames fade=3 ms wait_limit=100 ms cooldown=250 ms timeout_rearm=1 s healthy output",
+		cfg.desired_buffer_duration, capacity_frames, std::min(target_frames, capacity_frames));
+	cellAudio.notice("Apple mobile audio producer: measured PCM tempo with bounded slew; missing buffers excluded from stretching; original guest timeouts; no accelerated empty-buffer heartbeat");
+#endif
 	backend->SetWriteCallback(std::bind(&audio_ringbuffer::backend_write_callback, this, std::placeholders::_1, std::placeholders::_2));
 	backend->SetStateCallback(std::bind(&audio_ringbuffer::backend_state_callback, this, std::placeholders::_1));
 }
@@ -198,7 +206,20 @@ u32 audio_ringbuffer::backend_write_callback(u32 size, void *buf)
 {
 	if (!backend_active.observe()) backend_active = true;
 
+#ifdef RPCS3_IOS
+	if (m_refill_reset_requested.exchange(false, std::memory_order_relaxed)) m_refill.reset();
+	const u32 frame_bytes = cfg.audio_sample_size * cfg.backend_ch_cnt;
+	const u32 requested = size / frame_bytes;
+	const u32 available = static_cast<u32>(cb_ringbuf.get_used_size() / frame_bytes);
+	const auto result = m_refill.read(requested, available, [&](u32 frames)
+	{
+		return static_cast<u32>(cb_ringbuf.pop(buf, frames * frame_bytes, true) / frame_bytes);
+	});
+	diagnostics.record_read(requested, available, result);
+	return result.frames * frame_bytes;
+#else
 	return static_cast<u32>(cb_ringbuf.pop(buf, size, true));
+#endif
 }
 
 void audio_ringbuffer::backend_state_callback(AudioStateEvent event)
@@ -256,12 +277,24 @@ void audio_ringbuffer::enqueue(bool enqueue_silence, bool force)
 	if (!backend_active.observe() && !force)
 	{
 		// backend is not ready yet
+#ifdef RPCS3_IOS
+		++diagnostics.not_ready_blocks;
+#endif
 		return;
 	}
+
+#ifdef RPCS3_IOS
+	if (force && enqueue_silence) ++diagnostics.prefill_blocks;
+	else if (enqueue_silence) ++diagnostics.silence_blocks;
+	else ++diagnostics.mix_blocks;
+#endif
 
 	// Enqueue audio
 	if (cfg.time_stretching_enabled)
 	{
+#ifdef RPCS3_IOS
+		if (!enqueue_silence) m_tempo.record_input(AUDIO_BUFFER_SAMPLES);
+#endif
 		resampler.put_samples(buf, AUDIO_BUFFER_SAMPLES);
 	}
 	else
@@ -310,8 +343,54 @@ void audio_ringbuffer::commit_data(f32* buf, u32 sample_cnt)
 		AudioBackend::convert_to_s16(sample_cnt_out, buf, buf);
 	}
 
+#ifdef RPCS3_IOS
+	const u64 accepted = cb_ringbuf.push(buf, sample_cnt_out * cfg.audio_sample_size);
+	diagnostics.record_write(sample_cnt, static_cast<u32>(accepted / (cfg.backend_ch_cnt * cfg.audio_sample_size)));
+#else
 	cb_ringbuf.push(buf, sample_cnt_out * cfg.audio_sample_size);
+#endif
 }
+
+#ifdef RPCS3_IOS
+void audio_ringbuffer::update_tempo(u64 timestamp, u64 queued_us, bool active_ports)
+{
+	static_assert(rpcs3::ios::audio_detail::tempo_controller::minimum_tempo == RESAMPLER_MIN_FREQ_VAL);
+	static_assert(rpcs3::ios::audio_detail::tempo_controller::maximum_tempo == RESAMPLER_MAX_FREQ_VAL);
+	f32 requested = RESAMPLER_MAX_FREQ_VAL;
+	if (active_ports)
+	{
+		requested = static_cast<f32>(m_tempo.update(timestamp, queued_us,
+			cfg.desired_buffer_duration * cfg.time_stretching_threshold, cfg.audio_sampling_rate));
+	}
+	else
+	{
+		m_tempo.reset();
+	}
+	diagnostics.input_rate_ppm = static_cast<u64>(m_tempo.input_rate() * 1'000'000);
+	if (std::abs(requested - frequency_ratio) > 0.001f)
+	{
+		set_frequency_ratio(requested);
+		++diagnostics.tempo_updates;
+	}
+}
+
+void audio_ringbuffer::log_diagnostics(u64 timestamp, bool force)
+{
+	if (!force && timestamp < m_next_diagnostics_us) return;
+	m_next_diagnostics_us = timestamp + 2'000'000;
+	const auto d = diagnostics.snapshot();
+	const u64 fill = cb_ringbuf.get_used_size() / (cfg.backend_ch_cnt * cfg.audio_sample_size);
+	cellAudio.notice("cellAudio queue diagnostics: cumulative requested_frames=%llu delivered_frames=%llu starved_frames=%llu refill_silence_frames=%llu fill_frames=%llu min_fill=%llu max_fill=%llu recoveries=%llu resumes=%llu recovery_timeouts=%llu mixed_blocks=%llu silence_blocks=%llu prefill_blocks=%llu not_ready_blocks=%llu rejected_blocks=%llu rejected_frames=%llu untouched_waits=%llu in_progress_waits=%llu advances_without_mix=%llu incomplete_mixes=%llu",
+		d.requested, d.delivered, d.starved_frames, d.refill_frames, fill, d.min_fill, d.max_fill, d.recoveries, d.resumes, d.timeouts,
+		diagnostics.mix_blocks, diagnostics.silence_blocks, diagnostics.prefill_blocks, diagnostics.not_ready_blocks,
+		diagnostics.rejected_blocks, diagnostics.rejected_frames, diagnostics.untouched_waits, diagnostics.in_progress_waits,
+		diagnostics.timeout_advances, diagnostics.incomplete_mixes);
+	cellAudio.notice("cellAudio producer diagnostics: cumulative no_port_silence=%llu untouched_silence=%llu active_ports=%u untouched_ports=%u target_us=%llu period_us=%llu tempo_ppm=%llu missing_blocks=%llu tempo_updates=%llu input_rate_ppm=%llu",
+		diagnostics.no_port_silence, diagnostics.untouched_silence,
+		diagnostics.active_ports, diagnostics.untouched_ports, diagnostics.target_us, diagnostics.period_us,
+		diagnostics.tempo_ppm, diagnostics.missing_blocks, diagnostics.tempo_updates, diagnostics.input_rate_ppm);
+}
+#endif
 
 void audio_ringbuffer::play()
 {
@@ -328,6 +407,12 @@ void audio_ringbuffer::play()
 void audio_ringbuffer::flush()
 {
 	backend->Pause();
+#ifdef RPCS3_IOS
+	// Let the callback reset its own state, even if the device fails to stop.
+	m_refill_reset_requested.store(true, std::memory_order_relaxed);
+	m_tempo.reset();
+	if (playing) log_diagnostics(get_timestamp(), true);
+#endif
 	cb_ringbuf.writer_flush();
 	resampler.flush();
 	backend_active = false;
@@ -886,6 +971,9 @@ void cell_audio_thread::operator()()
 
 		const bool emu_paused = Emu.IsPaused();
 		const u64 timestamp = ringbuffer->update(emu_paused || m_backend_failed);
+#ifdef RPCS3_IOS
+		ringbuffer->log_diagnostics(timestamp);
+#endif
 
 		if (emu_paused)
 		{
@@ -975,7 +1063,9 @@ void cell_audio_thread::operator()()
 		else
 		{
 			const u64 enqueued_samples = ringbuffer->get_enqueued_samples();
+#ifndef RPCS3_IOS
 			const f32 frequency_ratio = ringbuffer->get_frequency_ratio();
+#endif
 			const u64 enqueued_playtime = ringbuffer->get_enqueued_playtime();
 			const u64 enqueued_buffers = enqueued_samples / AUDIO_BUFFER_SAMPLES;
 
@@ -997,6 +1087,9 @@ void cell_audio_thread::operator()()
 
 			if (cfg.time_stretching_enabled)
 			{
+#ifdef RPCS3_IOS
+				ringbuffer->update_tempo(timestamp, enqueued_playtime, active_ports != 0);
+#else
 				//  1.0 means exactly as desired
 				// <1.0 means not as full as desired
 				// >1.0 means more full than desired
@@ -1018,6 +1111,7 @@ void cell_audio_thread::operator()()
 				{
 					ringbuffer->set_frequency_ratio(RESAMPLER_MAX_FREQ_VAL);
 				}
+#endif
 			}
 
 			//  1.0 means exactly as desired
@@ -1038,6 +1132,20 @@ void cell_audio_thread::operator()()
 				m_dynamic_period = cfg.minimum_block_period + static_cast<u64>((cfg.audio_block_period - cfg.minimum_block_period) * multiplier);
 			}
 
+#ifdef RPCS3_IOS
+			if (cfg.time_stretching_enabled && active_ports && untouched == active_ports && !g_cfg.audio.disable_sampling_skip)
+			{
+				// Missing PCM must not drive the empty-queue feedback to advance
+				// guest read indices twice as fast. Keep the normal heartbeat and
+				// the original bounded waits; tempo never extends guest timeouts.
+				m_dynamic_period = std::max<u64>(m_dynamic_period, cfg.audio_block_period);
+			}
+			ringbuffer->diagnostics.target_us = static_cast<u64>(desired_duration_adjusted);
+			ringbuffer->diagnostics.period_us = m_dynamic_period;
+			ringbuffer->diagnostics.tempo_ppm = static_cast<u64>(ringbuffer->get_frequency_ratio() * 1'000'000);
+			ringbuffer->diagnostics.active_ports = active_ports;
+			ringbuffer->diagnostics.untouched_ports = untouched;
+#endif
 			const s64 time_left = m_dynamic_period - time_since_last_period;
 			if (time_left > cfg.period_comparison_margin)
 			{
@@ -1050,6 +1158,9 @@ void cell_audio_thread::operator()()
 			{
 				// no need to mix, just enqueue silence and advance time
 				cellAudio.trace("enqueuing silence: no active ports, enqueued_buffers=%llu", enqueued_buffers);
+#ifdef RPCS3_IOS
+				++ringbuffer->diagnostics.no_port_silence;
+#endif
 				ringbuffer->enqueue_silence();
 				untouched_expected = 0;
 				advance(timestamp);
@@ -1069,12 +1180,18 @@ void cell_audio_thread::operator()()
 				{
 					// There's no audio in the buffers, simply advance time and hope the game recovers
 					cellAudio.trace("advancing time: untouched=%u/%u (expected=%u), enqueued_buffers=%llu", untouched, active_ports, untouched_expected, enqueued_buffers);
+#ifdef RPCS3_IOS
+					++ringbuffer->diagnostics.timeout_advances;
+#endif
 					untouched_expected = untouched;
 					advance(timestamp);
 					continue;
 				}
 
 				cellAudio.trace("waiting: untouched=%u/%u (expected=%u), enqueued_buffers=%llu", untouched, active_ports, untouched_expected, enqueued_buffers);
+#ifdef RPCS3_IOS
+				++ringbuffer->diagnostics.untouched_waits;
+#endif
 				thread_ctrl::wait_for(1000);
 				continue;
 			}
@@ -1082,8 +1199,23 @@ void cell_audio_thread::operator()()
 			// Fast-path for when there is no audio in the buffers
 			if (untouched == active_ports)
 			{
+#ifdef RPCS3_IOS
+				if (cfg.time_stretching_enabled)
+				{
+					// Preserve the original read-index/MIX-event progression, but
+					// let SoundTouch stretch guest PCM across missing periods.
+					// Injected zeros would both interrupt it and mask the shortage.
+					++ringbuffer->diagnostics.missing_blocks;
+					untouched_expected = untouched;
+					advance(timestamp);
+					continue;
+				}
+#endif
 				// There's no audio in the buffers, simply advance time
 				cellAudio.trace("enqueuing silence: untouched=%u/%u (expected=%u), enqueued_buffers=%llu", untouched, active_ports, untouched_expected, enqueued_buffers);
+#ifdef RPCS3_IOS
+				++ringbuffer->diagnostics.untouched_silence;
+#endif
 				ringbuffer->enqueue_silence();
 				untouched_expected = untouched;
 				advance(timestamp);
@@ -1094,6 +1226,9 @@ void cell_audio_thread::operator()()
 			if (in_progress > 0)
 			{
 				cellAudio.trace("waiting: in_progress=%u/%u, enqueued_buffers=%u", in_progress, active_ports, enqueued_buffers);
+#ifdef RPCS3_IOS
+				++ringbuffer->diagnostics.in_progress_waits;
+#endif
 				thread_ctrl::wait_for(500);
 				continue;
 			}
@@ -1106,6 +1241,9 @@ void cell_audio_thread::operator()()
 			// Log if we enqueued untouched/incomplete buffers
 			if (untouched > 0 || incomplete > 0)
 			{
+#ifdef RPCS3_IOS
+				++ringbuffer->diagnostics.incomplete_mixes;
+#endif
 				cellAudio.trace("enqueueing: untouched=%u/%u (expected=%u), incomplete=%u/%u enqueued_buffers=%llu", untouched, active_ports, untouched_expected, incomplete, active_ports, enqueued_buffers);
 			}
 		}
