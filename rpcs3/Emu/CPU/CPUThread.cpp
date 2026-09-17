@@ -832,7 +832,10 @@ void cpu_thread::cpu_wait(bs_t<cpu_flag> old)
 
 static atomic_t<u32> s_dummy_atomic = 0;
 
-bool cpu_thread::check_state() noexcept
+bool cpu_thread::check_state()
+#ifndef RPCS3_IOS
+	noexcept
+#endif
 {
 	bool cpu_sleep_called = false;
 	bool cpu_memory_checked = false;

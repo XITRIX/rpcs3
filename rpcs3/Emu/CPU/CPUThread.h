@@ -71,7 +71,11 @@ public:
 	atomic_bs_t<cpu_flag> state{cpu_flag::stop + cpu_flag::wait};
 
 	// Process thread state, return true if the checker must return
-	bool check_state() noexcept;
+	bool check_state()
+#ifndef RPCS3_IOS
+		noexcept
+#endif
+	;
 
 	// Process thread state (pause)
 	[[nodiscard]] bool test_stopped()
