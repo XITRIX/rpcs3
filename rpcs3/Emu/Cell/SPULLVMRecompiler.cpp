@@ -64,6 +64,7 @@ const extern spu_decoder<spu_iflag> g_spu_iflag;
 #include "Emu/CPU/Backends/AArch64/AArch64JIT.h"
 #include "Emu/CPU/Backends/AArch64/SPUChecksum.h"
 #include "Emu/CPU/Backends/AArch64/SPUInterrupts.h"
+#include "Emu/CPU/Backends/AArch64/SPUInterpreterGateway.h"
 
 namespace
 {
@@ -4184,14 +4185,13 @@ public:
 		// Pinned constant, address of first register
 		m_interp_regs = _ptr(m_thread, get_reg_offset(0));
 
-		// Save host thread's stack pointer
-		const auto native_sp = spu_ptr(&spu_thread::hv_ctx, &rpcs3::hypervisor_context_t::regs);
 #if defined(ARCH_X64)
+		// X64 escape restores RSP from this slot. ARM64 instead requires a
+		// gateway return PC followed by SP; its native gateway owns both slots.
+		const auto native_sp = spu_ptr(&spu_thread::hv_ctx, &rpcs3::hypervisor_context_t::regs);
 		const auto rsp_name = MetadataAsValue::get(m_context, MDNode::get(m_context, {MDString::get(m_context, "rsp")}));
-#elif defined(ARCH_ARM64)
-		const auto rsp_name = MetadataAsValue::get(m_context, MDNode::get(m_context, {MDString::get(m_context, "sp")}));
-#endif
 		m_ir->CreateStore(m_ir->CreateCall(get_intrinsic<u64>(Intrinsic::read_register), {rsp_name}), native_sp);
+#endif
 
 		// Decode (shift) and load function pointer
 		const auto first = m_ir->CreateLoad(get_type<u8*>(), m_ir->CreateGEP(get_type<u8*>(), m_interp_table, m_ir->CreateLShr(m_interp_op, 32u - m_interp_magn)));
@@ -4509,6 +4509,16 @@ public:
 
 		// Register interpreter entry point
 		spu_runtime::g_interpreter = reinterpret_cast<spu_function_t>(m_jit.get_engine().getPointerToFunction(main_func));
+#ifdef ARCH_ARM64
+		if (spu_runtime::g_interpreter)
+		{
+			const auto entry = reinterpret_cast<u64>(spu_runtime::g_interpreter);
+			spu_runtime::g_interpreter = build_function_asm<spu_function_t>("spu_interpreter_gateway", [entry](native_asm& c, auto&)
+			{
+				aarch64::emit_spu_interpreter_gateway(c, ::offset32(&spu_thread::hv_ctx), entry);
+			});
+		}
+#endif
 
 		for (u32 i = 0; i < spu_runtime::g_interpreter_table.size(); i++)
 		{
