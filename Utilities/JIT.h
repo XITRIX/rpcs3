@@ -3,6 +3,10 @@
 #include "util/types.hpp"
 #include "util/atomic.hpp"
 
+#ifdef RPCS3_IOS
+#include "JITIOS.h"
+#endif
+
 // Include asmjit with warnings ignored
 #define ASMJIT_EMBED
 #define ASMJIT_STATIC
@@ -480,6 +484,13 @@ struct jit_write_guard
 template <typename FT, typename Asm = native_asm, typename F>
 inline FT build_function_asm(std::string_view name, F&& builder, ::jit_runtime* custom_runtime = nullptr, bool reduced_size = false)
 {
+#ifdef RPCS3_IOS
+	// Constructor-time compiler gateways are unused by native interpreters.
+	if (rpcs3::ios::jit::is_jitless())
+	{
+		return nullptr;
+	}
+#endif
 	[[maybe_unused]] jit_write_guard jit_guard;
 
 	using namespace asmjit;

@@ -217,6 +217,19 @@ if(WIN32)
     target_link_libraries(rpcs3_emu PRIVATE pdh bcrypt dbghelp)
 endif()
 
+# JIT-less SPU execution unwinds native interpreter frames on interrupt/halt.
+# Keep cleanup metadata throughout that call chain; the normal JIT gateways
+# remain unchanged and do not throw this private control-flow exception.
+if(RPCS3_FRONTEND STREQUAL "IOS")
+    set_source_files_properties(
+        Cell/SPUCommonRecompiler.cpp
+        Cell/SPUInterpreter.cpp
+        Cell/SPUThread.cpp
+        CPU/CPUThread.cpp
+        PROPERTIES COMPILE_OPTIONS -fexceptions
+    )
+endif()
+
 # Cell
 target_sources(rpcs3_emu PRIVATE
     Cell/ErrorCodes.cpp
