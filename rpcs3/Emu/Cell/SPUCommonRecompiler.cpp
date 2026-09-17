@@ -11,6 +11,9 @@
 #include "Crypto/sha1.h"
 #include "Utilities/StrUtil.h"
 #include "Utilities/JIT.h"
+#ifdef RPCS3_IOS
+#include "ios/IOSStaticInterpreter.h"
+#endif
 #include "util/init_mutex.hpp"
 #include "util/shared_ptr.hpp"
 
@@ -357,6 +360,12 @@ DECLARE(spu_runtime::tr_interpreter) = []
 
 DECLARE(spu_runtime::g_dispatcher) = []
 {
+#ifdef RPCS3_IOS
+	if (rpcs3::ios::jit::is_jitless())
+	{
+		return static_cast<std::remove_const_t<decltype(spu_runtime::g_dispatcher)>>(nullptr);
+	}
+#endif
 	jit_write_guard jit_guard;
 
 	// Allocate 2^20 positions in data area
@@ -629,7 +638,11 @@ DECLARE(spu_runtime::g_gateway) = build_function_asm<spu_function_t>("spu_gatewa
 #endif
 });
 
-DECLARE(spu_runtime::g_escape) = build_function_asm<void(*)(spu_thread*)>("spu_escape", [](native_asm& c, auto& args)
+DECLARE(spu_runtime::g_escape) =
+#ifdef RPCS3_IOS
+	rpcs3::ios::jit::is_jitless() ? +[](spu_thread*) { rpcs3::ios::escape_static_interpreter(); } :
+#endif
+	build_function_asm<void(*)(spu_thread*)>("spu_escape", [](native_asm& c, auto& args)
 {
 	using namespace asmjit;
 
@@ -934,6 +947,13 @@ void spu_cache::add(const spu_program& func)
 
 void spu_cache::initialize(bool build_existing_cache)
 {
+#ifdef RPCS3_IOS
+	if (rpcs3::ios::jit::is_jitless())
+	{
+		spu_runtime::g_interpreter = &spu_recompiler_base::old_interpreter;
+		return;
+	}
+#endif
 	jit_write_guard jit_guard;
 
 	spu_runtime::g_interpreter = spu_runtime::g_gateway;
