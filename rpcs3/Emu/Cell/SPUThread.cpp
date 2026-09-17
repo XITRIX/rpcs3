@@ -1,4 +1,7 @@
 #include "stdafx.h"
+#ifdef RPCS3_IOS
+#include "ios/IOSStaticInterpreter.h"
+#endif
 #include "Utilities/JIT.h"
 #include "Utilities/date_time.h"
 #include "Emu/Memory/vm.h"
@@ -1596,6 +1599,32 @@ void spu_thread::cpu_task()
 		// Print some stats
 		(!group || group->stop_count < 5 ? spu_log.notice : spu_log.trace)("Stats: Block Weight: %u (Retreats: %u);", block_counter, block_failure);
 	}
+#ifdef RPCS3_IOS
+	else if (rpcs3::ios::jit::is_jitless())
+	{
+		ensure(spu_runtime::g_interpreter);
+		allow_interrupts_in_cpu_work = true;
+		while (true)
+		{
+			bool stopped = false;
+			// Pending CPU work can escape from check_state as well as from an
+			// opcode. Keep both inside the native invocation's unwind boundary.
+			rpcs3::ios::run_static_interpreter([&]
+			{
+				stopped = state && check_state();
+				if (!stopped)
+				{
+					spu_runtime::g_interpreter(*this, _ptr<u8>(0), nullptr);
+				}
+			});
+			if (stopped)
+			{
+				break;
+			}
+		}
+		allow_interrupts_in_cpu_work = false;
+	}
+#endif
 	else
 	{
 		ensure(spu_runtime::g_interpreter);

@@ -399,8 +399,22 @@ bool legacy_debugger_is_ready() noexcept
 
 namespace rpcs3::ios::jit
 {
+bool is_jitless() noexcept
+{
+	static const bool disabled = []
+	{
+		const char* value = std::getenv("RPCS3_IOS_JITLESS");
+		return value && std::strcmp(value, "1") == 0;
+	}();
+	return disabled;
+}
+
 bool is_ready() noexcept
 {
+	if (is_jitless())
+	{
+		return false;
+	}
 	{
 		std::lock_guard lock(g_arena_mutex);
 		if (g_arena.prepared)
@@ -442,6 +456,14 @@ bool prepare_arena() noexcept
 bool prepare_arena(u32 expanded_capacity_mib) noexcept
 {
 	std::lock_guard lock(g_arena_mutex);
+	if (is_jitless())
+	{
+		// No code/data reservation, writable alias, readiness probe or debugger
+		// protocol call is permitted in this process.
+		g_arena.backend = arena_backend::disabled;
+		g_arena.prepared = true;
+		return true;
+	}
 	if (!valid_expanded_arena_capacity(expanded_capacity_mib))
 	{
 		set_error("Invalid JIT arena capacity; expected 0, 1, or 512–1024 MiB");
@@ -592,7 +614,7 @@ bool seal_arena() noexcept
 		backend = g_arena.backend;
 	}
 
-	if (backend == arena_backend::legacy_debugger)
+	if (backend == arena_backend::disabled || backend == arena_backend::legacy_debugger)
 	{
 		return true;
 	}
