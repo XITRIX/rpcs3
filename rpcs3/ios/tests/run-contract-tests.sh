@@ -186,6 +186,12 @@ case "$(uname -m)" in
     arm64|aarch64)
         "${CXX_COMPILER}" -std=c++20 -O2 -Wall -Wextra -Werror \
             -I "${SOURCE_ROOT}/rpcs3" \
+            "${SCRIPT_DIR}/SPUStaticShiftTests.cpp" \
+            -o "${OUTPUT_ROOT}/SPUStaticShiftTests"
+        "${OUTPUT_ROOT}/SPUStaticShiftTests"
+
+        "${CXX_COMPILER}" -std=c++20 -O2 -Wall -Wextra -Werror \
+            -I "${SOURCE_ROOT}/rpcs3" \
             "${SCRIPT_DIR}/SPUReservationScanTests.cpp" \
             -o "${OUTPUT_ROOT}/SPUReservationScanTests"
         "${OUTPUT_ROOT}/SPUReservationScanTests"
@@ -197,3 +203,12 @@ esac
     "${SCRIPT_DIR}/BoundedSwizzleTests.cpp" \
     -o "${OUTPUT_ROOT}/BoundedSwizzleTests"
 "${OUTPUT_ROOT}/BoundedSwizzleTests"
+
+# Exercise the real Apple arena implementation without any executable memory.
+if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
+    "${CXX_COMPILER}" -std=c++20 -DRPCS3_IOS \
+        -I "${SOURCE_ROOT}" -I "${SOURCE_ROOT}/rpcs3" \
+        "${SCRIPT_DIR}/IOSJitlessTests.cpp" "${SOURCE_ROOT}/Utilities/JITIOS.cpp" \
+        -o "${OUTPUT_ROOT}/IOSJitlessTests"
+    "${OUTPUT_ROOT}/IOSJitlessTests"
+fi

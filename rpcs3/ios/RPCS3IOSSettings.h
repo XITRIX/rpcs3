@@ -14,6 +14,8 @@ namespace cfg
 class _base;
 }
 
+struct cfg_root;
+
 namespace rpcs3::ios
 {
 struct setting_record
@@ -73,6 +75,7 @@ std::span<const setting_record> settings_catalog() noexcept;
 const setting_record* find_setting(std::string_view key, setting_context context) noexcept;
 bool save_global_settings() noexcept;
 settings_load_error load_effective_settings(std::string_view title_id, bool& has_custom_config) noexcept;
+settings_load_error load_effective_settings(cfg_root& config, std::string_view title_id, bool& has_custom_config) noexcept;
 bool save_game_settings(std::string_view title_id) noexcept;
 bool remove_game_settings(std::string_view title_id) noexcept;
 std::string game_settings_preset_directory(std::string_view title_id);
