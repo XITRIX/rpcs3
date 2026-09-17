@@ -2776,7 +2776,13 @@ void ppu_thread::exec_task()
 		// Execute instruction (may be step; execute only one instruction if state)
 		const auto op = reinterpret_cast<be_t<u32>*>(mem_ + u64{cia});
 		const auto fn = reinterpret_cast<ppu_intrp_func*>(cache + u64{cia} * 2);
-		fn->fn(*this, {*op}, op, state ? &ppu_ret : fn + 1);
+		const auto dispatch = atomic_storage<ppu_intrp_func_t>::load(fn->fn);
+		if (!dispatch) [[unlikely]]
+		{
+			// An unregistered guest target must not become a null native call.
+			fmt::throw_exception("PPU interpreter has no executable target at 0x%08x (LR=0x%08x, CTR=0x%08x)", cia, lr, ctr);
+		}
+		dispatch(*this, {*op}, op, state ? &ppu_ret : fn + 1);
 	}
 }
 

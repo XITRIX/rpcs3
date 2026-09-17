@@ -1,5 +1,8 @@
 #include "stdafx.h"
 #include "VFS.h"
+#ifdef RPCS3_IOS
+#include "Utilities/JITIOS.h"
+#endif
 #include "Utilities/bin_patch.h"
 #include "Emu/Memory/vm.h"
 #include "Emu/emu_callbacks.h"
@@ -293,6 +296,16 @@ void init_fxo_for_exec(utils::serial* ar, bool full = false)
 // Some settings are not allowed with certain conditions
 static void fixup_settings(const psf::registry* _psf, u32 inherited_psf_resolution = 0)
 {
+#ifdef RPCS3_IOS
+	// Apply only to the effective runtime configuration, after each global,
+	// title, database or save-state config load. Never persist these overrides.
+	if (rpcs3::ios::jit::is_jitless())
+	{
+		g_cfg.core.ppu_decoder.set(ppu_decoder_type::_static);
+		g_cfg.core.spu_decoder.set(spu_decoder_type::_static);
+		g_cfg.core.llvm_precompilation.set(false);
+	}
+#endif
 	// Disable some incompatible settings in headless mode
 	if (Emu.IsHeadless())
 	{
