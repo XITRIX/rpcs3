@@ -944,7 +944,25 @@ emu_callbacks make_callbacks()
 	callbacks.update_emu_settings = []() {};
 	callbacks.save_emu_settings = []()
 	{
-		Emulator::SaveSettings(g_cfg.to_string(), Emu.GetTitleID());
+		cfg_root persisted;
+		persisted.from_string(g_cfg.to_string());
+		if (rpcs3::ios::jit::is_jitless())
+		{
+			// Native overlays can save runtime settings too. Recover the saved
+			// compiler choices without copying session overrides into any file.
+			cfg_root saved;
+			bool custom = false;
+			if (const auto result = rpcs3::ios::load_effective_settings(saved, Emu.GetTitleID(), custom);
+				result != rpcs3::ios::settings_load_error::none)
+			{
+				emit_log(1, std::string{rpcs3::ios::settings_load_error_detail(result)});
+				return;
+			}
+			persisted.core.ppu_decoder.set(saved.core.ppu_decoder.get());
+			persisted.core.spu_decoder.set(saved.core.spu_decoder.get());
+			persisted.core.llvm_precompilation.set(saved.core.llvm_precompilation.get());
+		}
+		Emulator::SaveSettings(persisted.to_string(), Emu.GetTitleID());
 	};
 	callbacks.close_gs_frame = []() {};
 	callbacks.get_gs_frame = []() -> std::unique_ptr<GSFrameBase>
@@ -1292,7 +1310,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		return result;
 	}
 
-	if (!rpcs3::ios::jit::is_ready())
+	if (!rpcs3::ios::jit::is_jitless() && !rpcs3::ios::jit::is_ready())
 	{
 		set_error(rpcs3::ios::jit::last_error());
 		g_lifecycle.finish_initialize(false);
@@ -1371,7 +1389,11 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		rpcs3::ios::shared_pad_states().clear();
 		rpcs3::ios::shared_pad_feedback().clear();
 		const auto jit_stats = rpcs3::ios::jit::get_statistics();
-		if (jit_stats.backend == rpcs3::ios::jit::arena_backend::universal_mirrored)
+		if (jit_stats.backend == rpcs3::ios::jit::arena_backend::disabled)
+		{
+			emit_log(4, "JIT-less mode: 0-byte code/data arenas; native PPU/SPU interpreters; no Universal JIT initialization");
+		}
+		else if (jit_stats.backend == rpcs3::ios::jit::arena_backend::universal_mirrored)
 		{
 			emit_log(4, fmt::format(
 				"Prepared and sealed a %u MiB Universal JIT arena using the %s capacity policy in %u bounded command-1 chunks; StikDebug may now disconnect",
@@ -1495,6 +1517,12 @@ extern "C" rpcs3_ios_status rpcs3_ios_run_llvm_self_test(uint64_t input, uint64_
 	{
 		set_error("Stop emulation before running the LLVM self-test");
 		return RPCS3_IOS_INVALID_STATE;
+	}
+
+	if (rpcs3::ios::jit::is_jitless())
+	{
+		set_error("The LLVM self-test is unavailable in JIT-less mode; relaunch with JIT enabled");
+		return RPCS3_IOS_JIT_UNAVAILABLE;
 	}
 
 #ifdef LLVM_AVAILABLE

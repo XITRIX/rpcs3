@@ -511,18 +511,23 @@ bool save_global_settings() noexcept
 
 settings_load_error load_effective_settings(std::string_view title_id, bool& has_custom_config) noexcept
 {
+	return load_effective_settings(g_cfg, title_id, has_custom_config);
+}
+
+settings_load_error load_effective_settings(cfg_root& config, std::string_view title_id, bool& has_custom_config) noexcept
+{
 	has_custom_config = false;
-	g_cfg.from_default();
-	g_cfg.name.clear();
+	config.from_default();
+	config.name.clear();
 
 	const std::string global_path = fs::get_config_dir(true) + "config.yml";
 	if (fs::file global_config{global_path})
 	{
-		if (!g_cfg.from_string(global_config.to_string()))
+		if (!config.from_string(global_config.to_string()))
 		{
 			return settings_load_error::global_invalid;
 		}
-		g_cfg.name = global_path;
+		config.name = global_path;
 	}
 	else
 	{
@@ -538,11 +543,11 @@ settings_load_error load_effective_settings(std::string_view title_id, bool& has
 	if (fs::file custom_config{custom_path})
 	{
 		has_custom_config = true;
-		if (!g_cfg.from_string(custom_config.to_string()))
+		if (!config.from_string(custom_config.to_string()))
 		{
 			return settings_load_error::game_invalid;
 		}
-		g_cfg.name = custom_path;
+		config.name = custom_path;
 		return settings_load_error::none;
 	}
 

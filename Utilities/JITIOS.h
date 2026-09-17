@@ -14,6 +14,7 @@ inline constexpr u64 command_prepare_region = 1;
 
 enum class arena_backend : u8
 {
+	disabled,
 	legacy_debugger,
 	universal_mirrored,
 };
@@ -47,6 +48,8 @@ struct arena_statistics
 	bool sealed = false;
 };
 
+// Latched from the wrapper's environment before any dylib constructors run.
+bool is_jitless() noexcept;
 bool is_ready() noexcept;
 bool prepare_arena() noexcept;
 bool prepare_arena(u32 expanded_capacity_mib) noexcept;
