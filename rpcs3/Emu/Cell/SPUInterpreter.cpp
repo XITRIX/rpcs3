@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "SPUInterpreter.h"
+#include "SPUInterpreterDiagnostics.h"
 
 #include "Utilities/JIT.h"
 #include "SPUThread.h"
@@ -2126,7 +2127,8 @@ bool FNMS(spu_thread& spu, spu_opcode_t op)
 	auto a = _mm_and_ps(spu.gpr[op.ra], mask_a);
 	auto b = _mm_and_ps(spu.gpr[op.rb], mask_b);
 
-	spu.gpr[op.rt4] = _mm_sub_ps(spu.gpr[op.rc], _mm_mul_ps(a, b));
+	// Keep the product unrounded until the add, as in the LLVM interpreter.
+	spu.gpr[op.rt4] = gv_fmafs(gv_xorfs(a, gv_bcstfs(-0.0f)), b, spu.gpr[op.rc]);
 	return true;
 }
 
@@ -2144,7 +2146,8 @@ bool FMA(spu_thread& spu, spu_opcode_t op)
 	auto a = _mm_and_ps(spu.gpr[op.ra], mask_a);
 	auto b = _mm_and_ps(spu.gpr[op.rb], mask_b);
 
-	spu.gpr[op.rt4] = _mm_add_ps(_mm_mul_ps(a, b), spu.gpr[op.rc]);
+	// Separate multiply/add loses low bits when unpacking biased coordinates.
+	spu.gpr[op.rt4] = gv_fmafs(a, b, spu.gpr[op.rc]);
 	return true;
 }
 
@@ -2162,8 +2165,102 @@ bool FMS(spu_thread& spu, spu_opcode_t op)
 	auto a = _mm_and_ps(spu.gpr[op.ra], mask_a);
 	auto b = _mm_and_ps(spu.gpr[op.rb], mask_b);
 
-	spu.gpr[op.rt4] = _mm_sub_ps(_mm_mul_ps(a, b), spu.gpr[op.rc]);
+	const auto c = spu.gpr[op.rc];
+	// Preserve NaN payload/sign handling from subtraction (SPU extended values),
+	// matching the LLVM path's negate_addend rather than blindly toggling the sign.
+	const auto neg_c = gv_selectfs(gv_eqfs(c, c), gv_xorfs(c, gv_bcstfs(-0.0f)), c);
+	spu.gpr[op.rt4] = gv_fmafs(a, b, neg_c);
 	return true;
+}
+
+bool spu_interpreter::diagnose(spu_thread& spu, spu_opcode_t op, spu_intrp_func_t execute)
+{
+	using namespace spu_float_diagnostics;
+	operation kind;
+	u32 destination = op.rt;
+	switch (g_spu_itype.decode(op.opcode))
+	{
+	case spu_itype::FA: kind = operation::fa; break;
+	case spu_itype::FS: kind = operation::fs; break;
+	case spu_itype::FM: kind = operation::fm; break;
+	case spu_itype::FI: kind = operation::fi; break;
+	case spu_itype::CFLTS: kind = operation::cflts; break;
+	case spu_itype::CFLTU: kind = operation::cfltu; break;
+	case spu_itype::FCGT: kind = operation::fcgt; break;
+	case spu_itype::FCMGT: kind = operation::fcmgt; break;
+	case spu_itype::FCEQ: kind = operation::fceq; break;
+	case spu_itype::FCMEQ: kind = operation::fcmeq; break;
+	case spu_itype::FMA: kind = operation::fma; destination = op.rt4; break;
+	case spu_itype::FMS: kind = operation::fms; destination = op.rt4; break;
+	case spu_itype::FNMS: kind = operation::fnms; destination = op.rt4; break;
+	default: return execute(spu, op);
+	}
+
+	static thread_local u64 checked = 0;
+	static thread_local u64 different = 0;
+	static thread_local u64 significant_count = 0;
+	static thread_local std::array<u64, 32> reported{};
+	static thread_local u32 report_count = 0;
+	static thread_local std::array<u64, 16> extended_reported{};
+	static thread_local u32 extended_report_count = 0;
+	static thread_local std::array<u64, 16> boundary_reported{};
+	static thread_local u32 boundary_report_count = 0;
+	if (!checked)
+		spu_log.notice("Static SPU float diagnostic active: revision 2, scalar LLVM approximate references and integer conversions; reports do not change guest results");
+
+	const u32 pc = spu.pc;
+	const v128 a = spu.gpr[op.ra];
+	const v128 b = spu.gpr[op.rb];
+	const v128 c = spu.gpr[op.rc];
+	v128 expected;
+	for (u32 lane = 0; lane < 4; ++lane)
+		expected._u32[lane] = reference(kind, a._u32[lane], b._u32[lane], c._u32[lane], op.i8);
+
+	const bool advance = execute(spu, op);
+	const v128 actual = spu.gpr[destination];
+	u32 large_lanes = 0;
+	bool priority = false;
+	u32 boundary = 0;
+	for (u32 lane = 0; lane < 4; ++lane)
+	{
+		different += actual._u32[lane] != expected._u32[lane];
+		if (is_conversion(kind) ? actual._u32[lane] != expected._u32[lane] : significant(actual._u32[lane], expected._u32[lane]))
+		{
+			++significant_count;
+			large_lanes |= 1u << lane;
+			priority |= finite_inputs(kind, a._u32[lane], b._u32[lane], c._u32[lane]);
+		}
+		if (kind == operation::fi)
+			boundary |= refinement_boundary(a._u32[lane], b._u32[lane]) << (lane * 3);
+	}
+
+	// Relocated copies of a scalar routine can repeatedly differ in discarded
+	// extended lanes. Keep them from exhausting reports for finite arithmetic
+	// and conversions, and deduplicate that class independently of its address.
+	const u64 key = (u64{priority ? pc : large_lanes} << 32) | op.opcode;
+	auto* keys = priority ? reported.data() : extended_reported.data();
+	auto& count = priority ? report_count : extended_report_count;
+	const auto limit = priority ? reported.size() : extended_reported.size();
+	if (large_lanes && count < limit && std::find(keys, keys + count, key) == keys + count)
+	{
+		keys[count++] = key;
+		spu_log.warning("Static SPU float difference: pc=0x%05x op=0x%08x instruction=%s rt=%u ra=%u rb=%u rc=%u; a=%s b=%s c=%s actual=%s reference=%s",
+			pc, op.opcode, g_spu_iname.decode(op.opcode), destination, +op.ra, +op.rb, +op.rc, a, b, c, actual, expected);
+	}
+
+	const u64 boundary_key = (u64{boundary} << 32) | op.opcode;
+	if (boundary && boundary_report_count < boundary_reported.size() &&
+		std::find(boundary_reported.begin(), boundary_reported.begin() + boundary_report_count, boundary_key) == boundary_reported.begin() + boundary_report_count)
+	{
+		boundary_reported[boundary_report_count++] = boundary_key;
+		spu_log.warning("Static SPU refinement boundary: pc=0x%05x op=0x%08x classes=0x%x a=%s b=%s actual=%s; block-level replacement candidate, not an instruction mismatch",
+			pc, op.opcode, boundary, a, b, actual);
+	}
+
+	++checked;
+	if (checked >= 0x100000 && std::has_single_bit(checked))
+		spu_log.notice("Static SPU float diagnostic: instructions=%u differing_lanes=%u significant_lanes=%u operand_reports=%u extended_reports=%u refinement_reports=%u", checked, different, significant_count, report_count, extended_report_count, boundary_report_count);
+	return advance;
 }
 
 #if 0
