@@ -2584,6 +2584,7 @@ void spu_recompiler_base::old_interpreter(spu_thread& spu, void* ls, u8* /*rip*/
 
 	// LS pointer
 	const auto base = static_cast<const u8*>(ls);
+	const bool diagnose = !!g_cfg.core.spu_debug;
 
 	while (true)
 	{
@@ -2601,7 +2602,8 @@ void spu_recompiler_base::old_interpreter(spu_thread& spu, void* ls, u8* /*rip*/
 		}
 
 		const u32 op = *reinterpret_cast<const be_t<u32>*>(base + spu.pc);
-		if (table.decode(op)(spu, {op}))
+		const auto execute = table.decode(op);
+		if (diagnose ? spu_interpreter::diagnose(spu, {op}, execute) : execute(spu, {op}))
 			spu.pc += 4;
 	}
 }
