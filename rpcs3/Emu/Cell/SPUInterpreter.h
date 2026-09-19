@@ -12,6 +12,7 @@ struct spu_interpreter_t;
 struct spu_interpreter
 {
 	static void set_interrupt_status(spu_thread&, spu_opcode_t);
+	static bool diagnose(spu_thread&, spu_opcode_t, spu_intrp_func_t);
 };
 
 struct spu_interpreter_rt_base
