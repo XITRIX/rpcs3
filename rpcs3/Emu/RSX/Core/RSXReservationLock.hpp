@@ -11,9 +11,11 @@ namespace rsx
 	{
 		u32 addr = 0;
 		u32 length = 0;
+		bool enabled = false;
 
 		inline void lock_range(u32 addr, u32 length)
 		{
+			enabled = true;
 			if (!get_current_renderer()->iomap_table.lock<IsFullLock, Stride>(addr, length, get_current_cpu_thread()))
 			{
 				length = 0;
@@ -72,16 +74,16 @@ namespace rsx
 
 		// Very special utility for batched transfers (SPU related)
 		template <typename T = void>
-		void update_if_enabled(u32 addr, u32 _length, const std::add_pointer_t<T>& lock_release = std::add_pointer_t<void>{})
+		void update_if_enabled(u32 addr, u32 _length, T* lock_release = nullptr)
 		{
-			if (!length)
+			if (!enabled)
 			{
-				unlock();
 				return;
 			}
 
 			// This check is not perfect but it covers the important cases fast (this check is only an optimization - forcing true disables it)
 			const bool should_update =
+				!length || // A temporary release or single-byte entry must not disable subsequent transfers
 				(this->addr / rsx_iomap_table::c_lock_stride) != (addr / rsx_iomap_table::c_lock_stride) ||  // Lock-addr and test-addr have different locks, update
 				(addr % rsx_iomap_table::c_lock_stride + _length) > rsx_iomap_table::c_lock_stride;          // Test range spills beyond our base section
 
