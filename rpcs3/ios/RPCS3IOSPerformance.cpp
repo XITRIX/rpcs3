@@ -10,6 +10,7 @@
 #include <mutex>
 
 #ifdef __APPLE__
+#include <TargetConditionals.h>
 #include <mach/mach.h>
 #endif
 
@@ -140,9 +141,12 @@ void record_presented_frame(u32 rsx_load) noexcept
 
 u64 available_process_memory_headroom() noexcept
 {
-#ifdef RPCS3_IOS
+#if defined(RPCS3_IOS) && !TARGET_OS_SIMULATOR
 	return os_proc_available_memory();
 #else
+	// Simulator has no iOS process limit and returns zero from this query.
+	// Treat the limit as unavailable, preserving normal Vulkan heap pressure
+	// handling instead of continuously evicting caches as if out of memory.
 	return umax;
 #endif
 }
