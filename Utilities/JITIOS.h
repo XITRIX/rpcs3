@@ -8,6 +8,8 @@ namespace rpcs3::ios::jit
 // command in x16. Command 0 detaches the debugger and command 1 prepares the
 // x0/x1 executable range. Earlier supported releases use the persistent
 // debugger-enabled code-signing state and an ordinary W-to-X transition.
+// Apple simulators use the same W-to-X alias layout under the host's policy,
+// without device code-signing checks or Universal commands.
 inline constexpr u16 breakpoint_immediate = 0xf00d;
 inline constexpr u64 command_detach = 0;
 inline constexpr u64 command_prepare_region = 1;
