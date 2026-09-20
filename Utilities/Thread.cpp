@@ -1299,12 +1299,14 @@ a64_mem_info_t decode_a64_mem_inst(u32 inst)
 		return r;
 	}
 
-	// Scalar load/store immediate, unsigned offset variants only:
+	// Scalar load/store unsigned immediate or register offset, without writeback:
 	// size[31:30]
 	// V[26]
 	// opc[23:22]
-	// class bits[29:24] = 111001
-	if ((inst & 0x3B000000) == 0x39000000)
+	// Register offsets require option<1> = 1 (UXTW, LSL, SXTW or SXTX).
+	// The fault address already includes the offset; neither form changes Rn.
+	if ((inst & 0x3B000000u) == 0x39000000u ||
+		(inst & 0x3B204C00u) == 0x38204800u)
 	{
 		const u32 size = (inst >> 30) & 3;
 		const u32 opc  = (inst >> 22) & 3;

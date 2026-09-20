@@ -220,3 +220,5 @@ if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
 fi
 
 python3 "${SCRIPT_DIR}/run-self-decryption-tests.py"
+
+python3 "${SCRIPT_DIR}/run-arm64-memory-decoder-tests.py"
