@@ -17,6 +17,7 @@
 #include <string_view>
 
 #include <libkern/OSCacheControl.h>
+#include <TargetConditionals.h>
 #include <mach/mach.h>
 #include <mach/vm_map.h>
 #include <mach/vm_statistics.h>
@@ -373,15 +374,18 @@ void update_live_bytes(bool executable, usz amount) noexcept
 
 rpcs3::ios::jit::arena_backend current_backend() noexcept
 {
+#if !TARGET_OS_SIMULATOR
 	if (__builtin_available(iOS 26.0, visionOS 26.0, *))
 	{
 		return rpcs3::ios::jit::arena_backend::universal_mirrored;
 	}
+#endif
 	return rpcs3::ios::jit::arena_backend::legacy_debugger;
 }
 
 bool legacy_debugger_is_ready() noexcept
 {
+#if !TARGET_OS_SIMULATOR
 	int status = 0;
 	if (::csops(::getpid(), cs_ops_status, &status, sizeof(status)) != 0)
 	{
@@ -393,6 +397,7 @@ bool legacy_debugger_is_ready() noexcept
 		set_error("StikDebug has not enabled JIT for this process");
 		return false;
 	}
+#endif
 	return true;
 }
 }

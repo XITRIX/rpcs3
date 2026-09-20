@@ -17,6 +17,7 @@ void record_presented_frame(u32 rsx_load) noexcept;
 
 // Returns the current dirty-memory headroom before iOS applies the process
 // limit. The query is intentionally cheap enough for frame-boundary sampling.
+// Returns umax where the iOS process limit is unavailable, including Simulator.
 u64 available_process_memory_headroom() noexcept;
 
 // Returns unused pages from all malloc zones to iOS after a bounded transient
