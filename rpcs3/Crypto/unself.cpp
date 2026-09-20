@@ -1232,14 +1232,36 @@ bool SELFDecrypter::DecryptData()
 	aes_context aes;
 	usz data_buf_length = 0;
 
-	// Calculate the total data size.
+	// WriteElf consumes every program section, including plaintext PT_NOTE
+	// segments. Keep its packed buffer in exactly that order; section headers
+	// (type 1) are read separately and must not shift the program data.
 	for (const MetadataSectionHeader& hdr : meta_shdr)
 	{
-		if (hdr.encrypted == 3)
+		if (hdr.type != 2)
 		{
-			if ((hdr.key_idx < meta_hdr.key_count) && (hdr.iv_idx <= meta_hdr.key_count))
-				data_buf_length += ::narrow<u32>(hdr.data_size);
+			continue;
 		}
+
+		if (hdr.encrypted != 1 && hdr.encrypted != 3)
+		{
+			self_log.error("Invalid SELF program section encryption mode: %u", hdr.encrypted);
+			return false;
+		}
+
+		if (hdr.encrypted == 3 && (hdr.key_idx >= meta_hdr.key_count || hdr.iv_idx >= meta_hdr.key_count))
+		{
+			self_log.error("Invalid SELF program section key or IV index");
+			return false;
+		}
+
+		if (hdr.data_offset > self_f.size() || hdr.data_size > self_f.size() - hdr.data_offset ||
+			hdr.data_size > u32{umax} - data_buf_length)
+		{
+			self_log.error("Invalid SELF program section data range");
+			return false;
+		}
+
+		data_buf_length += static_cast<u32>(hdr.data_size);
 	}
 
 	// Allocate a buffer to store decrypted data.
@@ -1252,41 +1274,38 @@ bool SELFDecrypter::DecryptData()
 	std::vector<u8> buf;
 	u8 ctr_stream_block[0x10];
 
-	// Parse the metadata section headers to find the offsets of encrypted data.
+	// Read plaintext and encrypted program sections alike.
 	for (const MetadataSectionHeader& hdr : meta_shdr)
 	{
-		// Check if this is an encrypted section.
+		if (hdr.type != 2)
+		{
+			continue;
+		}
+
+		buf.resize(hdr.data_size);
+		self_f.seek(hdr.data_offset);
+		if (self_f.read(buf.data(), buf.size()) != buf.size())
+		{
+			self_log.error("Failed to read SELF program section data");
+			return false;
+		}
+
 		if (hdr.encrypted == 3)
 		{
-			// Make sure the key and iv are not out of boundaries.
-			if ((hdr.key_idx < meta_hdr.key_count) && (hdr.iv_idx <= meta_hdr.key_count))
-			{
-				// Get the key and iv from the previously stored key buffer.
-				const std::array<u8, 0x10> data_key = read_from_ptr<std::array<u8, 0x10>>(data_keys, static_cast<usz>(hdr.key_idx) * 0x10);
-				std::array<u8, 0x10> data_iv = read_from_ptr<std::array<u8, 0x10>>(data_keys, static_cast<usz>(hdr.iv_idx) * 0x10);
+			const auto data_key = read_from_ptr<std::array<u8, 0x10>>(data_keys, static_cast<usz>(hdr.key_idx) * 0x10);
+			auto data_iv = read_from_ptr<std::array<u8, 0x10>>(data_keys, static_cast<usz>(hdr.iv_idx) * 0x10);
 
-				// Seek to the section data offset and read the encrypted data.
-				buf.resize(hdr.data_size);
-				self_f.seek(hdr.data_offset);
-				self_f.read(buf.data(), buf.size());
-
-				// Zero out our ctr nonce.
-				std::memset(ctr_stream_block, 0, sizeof(ctr_stream_block));
-
-				// Perform AES-CTR encryption on the data blocks.
-				usz ctr_nc_off = 0;
-				aes_setkey_enc(&aes, data_key.data(), 128);
-				aes_crypt_ctr(&aes, buf.size(), &ctr_nc_off, data_iv.data(), ctr_stream_block, buf.data(), buf.data());
-
-				// Copy the decrypted data.
-				ensure(data_buf.size() >= (buf.size() + data_buf_offset));
-				ensure(buf.size() <= (usz{umax} - static_cast<usz>(data_buf_offset))); // Check for overflow
-				std::memcpy(data_buf.data() + data_buf_offset, buf.data(), buf.size());
-
-				// Advance the buffer's offset.
-				data_buf_offset += ::narrow<u32>(hdr.data_size);
-			}
+			std::memset(ctr_stream_block, 0, sizeof(ctr_stream_block));
+			usz ctr_nc_off = 0;
+			aes_setkey_enc(&aes, data_key.data(), 128);
+			aes_crypt_ctr(&aes, buf.size(), &ctr_nc_off, data_iv.data(), ctr_stream_block, buf.data(), buf.data());
 		}
+
+		if (!buf.empty())
+		{
+			std::memcpy(data_buf.data() + data_buf_offset, buf.data(), buf.size());
+		}
+		data_buf_offset += static_cast<u32>(hdr.data_size);
 	}
 
 	return true;
