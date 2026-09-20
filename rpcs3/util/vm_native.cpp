@@ -264,7 +264,13 @@ namespace utils
 		const int jit_flag = is_memory_mapping || !can_be_jit ? 0 : MAP_JIT;
 #endif
 #ifdef ARCH_ARM64
+#ifdef RPCS3_IOS
+		auto ptr = is_memory_mapping
+			? rpcs3::ios::reserve_shared_memory_address_space(use_addr, size, c_map_noreserve)
+			: ::mmap(use_addr, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE | jit_flag | c_map_noreserve, -1, 0);
+#else
 		auto ptr = ::mmap(use_addr, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE | jit_flag | c_map_noreserve, -1, 0);
+#endif
 #else
 		auto ptr = ::mmap(use_addr, size, PROT_NONE, MAP_ANON | MAP_PRIVATE | jit_flag | c_map_noreserve, -1, 0);
 #endif
