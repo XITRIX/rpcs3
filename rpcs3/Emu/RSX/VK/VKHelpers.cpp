@@ -13,6 +13,10 @@
 #include "vkutils/device.h"
 #include <unordered_map>
 
+#ifdef RPCS3_IOS
+#include <TargetConditionals.h>
+#endif
+
 namespace vk
 {
 	extern chip_class g_chip_class;
@@ -199,6 +203,14 @@ namespace vk
 				vkDestroyBuffer(*g_render_device, tmp, nullptr);
 			}
 		}
+
+#if defined(RPCS3_IOS) && TARGET_OS_SIMULATOR
+		// Metal Simulator requires private storage for buffer-backed textures.
+		// MoltenVK 1.4.2 still advertises host-visible memory for texel buffers,
+		// so the allocation probe above cannot detect this restriction. Use the
+		// data heap's existing staging copy and device-local shadow instead.
+		g_heap_compatible_buffer_types &= ~(VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT);
+#endif
 
 		descriptors::init();
 	}
