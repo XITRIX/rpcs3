@@ -218,3 +218,5 @@ if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
         -o "${OUTPUT_ROOT}/IOSJitlessTests"
     "${OUTPUT_ROOT}/IOSJitlessTests"
 fi
+
+python3 "${SCRIPT_DIR}/run-self-decryption-tests.py"
