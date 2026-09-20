@@ -145,6 +145,12 @@ bash "${SCRIPT_DIR}/run-audio-tempo-tests.sh"
 "${OUTPUT_ROOT}/TextureCacheHashTests"
 
 "${CXX_COMPILER}" -std=c++20 -Wall -Wextra -Werror \
+    -I "${SOURCE_ROOT}/rpcs3" \
+    "${SCRIPT_DIR}/SamplerInvalidationTests.cpp" \
+    -o "${OUTPUT_ROOT}/SamplerInvalidationTests"
+"${OUTPUT_ROOT}/SamplerInvalidationTests"
+
+"${CXX_COMPILER}" -std=c++20 -Wall -Wextra -Werror \
     -I "${SOURCE_ROOT}" -I "${SOURCE_ROOT}/rpcs3" \
     "${SCRIPT_DIR}/VRAMBudgetPolicyTests.cpp" \
     -o "${OUTPUT_ROOT}/VRAMBudgetPolicyHostTests"
