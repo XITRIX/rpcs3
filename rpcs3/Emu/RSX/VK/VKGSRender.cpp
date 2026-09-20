@@ -20,6 +20,7 @@
 
 #include "Emu/RSX/rsx_methods.h"
 #include "Emu/RSX/Core/RSXRendererFactory.h"
+#include "Emu/RSX/Common/sampler_invalidation.h"
 #include "Emu/RSX/Host/MM.h"
 #include "Emu/RSX/Host/RSXDMAWriter.h"
 #include "Emu/RSX/NV47/HW/context_accessors.define.h"
@@ -1148,33 +1149,18 @@ bool VKGSRender::on_vram_exhausted(rsx::problem_severity severity)
 		return any_cache_relieved;
 	}
 
-	if (surface_cache_relieved && !m_samplers_dirty)
+	if (surface_cache_relieved)
 	{
-		// If surface cache was modified destructively, then we must reload samplers touching the surface cache.
-		bool invalidate_samplers = false;
-		auto scan_array = [&](const auto& texture_array, const auto& sampler_states)
-		{
-			if (invalidate_samplers)
-			{
-				return;
-			}
+		// Spilling and resolve-cache eviction destroy image views. Invalidate
+		// every cached framebuffer descriptor, even when a global refresh is
+		// already pending: load_texture_env only refreshes the current shader's
+		// referenced slots before clearing that global flag.
+		const bool invalidate_fragment_samplers = rsx::invalidate_sampler_context(
+			m_fs_sampler_descriptors, m_ctx->textures.fragment_textures_dirty, rsx::texture_upload_context::framebuffer_storage);
+		const bool invalidate_vertex_samplers = rsx::invalidate_sampler_context(
+			m_vs_sampler_descriptors, m_ctx->textures.vertex_textures_dirty, rsx::texture_upload_context::framebuffer_storage);
 
-			for (auto i = 0ull; i < texture_array.size(); ++i)
-			{
-				if (texture_array[i].enabled() &&
-					sampler_states[i] &&
-					sampler_states[i]->upload_context == rsx::texture_upload_context::framebuffer_storage)
-				{
-					invalidate_samplers = true;
-					break;
-				}
-			}
-		};
-
-		scan_array(REGS(m_ctx)->fragment_textures, m_fs_sampler_descriptors);
-		scan_array(REGS(m_ctx)->vertex_textures, m_vs_sampler_descriptors);
-
-		if (invalidate_samplers)
+		if (invalidate_fragment_samplers || invalidate_vertex_samplers)
 		{
 			m_samplers_dirty.store(true);
 		}
