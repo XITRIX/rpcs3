@@ -3,12 +3,33 @@
 #include <cassert>
 #include <cerrno>
 #include <cstdint>
+#include <csignal>
 #include <string>
 
 #include <dirent.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
+
+static void require_write_fault(void* address)
+{
+	const pid_t child = ::fork();
+	assert(child >= 0);
+	if (child == 0)
+	{
+		// Keep the intentional fault inside the child and avoid a crash report.
+		const auto fault = [](int) { ::_exit(91); };
+		::signal(SIGSEGV, fault);
+		::signal(SIGBUS, fault);
+		*static_cast<volatile std::uint8_t*>(address) = 0xa5;
+		::_exit(0);
+	}
+
+	int status = 0;
+	assert(::waitpid(child, &status, 0) == child);
+	assert(WIFEXITED(status) && WEXITSTATUS(status) == 91);
+}
 
 int main()
 {
@@ -29,10 +50,18 @@ int main()
 	assert(::fstat(file, &status) == 0);
 	assert(status.st_size == size);
 
-	void* first = ::mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, file, 0);
-	void* second = ::mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, file, 0);
-	assert(first != MAP_FAILED);
-	assert(second != MAP_FAILED);
+	auto* reservation = static_cast<std::uint8_t*>(rpcs3::ios::reserve_shared_memory_address_space(nullptr, size * 2));
+	assert(reservation != MAP_FAILED);
+	require_write_fault(reservation + 0x1234);
+	require_write_fault(reservation + size + 0x1234);
+
+	void* first = ::mmap(reservation, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, file, 0);
+	assert(first == reservation);
+	static_cast<std::uint8_t*>(first)[0x1234] = 0xa5;
+	// Mapping one alias must not make the other reserved address writable.
+	require_write_fault(reservation + size + 0x1234);
+	void* second = ::mmap(reservation + size, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, file, 0);
+	assert(second == reservation + size);
 
 	static_cast<std::uint8_t*>(first)[0x1234] = 0xa5;
 	assert(static_cast<const std::uint8_t*>(second)[0x1234] == 0xa5);
