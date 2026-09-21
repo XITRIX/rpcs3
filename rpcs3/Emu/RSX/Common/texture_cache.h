@@ -1872,7 +1872,7 @@ namespace rsx
 			reset_frame_statistics();
 		}
 
-		template <bool check_unlocked = false>
+		template <bool check_unlocked = false, bool check_protection = true>
 		rsx::simple_array<section_storage_type*> find_texture_from_range(const address_range32 &test_range, u32 required_pitch = 0, u32 context_mask = 0xFF)
 		{
 			rsx::simple_array<section_storage_type*> results;
@@ -1888,7 +1888,7 @@ namespace rsx
 						continue;
 					}
 
-					if (!tex.sync_protection())
+					if (check_protection && !tex.sync_protection())
 					{
 						continue;
 					}
@@ -2610,12 +2610,17 @@ namespace rsx
 
 			// Check shader_read storage. In a given scene, reads from local memory far outnumber reads from the surface cache
 			const u32 lookup_mask = rsx::texture_upload_context::shader_read | rsx::texture_upload_context::blit_engine_dst | rsx::texture_upload_context::blit_engine_src;
-			overlapping_locals = find_texture_from_range<true>(memory_range, attr.height > 1 ? attr.pitch : 0, lookup_mask & options.lookup_mask);
+			// Collect candidates without validating their contents yet. An exact hit
+			// needs only its own validation; otherwise only blit destinations can
+			// contribute to the merge below. Hashing unrelated overlaps is expensive
+			// on platforms that use content hashes instead of page protection.
+			overlapping_locals = find_texture_from_range<true, false>(memory_range, attr.height > 1 ? attr.pitch : 0, lookup_mask & options.lookup_mask);
 
 			// Search for exact match if possible
 			for (auto& cached_texture : overlapping_locals)
 			{
-				if (cached_texture->matches(attr.address, attr.gcm_format, attr.width, attr.height, attr.depth, 0))
+				if (cached_texture->matches(attr.address, attr.gcm_format, attr.width, attr.height, attr.depth, 0) &&
+					cached_texture->sync_protection())
 				{
 #ifdef TEXTURE_CACHE_DEBUG
 					if (!memory_range.inside(cached_texture->get_confirmed_range()))
@@ -2650,10 +2655,11 @@ namespace rsx
 
 			if (!overlapping_locals.empty())
 			{
-				// Remove everything that is not a transfer target
+				// Validate every transfer target before it can be used by the merge.
 				overlapping_locals.erase_if([](const auto& e)
 				{
-					return e->is_dirty() || (e->get_context() != rsx::texture_upload_context::blit_engine_dst);
+					return e->is_dirty() || (e->get_context() != rsx::texture_upload_context::blit_engine_dst) ||
+						!e->sync_protection();
 				});
 			}
 
