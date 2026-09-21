@@ -92,5 +92,52 @@ int main()
 		for (std::size_t n : {8192u, 16384u, 65536u, 1048576u, 16777216u}) for (std::size_t offset = 0; offset < 32; ++offset) verify(input.data() + offset, n);
 		for (std::size_t n = 1; n <= source.size; ++n) verify(source.end() - n, n);
 	}
+
+	// The fixed 192-byte secret fast path must retain withSecretandSeed's
+	// contract for arbitrary secrets, including unaligned and nonstandard sizes.
+	// Long inputs use the supplied secret; short inputs use the seed instead.
+	std::array<unsigned char, 256 + 16> custom_secret;
+	for (auto& byte : custom_secret) byte = static_cast<unsigned char>(random());
+	for (std::size_t secret_size : {136u, 191u, 192u, 193u, 256u})
+	{
+		for (std::size_t offset = 0; offset < 16; ++offset)
+		{
+			for (std::uint64_t seed : {0ull, 0xcbf29ce484222325ull})
+			{
+				for (std::size_t n : {0u, 1u, 16u, 128u, 240u, 241u, 1023u, 1024u, 1025u,
+					4095u, 4096u, 4097u, 4159u, 4160u, 4161u, 5119u, 5120u, 5121u,
+					8191u, 8192u, 8193u, 16383u, 16384u, 16385u})
+				{
+					const auto* ptr = input.data() + offset;
+					const auto* key = custom_secret.data() + offset;
+					check(rpcs3::ios::texture_hash_hybrid(ptr, n, key, secret_size, seed) ==
+						XXH3_64bits_withSecretandSeed(ptr, n, key, secret_size, seed));
+					++hash_cases;
+				}
+			}
+		}
+	}
+
+	// Bound both the source and the secret by inaccessible pages. Exercise the
+	// specialized path and its generic fallback, including each stripe tail.
+	guarded_page secret_page;
+	for (std::size_t secret_size : {136u, 191u, 192u, 193u, 256u})
+	{
+		for (bool key_at_end : {false, true})
+		{
+			auto* key = key_at_end ? secret_page.end() - secret_size : secret_page.begin();
+			std::copy_n(custom_secret.data(), secret_size, key);
+			for (std::size_t n = 4096; n <= source.size; n += 17)
+			{
+				for (bool data_at_end : {false, true})
+				{
+					const auto* ptr = data_at_end ? source.end() - n : source.begin();
+					check(rpcs3::ios::texture_hash_hybrid(ptr, n, key, secret_size, 1) ==
+						XXH3_64bits_withSecretandSeed(ptr, n, key, secret_size, 1));
+					++hash_cases;
+				}
+			}
+		}
+	}
 	std::printf("%zu DMA overlap/bounds cases and %zu seeded hash/alignment/guard-page cases passed\n", copy_cases, hash_cases);
 }
