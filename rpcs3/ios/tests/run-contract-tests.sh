@@ -8,6 +8,8 @@ CXX_COMPILER="${CXX:-clang++}"
 
 mkdir -p "${OUTPUT_ROOT}"
 
+python3 "${SCRIPT_DIR}/run-silenced-fatal-log-tests.py"
+
 "${CXX_COMPILER}" -std=c++20 -pthread -Wall -Wextra -Werror \
     "${SCRIPT_DIR}/IOSGraphicsLifecycleTests.cpp" \
     -o "${OUTPUT_ROOT}/IOSGraphicsLifecycleTests"

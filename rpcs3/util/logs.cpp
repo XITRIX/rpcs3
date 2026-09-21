@@ -212,7 +212,14 @@ namespace logs
 
 		for (auto&& pair : get_logger()->channels)
 		{
+#ifdef RPCS3_IOS
+			// Fatal messages also drive the wrapper's failed-session state. A
+			// terminated CPU/RSX thread can leave Emu running, so filtering this
+			// notification would hide the failure behind a frozen game frame.
+			pair.second->enabled.release(level::fatal);
+#else
 			pair.second->enabled.release(level::always);
+#endif
 		}
 	}
 
