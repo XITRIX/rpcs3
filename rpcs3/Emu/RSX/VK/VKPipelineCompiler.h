@@ -215,7 +215,7 @@ namespace vk
 			op_flags flags);
 	};
 
-	void initialize_pipe_compiler(int num_worker_threads = 0, VkPipelineCache pipe_cache = VK_NULL_HANDLE);
+	void initialize_pipe_compiler(int num_worker_threads = 0);
 	void resize_pipe_compiler(int num_worker_threads = 0);
 	void destroy_pipe_compiler();
 	pipe_compiler* get_pipe_compiler();
