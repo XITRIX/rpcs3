@@ -13,7 +13,6 @@ namespace vk
 	std::unique_ptr<named_thread_group<pipe_compiler>> g_pipe_compilers;
 	int g_num_pipe_compilers = 0;
 	atomic_t<int> g_compiler_index{};
-	VkPipelineCache g_pipeline_cache = VK_NULL_HANDLE;
 
 	pipe_compiler::pipe_compiler()
 	{
@@ -303,32 +302,24 @@ namespace vk
 		return num_worker_threads;
 	}
 
-	void initialize_pipe_compiler(int num_worker_threads, VkPipelineCache pipe_cache)
+	void initialize_pipe_compiler(int num_worker_threads)
 	{
 		num_worker_threads = decay_num_worker_threads(num_worker_threads);
 
 		ensure(num_worker_threads >= 1);
 		ensure(g_render_device); // "Cannot initialize pipe compiler before creating a logical device"
 
-		// Create the shared pipeline cache
-		if (!pipe_cache)
-		{
-			VkPipelineCacheCreateInfo drv_cache_info{ VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO };
-			vkCreatePipelineCache(*g_render_device, &drv_cache_info, nullptr, &g_pipeline_cache);
-		}
-		else
-		{
-			g_pipeline_cache = pipe_cache;
-		}
-
 		// Create the thread pool
 		g_pipe_compilers = std::make_unique<named_thread_group<pipe_compiler>>("RSX.W", num_worker_threads);
 		g_num_pipe_compilers = num_worker_threads;
 
+		// The render device owns the shared cache and keeps it alive until after these workers stop.
+		const VkPipelineCache pipeline_cache = g_render_device->get_pipeline_cache();
+
 		// Initialize the workers. At least one inline compiler shall exist (doesn't actually run)
 		for (pipe_compiler& compiler : *g_pipe_compilers.get())
 		{
-			compiler.initialize(g_render_device, g_pipeline_cache);
+			compiler.initialize(g_render_device, pipeline_cache);
 		}
 	}
 
@@ -346,18 +337,12 @@ namespace vk
 		g_pipe_compilers.reset();
 		g_num_pipe_compilers = 0;
 
-		initialize_pipe_compiler(num_worker_threads, g_pipeline_cache);
+		initialize_pipe_compiler(num_worker_threads);
 	}
 
 	void destroy_pipe_compiler()
 	{
 		g_pipe_compilers.reset();
-
-		if (g_pipeline_cache)
-		{
-			vkDestroyPipelineCache(*g_render_device, g_pipeline_cache, nullptr);
-			g_pipeline_cache = VK_NULL_HANDLE;
-		}
 	}
 
 	pipe_compiler* get_pipe_compiler()
