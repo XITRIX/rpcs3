@@ -1,5 +1,6 @@
 #include "Emu/Memory/VMReservationRange.h"
 
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <cstdint>
@@ -55,9 +56,11 @@ namespace
 		assert(u64{address} + size <= 0x1'0000'0000);
 		u64 lookups = 0;
 		u64 next_page = address >> 16;
+		const bool unshared_point = point < (u64{1} << 25);
 		const bool actual = vm::reservation_range_overlaps(point, address, size, [&](u64 page)
 		{
-			assert(page == next_page++);
+			if (unshared_point) assert(page == point / 512);
+			else assert(page == next_page++);
 			assert(page < mirrors.size());
 			lookups++;
 			return mirrors[page];
@@ -66,7 +69,12 @@ namespace
 		assert(actual == expected);
 		const u64 page_count = size ? ((u64{address} + size - 1) >> 16) - (address >> 16) + 1 : 0;
 		assert(lookups <= page_count);
-		if (!actual) assert(lookups == page_count);
+		if (unshared_point)
+		{
+			const bool intersects = size && point >= u64{address} / 128 && point <= (u64{address} + size - 1) / 128;
+			assert(lookups == (intersects ? 1 : 0));
+		}
+		else if (!actual) assert(lookups == page_count);
 		const bool before = legacy(point, address, size);
 		assert(!expected || before); // Existing genuine conflicts are preserved.
 		false_conflicts_removed += before && !actual;
@@ -122,6 +130,29 @@ int main()
 	check(0xffffffff / 128, 1, std::numeric_limits<u32>::max());
 	check(0x1'0000'0000 / 128, 1, std::numeric_limits<u32>::max());
 	check(0x90000 / 128, 0xffff0000, 65536);
+
+	// Production mirrors carry the high range_locked bit. A guest-address
+	// hit must be rejected after sharing, and shared aliases must still match.
+	// Reuse exactly the same inputs as the map changes: no cached answer.
+	for (u64 mirror : {u64{0}, u64{0x8000000200000000}, u64{0}, u64{0x8000000300000000}})
+	{
+		mirrors[1] = mirror;
+		mirrors[3] = mirror;
+		for (u32 address : {0xfff0u, 0x10000u, 0x1fff0u, 0x30000u})
+		for (u32 size : {0u, 1u, 128u, 0x10080u})
+		{
+			check(0x10000 / 128, address, size);
+			check(0x30000 / 128, address, size);
+			check((u64{0x8000000200000000} | 0xff80) / 128, address, size);
+		}
+	}
+
+	// An unshared point inside a long range must still inspect its own page,
+	// even if unrelated pages on either side are shared.
+	mirrors.fill(0x8000000200000000);
+	mirrors[32768] = 0;
+	check(0x80000000 / 128, 1, std::numeric_limits<u32>::max());
+	check(0x80010000 / 128, 1, std::numeric_limits<u32>::max());
 
 	std::printf("VM reservation range: %zu oracle cases passed; %zu legacy false conflicts removed\n", cases, false_conflicts_removed);
 }
