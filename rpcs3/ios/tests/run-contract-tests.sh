@@ -47,6 +47,12 @@ case "$(uname -m)" in
             "${SCRIPT_DIR}/SPUWideOptimizationTests.cpp" "${OUTPUT_ROOT}/SPUWideOptimization.o" \
             -o "${OUTPUT_ROOT}/SPUWideOptimizationTests"
         "${OUTPUT_ROOT}/SPUWideOptimizationTests" validate
+
+        if [[ -n "${LLVM_CONFIG:-}" ]] || command -v llvm-config >/dev/null 2>&1; then
+            python3 -B "${SCRIPT_DIR}/run-spu-arm64-lowering-tests.py"
+        else
+            echo "SPU ARM64 lowering tests not run: set LLVM_CONFIG to a native LLVM 20+ installation."
+        fi
         ;;
 esac
 
@@ -230,6 +236,11 @@ bash "${SCRIPT_DIR}/run-audio-tempo-tests.sh"
     "${SCRIPT_DIR}/IOSFPSBatchTests.cpp" "${SCRIPT_DIR}/../IOSTextureHash.cpp" \
     -o "${OUTPUT_ROOT}/IOSFPSBatchTests"
 "${OUTPUT_ROOT}/IOSFPSBatchTests"
+
+python3 -B "${SCRIPT_DIR}/emit-fragment-constant-fixture.py" "${OUTPUT_ROOT}/FragmentConstantFixture.h"
+"${CXX_COMPILER}" -std=c++20 -O2 -Wall -Wextra -Werror -I "${OUTPUT_ROOT}" \
+    "${SCRIPT_DIR}/FragmentConstantTests.cpp" -o "${OUTPUT_ROOT}/FragmentConstantTests"
+"${OUTPUT_ROOT}/FragmentConstantTests" validate
 
 # Execute the production NEON reservation scan only on an ARM64 host.
 case "$(uname -m)" in
