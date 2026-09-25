@@ -62,8 +62,30 @@ int main()
 		}
 	}
 
+	// Every aligned MFC length, including the 64-byte unroll boundary and
+	// all tails, against an independent per-vector snapshot oracle.
+	alignas(64) std::array<unsigned char, 17408> large_actual{}, large_expected{};
+	for (std::size_t length = 0; length <= 16384; length += 16)
+	{
+		for (int delta = -256; delta <= 256; delta += 16)
+		{
+			for (std::size_t i = 0; i < large_actual.size(); ++i)
+				large_actual[i] = large_expected[i] = static_cast<unsigned char>(i * 37 + i / 128);
+			const std::size_t src = 512, dst = static_cast<std::size_t>(512 + delta);
+			for (std::size_t offset = 0; offset < length; offset += 16)
+			{
+				std::array<unsigned char, 16> unit{};
+				std::copy_n(large_expected.begin() + src + offset, 16, unit.begin());
+				std::copy(unit.begin(), unit.end(), large_expected.begin() + dst + offset);
+			}
+			rpcs3::ios::copy_dma_vectors<v128>(large_actual.data() + dst, large_actual.data() + src, length);
+			check(large_actual == large_expected);
+			++copy_cases;
+		}
+	}
+
 	guarded_page source, destination;
-	for (std::size_t n = 16; n <= 256; n += 16)
+	for (std::size_t n = 16; n <= std::min<std::size_t>(source.size, 16384); n += 16)
 	{
 		for (bool source_at_end : {false, true}) for (bool destination_at_end : {false, true})
 		{
@@ -75,6 +97,40 @@ int main()
 			++copy_cases;
 		}
 	}
+
+	// Different virtual addresses can still alias the same guest storage.
+	// A non-overlap test on pointers must never permit bulk load/store copies.
+	char alias_path[] = "/tmp/rpcs3-dma-alias-XXXXXX";
+	const int alias_fd = mkstemp(alias_path);
+	check(alias_fd >= 0);
+	unlink(alias_path);
+	constexpr std::size_t alias_size = 32768;
+	check(ftruncate(alias_fd, alias_size) == 0);
+	auto* alias_a = static_cast<unsigned char*>(mmap(nullptr, alias_size, PROT_READ | PROT_WRITE, MAP_SHARED, alias_fd, 0));
+	auto* alias_b = static_cast<unsigned char*>(mmap(nullptr, alias_size, PROT_READ | PROT_WRITE, MAP_SHARED, alias_fd, 0));
+	check(alias_a != MAP_FAILED && alias_b != MAP_FAILED);
+	std::array<unsigned char, alias_size> alias_expected{};
+	for (std::size_t length : {144u, 256u, 512u, 1024u, 8192u, 16384u})
+	{
+		for (int delta = -256; delta <= 256; delta += 16)
+		{
+			for (std::size_t i = 0; i < alias_size; ++i)
+				alias_a[i] = alias_expected[i] = static_cast<unsigned char>(i * 37 + i / 128);
+			const std::size_t src = 512, dst = static_cast<std::size_t>(512 + delta);
+			for (std::size_t offset = 0; offset < length; offset += 16)
+			{
+				std::array<unsigned char, 16> unit{};
+				std::copy_n(alias_expected.begin() + src + offset, 16, unit.begin());
+				std::copy(unit.begin(), unit.end(), alias_expected.begin() + dst + offset);
+			}
+			rpcs3::ios::copy_dma_vectors<v128>(alias_b + dst, alias_a + src, length);
+			check(std::equal(alias_expected.begin(), alias_expected.end(), alias_a));
+			++copy_cases;
+		}
+	}
+	munmap(alias_a, alias_size);
+	munmap(alias_b, alias_size);
+	close(alias_fd);
 
 	std::mt19937_64 random(178);
 	std::vector<unsigned char> input(16 * 1024 * 1024 + 64);
