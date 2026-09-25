@@ -61,6 +61,7 @@ const extern spu_decoder<spu_iflag> g_spu_iflag;
 #endif
 
 #ifdef ARCH_ARM64
+#include "SPUARM64Lowering.h"
 #include "Emu/CPU/Backends/AArch64/AArch64JIT.h"
 #include "Emu/CPU/Backends/AArch64/SPUChecksum.h"
 #include "Emu/CPU/Backends/AArch64/SPUInterrupts.h"
@@ -1058,7 +1059,12 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 
 	llvm::Value* compare_spu_xfloat_meq(llvm::Value* a, llvm::Value* b)
 	{
-		return m_ir->CreateSExt(m_ir->CreateICmpEQ(canonical_spu_xfloat(m_ir->CreateAnd(a, 0x7fffffff)), canonical_spu_xfloat(m_ir->CreateAnd(b, 0x7fffffff))), get_type<u32[4]>());
+		const auto x = m_ir->CreateAnd(a, 0x7fffffff);
+		const auto y = m_ir->CreateAnd(b, 0x7fffffff);
+		// Magnitudes compare equal either bit-for-bit or when both flush to
+		// zero. Test their combined exponent instead of selecting two zeros.
+		const auto both_small = m_ir->CreateICmpULT(m_ir->CreateOr(x, y), splat<u32[4]>(0x800000).eval(m_ir));
+		return m_ir->CreateSExt(m_ir->CreateOr(m_ir->CreateICmpEQ(x, y), both_small), get_type<u32[4]>());
 	}
 
 	bool has_raw_xfloat_operands(u32 a, u32 b)
@@ -4190,6 +4196,7 @@ public:
 			run_transforms(f);
 #ifdef ARCH_ARM64
 			lower_spu_variable_insertions(f);
+			spu_llvm::arm64::fold_byte_reversals(f);
 #endif
 		}
 
@@ -8247,6 +8254,15 @@ public:
 			}
 
 			set_vr(op.rt4, tbl(splat_lut, (c >> 4)));
+			return;
+		}
+
+		if ((a_is_splat != b_is_splat) && !perm_only && !perm_or_zero_only)
+		{
+			value_t<u8[16]> result;
+			result.value = spu_llvm::arm64::shuffle_with_splat(*m_ir, a_is_splat ? bv.value : av.value,
+				c.value, cv.value, a_is_splat ? sp_a : sp_b, a_is_splat);
+			set_vr(op.rt4, result);
 			return;
 		}
 
