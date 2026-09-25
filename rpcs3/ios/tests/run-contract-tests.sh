@@ -13,6 +13,43 @@ mkdir -p "${OUTPUT_ROOT}"
     -o "${OUTPUT_ROOT}/IOSGPUEventWaitTests"
 "${OUTPUT_ROOT}/IOSGPUEventWaitTests"
 
+python3 "${SCRIPT_DIR}/emit-spu-xfloat-fixture.py" "${OUTPUT_ROOT}/SPUXFloatConversion.ll"
+"${CLANG:-clang}" -O3 -Wno-override-module -c "${OUTPUT_ROOT}/SPUXFloatConversion.ll" \
+    -o "${OUTPUT_ROOT}/SPUXFloatConversion.o"
+"${CXX_COMPILER}" -std=c++20 -O3 -Wall -Wextra -Werror \
+    "${SCRIPT_DIR}/SPUXFloatConversionTests.cpp" "${OUTPUT_ROOT}/SPUXFloatConversion.o" \
+    -o "${OUTPUT_ROOT}/SPUXFloatConversionTests"
+"${OUTPUT_ROOT}/SPUXFloatConversionTests"
+
+python3 "${SCRIPT_DIR}/emit-spu-batch-fixture.py" "${OUTPUT_ROOT}/SPUBatchOptimization.ll"
+"${CLANG:-clang}" -O3 -Wno-override-module -c "${OUTPUT_ROOT}/SPUBatchOptimization.ll" \
+    -o "${OUTPUT_ROOT}/SPUBatchOptimization.o"
+"${CXX_COMPILER}" -std=c++20 -O3 -Wall -Wextra -Werror \
+    "${SCRIPT_DIR}/SPUBatchOptimizationTests.cpp" "${OUTPUT_ROOT}/SPUBatchOptimization.o" \
+    -o "${OUTPUT_ROOT}/SPUBatchOptimizationTests"
+"${OUTPUT_ROOT}/SPUBatchOptimizationTests" quick validate
+
+# These fixtures execute AArch64-only intrinsics from the production lowering.
+case "$(uname -m)" in
+    arm64|aarch64)
+        python3 -B "${SCRIPT_DIR}/emit-spu-int-fixture.py" "${OUTPUT_ROOT}/SPUIntOptimization.ll"
+        "${CLANG:-clang}" -O3 -Wno-override-module -c "${OUTPUT_ROOT}/SPUIntOptimization.ll" \
+            -o "${OUTPUT_ROOT}/SPUIntOptimization.o"
+        "${CXX_COMPILER}" -std=c++20 -O3 -Wall -Wextra -Werror \
+            "${SCRIPT_DIR}/SPUIntOptimizationTests.cpp" "${OUTPUT_ROOT}/SPUIntOptimization.o" \
+            -o "${OUTPUT_ROOT}/SPUIntOptimizationTests"
+        "${OUTPUT_ROOT}/SPUIntOptimizationTests" quick validate
+
+        python3 -B "${SCRIPT_DIR}/emit-spu-wide-fixture.py" "${OUTPUT_ROOT}/SPUWideOptimization.ll"
+        "${CLANG:-clang}" -O3 -Wno-override-module -c "${OUTPUT_ROOT}/SPUWideOptimization.ll" \
+            -o "${OUTPUT_ROOT}/SPUWideOptimization.o"
+        "${CXX_COMPILER}" -std=c++20 -O3 -Wall -Wextra -Werror -I "${OUTPUT_ROOT}" \
+            "${SCRIPT_DIR}/SPUWideOptimizationTests.cpp" "${OUTPUT_ROOT}/SPUWideOptimization.o" \
+            -o "${OUTPUT_ROOT}/SPUWideOptimizationTests"
+        "${OUTPUT_ROOT}/SPUWideOptimizationTests" validate
+        ;;
+esac
+
 python3 "${SCRIPT_DIR}/run-silenced-fatal-log-tests.py"
 
 "${CXX_COMPILER}" -std=c++20 -pthread -Wall -Wextra -Werror \
