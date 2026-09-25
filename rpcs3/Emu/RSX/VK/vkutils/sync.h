@@ -51,6 +51,10 @@ namespace vk
 		// For events_v1 and events_v2
 		VkEvent m_vk_event = VK_NULL_HANDLE;
 
+#ifdef RPCS3_IOS
+		void* m_metal_event = nullptr;
+#endif
+
 		// For gpu_label
 		std::unique_ptr<gpu_label> m_label{};
 
@@ -66,6 +70,10 @@ namespace vk
 		void gpu_wait(const command_buffer& cmd, const VkDependencyInfoKHR& dependency) const;
 		VkResult status() const;
 		void reset() const;
+#ifdef RPCS3_IOS
+		bool has_metal_event() const { return m_metal_event != nullptr; }
+		VkResult wait_metal(u64 timeout) const;
+#endif
 	};
 
 	class semaphore
