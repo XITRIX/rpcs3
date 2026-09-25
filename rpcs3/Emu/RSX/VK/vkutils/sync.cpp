@@ -12,6 +12,10 @@
 #include "util/asm.hpp"
 #include "util/logs.hpp"
 
+#ifdef RPCS3_IOS
+#include "metal_event.h"
+#endif
+
 namespace vk
 {
 	namespace globals
@@ -232,13 +236,38 @@ namespace vk
 			.flags = 0
 		};
 
+#ifdef RPCS3_IOS
+		VkExportMetalObjectCreateInfoEXT export_info{
+			.sType = VK_STRUCTURE_TYPE_EXPORT_METAL_OBJECT_CREATE_INFO_EXT,
+			.pNext = nullptr,
+			.exportObjectType = VK_EXPORT_METAL_OBJECT_TYPE_METAL_SHARED_EVENT_BIT_EXT,
+		};
+		if (domain == sync_domain::host && dev.get_metal_objects_support())
+		{
+			info.pNext = &export_info;
+		}
+#endif
+
 		if (domain == sync_domain::gpu && m_backend == sync_backend::events_v2)
 		{
 			info.flags = VK_EVENT_CREATE_DEVICE_ONLY_BIT_KHR;
 		}
 
 		CHECK_RESULT(vkCreateEvent(dev, &info, nullptr, &m_vk_event));
+#ifdef RPCS3_IOS
+		if (info.pNext)
+		{
+			m_metal_event = export_metal_event(dev, m_vk_event);
+		}
+#endif
 	}
+
+#ifdef RPCS3_IOS
+	VkResult event::wait_metal(u64 timeout) const
+	{
+		return wait_for_metal_event(m_metal_event, *m_device, m_vk_event, timeout);
+	}
+#endif
 
 	event::~event()
 	{
@@ -589,6 +618,21 @@ namespace vk
 
 	VkResult wait_for_event(event* pEvent, u64 timeout)
 	{
+#ifdef RPCS3_IOS
+		if (pEvent->has_metal_event())
+		{
+			const auto result = pEvent->wait_metal(timeout);
+			if (result == VK_TIMEOUT)
+			{
+				rsx_log.error("[vulkan] vk::wait_for_event has timed out!");
+			}
+			else if (result != VK_SUCCESS)
+			{
+				die_with_error(result);
+			}
+			return result;
+		}
+#endif
 		// Convert timeout to TSC cycles. Timeout accuracy isn't super-important, only fast response when event is signaled (within 10us if possible)
 		const u64 freq = utils::get_tsc_freq();
 
