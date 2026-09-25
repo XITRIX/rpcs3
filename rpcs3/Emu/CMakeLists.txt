@@ -734,6 +734,8 @@ if(TARGET 3rdparty_vulkan)
     endif()
 
     if(RPCS3_FRONTEND STREQUAL "IOS")
+        target_sources(rpcs3_emu PRIVATE RSX/VK/vkutils/metal_event.mm)
+        set_source_files_properties(RSX/VK/vkutils/metal_event.mm PROPERTIES COMPILE_OPTIONS -fno-objc-arc)
         if(CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
             target_sources(rpcs3_emu PRIVATE RSX/VK/upscalers/metalfx_unavailable.cpp)
         else()
