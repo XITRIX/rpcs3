@@ -8,6 +8,11 @@ CXX_COMPILER="${CXX:-clang++}"
 
 mkdir -p "${OUTPUT_ROOT}"
 
+"${CXX_COMPILER}" -std=c++20 -O2 -Wall -Wextra -Werror \
+    "${SCRIPT_DIR}/IOSGPUEventWaitTests.cpp" \
+    -o "${OUTPUT_ROOT}/IOSGPUEventWaitTests"
+"${OUTPUT_ROOT}/IOSGPUEventWaitTests"
+
 python3 "${SCRIPT_DIR}/run-silenced-fatal-log-tests.py"
 
 "${CXX_COMPILER}" -std=c++20 -pthread -Wall -Wextra -Werror \
