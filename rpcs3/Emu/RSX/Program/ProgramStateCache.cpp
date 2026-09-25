@@ -577,8 +577,15 @@ bool vertex_program_compare::compare_properties(const RSXVertexProgram& binary1,
 
 bool fragment_program_utils::is_any_src_constant(v128 sourceOperand)
 {
+#ifdef ARCH_ARM64
+	// A source is constant when its two-bit register type is 10. Test the
+	// two upper words together without extracting and comparing each lane.
+	const u64 pairs = sourceOperand._u64[1];
+	return ((pairs & ~(pairs << 1)) & 0x20000000200) || (sourceOperand._u32[1] & 0x300) == 0x200;
+#else
 	const u64 masked = sourceOperand._u64[1] & 0x30000000300;
 	return (sourceOperand._u32[1] & 0x300) == 0x200 || (static_cast<u32>(masked) == 0x200 || static_cast<u32>(masked >> 32) == 0x200);
+#endif
 }
 
 usz fragment_program_utils::get_fragment_program_ucode_size(const void* ptr)
