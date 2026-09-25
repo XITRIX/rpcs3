@@ -707,17 +707,41 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 	{
 		ensure(val && val->getType() == get_type<f64[4]>());
 
+#ifdef ARCH_ARM64
+		// Pack all four lanes together after separating the double words.
+		const auto words = bitcast<u32[8]>(val);
+		const auto lo = m_ir->CreateShuffleVector(words, words, {0, 2, 4, 6});
+		const auto hi = m_ir->CreateShuffleVector(words, words, {1, 3, 5, 7});
+		const auto payload = m_ir->CreateOr(m_ir->CreateShl(hi, 3), m_ir->CreateLShr(lo, 29));
+		const auto magnitude = m_ir->CreateAnd(m_ir->CreateXor(payload, 0x40000000), 0x7fffffff);
+		const auto result = m_ir->CreateOr(magnitude, m_ir->CreateAnd(hi, 0x80000000));
+		return m_ir->CreateSelect(m_ir->CreateIsNotNull(m_ir->CreateOr(hi, lo)), result, splat<u32[4]>(0).eval(m_ir));
+#else
 		const auto d = double_as_uint64(val);
 		const auto s = m_ir->CreateAnd(m_ir->CreateLShr(d, 32), 0x80000000);
 		const auto m = m_ir->CreateXor(m_ir->CreateLShr(d, 29), 0x40000000);
 		const auto r = m_ir->CreateOr(m_ir->CreateAnd(m, 0x7fffffff), s);
 		return m_ir->CreateTrunc(m_ir->CreateSelect(m_ir->CreateIsNotNull(d), r, splat<u64[4]>(0).eval(m_ir)), get_type<u32[4]>());
+#endif
 	}
 
 	llvm::Value* xfloat_to_double(llvm::Value* val)
 	{
 		ensure(val && val->getType() == get_type<u32[4]>());
 
+#ifdef ARCH_ARM64
+		// Form the two IEEE-double words while all four SPU lanes still fit
+		// in one NEON register. Widening first duplicates the masks, exponent
+		// adjustment and denormal tests across two 64-bit vectors.
+		const auto a = m_ir->CreateAnd(val, 0x7fffffff);
+		const auto normal = m_ir->CreateICmpUGT(a, splat<u32[4]>(0x7fffff).eval(m_ir));
+		const auto zero = splat<u32[4]>(0).eval(m_ir);
+		const auto lo = m_ir->CreateSelect(normal, m_ir->CreateShl(val, 29), zero);
+		const auto magnitude_hi = m_ir->CreateAdd(m_ir->CreateLShr(a, 3), splat<u32[4]>(0x38000000).eval(m_ir));
+		const auto hi = m_ir->CreateOr(m_ir->CreateSelect(normal, magnitude_hi, zero), m_ir->CreateAnd(val, 0x80000000));
+		// Little-endian arm64: retain signed zero and the SPU extended exponent.
+		return bitcast<f64[4]>(m_ir->CreateShuffleVector(lo, hi, {0, 4, 1, 5, 2, 6, 3, 7}));
+#else
 		const auto x = m_ir->CreateZExt(val, get_type<u64[4]>());
 
 #ifdef ARCH_X64
@@ -738,6 +762,7 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 		const auto r = m_ir->CreateSelect(m_ir->CreateICmpSGT(a, splat<u64[4]>(0x7fffff).eval(m_ir)), m, splat<u64[4]>(0).eval(m_ir));
 		const auto f = m_ir->CreateOr(s, r);
 		return uint64_as_double(f);
+#endif
 	}
 
 	// Clamp double values to ±Smax, flush values smaller than ±Smin to positive zero
@@ -775,10 +800,274 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 	// Expand 32-bit mask for xfloat values to 64-bit, 29 least significant bits are always zero
 	llvm::Value* conv_xfloat_mask(llvm::Value* val)
 	{
+#ifdef ARCH_ARM64
+		const auto lo = m_ir->CreateShl(val, 28);
+		const auto extension = m_ir->CreateAShr(m_ir->CreateShl(val, 1), 5);
+		const auto hi = m_ir->CreateOr(m_ir->CreateAnd(extension, 0x7fffffff), m_ir->CreateAnd(val, 0x80000000));
+		return bitcast<u64[4]>(m_ir->CreateShuffleVector(lo, hi, {0, 4, 1, 5, 2, 6, 3, 7}));
+#else
 		const auto d = m_ir->CreateZExt(val, get_type<u64[4]>());
 		const auto s = m_ir->CreateShl(m_ir->CreateAnd(d, 0x80000000), 32);
 		const auto e = m_ir->CreateLShr(m_ir->CreateAShr(m_ir->CreateShl(d, 33), 4), 1);
 		return m_ir->CreateOr(s, e);
+#endif
+	}
+
+	llvm::Value* insert_spu_byte(llvm::Value* vector, llvm::Value* element, llvm::Value* index)
+	{
+		// CBX/CBD bounds the index to 0..15. NEON can select the byte
+		// directly, avoiding a variable insertelement's stack round trip.
+		const auto lanes = build<u8[16]>(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15).eval(m_ir);
+		const auto indices = m_ir->CreateVectorSplat(16, m_ir->CreateTrunc(index, get_type<u8>()));
+		const auto values = m_ir->CreateVectorSplat(16, element);
+		return m_ir->CreateSelect(m_ir->CreateICmpEQ(lanes, indices), values, vector);
+	}
+
+#ifdef ARCH_ARM64
+	llvm::Value* insert_spu_halfword(llvm::Value* vector, llvm::Value* element, llvm::Value* index)
+	{
+		const auto lanes = build<u16[8]>(0, 1, 2, 3, 4, 5, 6, 7).eval(m_ir);
+		const auto indices = m_ir->CreateVectorSplat(8, m_ir->CreateZExtOrTrunc(index, get_type<u16>()));
+		const auto values = m_ir->CreateVectorSplat(8, element);
+		return m_ir->CreateSelect(m_ir->CreateICmpEQ(lanes, indices), values, vector);
+	}
+
+	llvm::Value* insert_spu_word(llvm::Value* vector, llvm::Value* element, llvm::Value* index)
+	{
+		const auto lanes = build<u32[4]>(0, 1, 2, 3).eval(m_ir);
+		const auto indices = m_ir->CreateVectorSplat(4, m_ir->CreateZExtOrTrunc(index, get_type<u32>()));
+		const auto values = m_ir->CreateVectorSplat(4, element);
+		return m_ir->CreateSelect(m_ir->CreateICmpEQ(lanes, indices), values, vector);
+	}
+
+	llvm::Value* insert_spu_doubleword(llvm::Value* vector, llvm::Value* element, llvm::Value* index)
+	{
+		const auto lanes = build<u64[2]>(0, 1).eval(m_ir);
+		const auto indices = m_ir->CreateVectorSplat(2, m_ir->CreateZExtOrTrunc(index, get_type<u64>()));
+		const auto values = m_ir->CreateVectorSplat(2, element);
+		return m_ir->CreateSelect(m_ir->CreateICmpEQ(lanes, indices), values, vector);
+	}
+
+	llvm::Value* extend_spu_boolean8(llvm::Value* val)
+	{
+		// Each source lane is already zero or all ones. Duplicate the low
+		// lane of each pair instead of shifting twice to sign-extend it.
+		return bitcast<u16[8]>(m_ir->CreateShuffleVector(val, val, {0, 0, 2, 2, 4, 4, 6, 6, 8, 8, 10, 10, 12, 12, 14, 14}));
+	}
+
+	llvm::Value* extend_spu_boolean16(llvm::Value* val)
+	{
+		// Each source lane is already zero or all ones. Duplicate the low
+		// lane of each pair instead of shifting twice to sign-extend it.
+		return bitcast<u32[4]>(m_ir->CreateShuffleVector(val, val, {0, 0, 2, 2, 4, 4, 6, 6}));
+	}
+
+	llvm::Value* extend_spu_boolean32(llvm::Value* val)
+	{
+		// Each source lane is already zero or all ones. Duplicate the low
+		// lane of each pair instead of shifting twice to sign-extend it.
+		return bitcast<u64[2]>(m_ir->CreateShuffleVector(val, val, {0, 0, 2, 2}));
+	}
+
+	llvm::Value* spu_arithmetic_shift16(llvm::Value* val, llvm::Value* count)
+	{
+		// The caller bounds count to 0..31. SSHL saturates a right
+		// shift at the sign bit, including counts at or above the lane width.
+		return m_ir->CreateCall(get_intrinsic<s16[8]>(llvm::Intrinsic::aarch64_neon_sshl), {val, m_ir->CreateNeg(count)});
+	}
+
+	llvm::Value* spu_arithmetic_shift32(llvm::Value* val, llvm::Value* count)
+	{
+		// The caller bounds count to 0..63. SSHL saturates a right
+		// shift at the sign bit, including counts at or above the lane width.
+		return m_ir->CreateCall(get_intrinsic<s32[4]>(llvm::Intrinsic::aarch64_neon_sshl), {val, m_ir->CreateNeg(count)});
+	}
+
+	llvm::Value* spu_constant_shuffle(llvm::Value* selectors)
+	{
+		const auto lut = build<u8[16]>(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 128, 128).eval(m_ir);
+		const auto indices = m_ir->CreateLShr(selectors, 4);
+		return m_ir->CreateCall(get_intrinsic<u8[16]>(llvm::Intrinsic::aarch64_neon_tbl1), {lut, indices});
+	}
+
+	void lower_spu_variable_insertions(llvm::Function& function)
+	{
+		// Run after SPU pattern matching, so CB*/CH*/CW*/CD* -> SHUFB
+		// fusion still sees the original insertelement. Also covers masks
+		// that escape to guest registers and data inserts of every width.
+		llvm::IRBuilder<>::InsertPointGuard guard(*m_ir);
+		for (auto& block : function)
+		{
+			for (auto it = block.begin(); it != block.end();)
+			{
+				auto* insertion = llvm::dyn_cast<llvm::InsertElementInst>(&*it++);
+				if (!insertion || llvm::isa<llvm::Constant>(insertion->getOperand(2)))
+					continue;
+				const auto type = llvm::dyn_cast<llvm::FixedVectorType>(insertion->getType());
+				if (!type || !type->getElementType()->isIntegerTy() || type->getPrimitiveSizeInBits() != 128)
+					continue;
+				const auto vector = insertion->getOperand(0);
+				const auto element = insertion->getOperand(1);
+				const auto index = insertion->getOperand(2);
+				m_ir->SetInsertPoint(insertion);
+				llvm::Value* result = nullptr;
+				switch (type->getElementType()->getIntegerBitWidth())
+				{
+				case 8: result = insert_spu_byte(vector, element, index); break;
+				case 16: result = insert_spu_halfword(vector, element, index); break;
+				case 32: result = insert_spu_word(vector, element, index); break;
+				case 64: result = insert_spu_doubleword(vector, element, index); break;
+				default: continue;
+				}
+				insertion->replaceAllUsesWith(result);
+				insertion->eraseFromParent();
+			}
+		}
+	}
+
+	// Bounded NEON shifts avoid the generic funnel-shift expansion.
+	// USHL uses signed low-byte counts; the second count is -width at zero,
+	// producing zero rather than LLVM poison from a shift by the lane width.
+	llvm::Value* spu_rotate16(llvm::Value* a, llvm::Value* b)
+	{
+		const auto count = m_ir->CreateAnd(b, 15);
+		const auto left = m_ir->CreateCall(get_intrinsic<u16[8]>(llvm::Intrinsic::aarch64_neon_ushl), {a, count});
+		const auto right = m_ir->CreateCall(get_intrinsic<u16[8]>(llvm::Intrinsic::aarch64_neon_ushl), {a, m_ir->CreateSub(count, splat<u16[8]>(16).eval(m_ir))});
+		return m_ir->CreateOr(left, right);
+	}
+
+	llvm::Value* spu_rotate32(llvm::Value* a, llvm::Value* b)
+	{
+		const auto count = m_ir->CreateAnd(b, 31);
+		const auto left = m_ir->CreateCall(get_intrinsic<u32[4]>(llvm::Intrinsic::aarch64_neon_ushl), {a, count});
+		const auto right = m_ir->CreateCall(get_intrinsic<u32[4]>(llvm::Intrinsic::aarch64_neon_ushl), {a, m_ir->CreateSub(count, splat<u32[4]>(32).eval(m_ir))});
+		return m_ir->CreateOr(left, right);
+	}
+
+	llvm::Value* spu_quadrot(llvm::Value* a, llvm::Value* b)
+	{
+		const auto word_count = m_ir->CreateShuffleVector(b, b, {3, 3, 3, 3});
+		const auto count = m_ir->CreateAnd(bitcast<u64[2]>(word_count), 7);
+		const auto wide = bitcast<u64[2]>(a);
+		const auto neighbor = m_ir->CreateShuffleVector(wide, splat<u64[2]>(0).eval(m_ir), {1, 0});
+		const auto main = m_ir->CreateCall(get_intrinsic<u64[2]>(llvm::Intrinsic::aarch64_neon_ushl), {wide, count});
+		const auto carry = m_ir->CreateCall(get_intrinsic<u64[2]>(llvm::Intrinsic::aarch64_neon_ushl), {neighbor, m_ir->CreateSub(count, splat<u64[2]>(64).eval(m_ir))});
+		return bitcast<u32[4]>(m_ir->CreateOr(main, carry));
+	}
+
+	llvm::Value* spu_quadleft(llvm::Value* a, llvm::Value* b)
+	{
+		const auto word_count = m_ir->CreateShuffleVector(b, b, {3, 3, 3, 3});
+		const auto count = m_ir->CreateAnd(bitcast<u64[2]>(word_count), 7);
+		const auto wide = bitcast<u64[2]>(a);
+		const auto neighbor = m_ir->CreateShuffleVector(wide, splat<u64[2]>(0).eval(m_ir), {2, 0});
+		const auto main = m_ir->CreateCall(get_intrinsic<u64[2]>(llvm::Intrinsic::aarch64_neon_ushl), {wide, count});
+		const auto carry = m_ir->CreateCall(get_intrinsic<u64[2]>(llvm::Intrinsic::aarch64_neon_ushl), {neighbor, m_ir->CreateSub(count, splat<u64[2]>(64).eval(m_ir))});
+		return bitcast<u32[4]>(m_ir->CreateOr(main, carry));
+	}
+
+	llvm::Value* spu_quadright(llvm::Value* a, llvm::Value* b)
+	{
+		const auto word_count = m_ir->CreateShuffleVector(b, b, {3, 3, 3, 3});
+		const auto count = m_ir->CreateAnd(bitcast<u64[2]>(word_count), 7);
+		const auto wide = bitcast<u64[2]>(a);
+		const auto neighbor = m_ir->CreateShuffleVector(wide, splat<u64[2]>(0).eval(m_ir), {1, 2});
+		const auto main = m_ir->CreateCall(get_intrinsic<u64[2]>(llvm::Intrinsic::aarch64_neon_ushl), {wide, m_ir->CreateNeg(count)});
+		const auto carry = m_ir->CreateCall(get_intrinsic<u64[2]>(llvm::Intrinsic::aarch64_neon_ushl), {neighbor, m_ir->CreateSub(splat<u64[2]>(64).eval(m_ir), count)});
+		return bitcast<u32[4]>(m_ir->CreateOr(main, carry));
+	}
+
+	llvm::Value* spu_cgx(llvm::Value* a, llvm::Value* b, llvm::Value* c)
+	{
+		const auto sum = m_ir->CreateAdd(a, b);
+		const auto carry = m_ir->CreateZExt(m_ir->CreateICmpULT(sum, a), get_type<u32[4]>());
+		const auto boundary = m_ir->CreateAnd(m_ir->CreateSExt(m_ir->CreateICmpEQ(sum, splat<u32[4]>(0xffffffff).eval(m_ir)), get_type<u32[4]>()), m_ir->CreateAnd(c, 1));
+		return m_ir->CreateOr(carry, boundary);
+	}
+
+	llvm::Value* spu_bgx(llvm::Value* a, llvm::Value* b, llvm::Value* c)
+	{
+		const auto gt = m_ir->CreateZExt(m_ir->CreateICmpUGT(b, a), get_type<u32[4]>());
+		const auto eq = m_ir->CreateSExt(m_ir->CreateICmpEQ(a, b), get_type<u32[4]>());
+		return m_ir->CreateOr(gt, m_ir->CreateAnd(eq, m_ir->CreateAnd(c, 1)));
+	}
+
+	llvm::Value* spu_byterot(llvm::Value* a, llvm::Value* b)
+	{
+		const auto count = m_ir->CreateAnd(b, 15);
+		const auto base = build<u8[16]>(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15).eval(m_ir);
+		const auto shuffled = m_ir->CreateCall(get_intrinsic<u8[16]>(llvm::Intrinsic::aarch64_neon_tbl1), {a, m_ir->CreateAnd(m_ir->CreateSub(base, count), 15)});
+		return m_ir->CreateSelect(m_ir->CreateICmpEQ(count, splat<u8[16]>(0).eval(m_ir)), a, shuffled);
+	}
+
+	llvm::Value* spu_byteleft(llvm::Value* a, llvm::Value* b)
+	{
+		const auto count = m_ir->CreateAnd(b, 31);
+		const auto base = build<u8[16]>(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15).eval(m_ir);
+		const auto shuffled = m_ir->CreateCall(get_intrinsic<u8[16]>(llvm::Intrinsic::aarch64_neon_tbl1), {a, m_ir->CreateSub(base, count)});
+		return m_ir->CreateSelect(m_ir->CreateICmpUGT(count, splat<u8[16]>(15).eval(m_ir)), splat<u8[16]>(0).eval(m_ir), shuffled);
+	}
+
+	llvm::Value* spu_byteright(llvm::Value* a, llvm::Value* b)
+	{
+		const auto count = m_ir->CreateAnd(m_ir->CreateNeg(b), 31);
+		const auto base = build<u8[16]>(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15).eval(m_ir);
+		const auto shuffled = m_ir->CreateCall(get_intrinsic<u8[16]>(llvm::Intrinsic::aarch64_neon_tbl1), {a, m_ir->CreateAdd(base, count)});
+		return m_ir->CreateSelect(m_ir->CreateICmpUGT(count, splat<u8[16]>(15).eval(m_ir)), splat<u8[16]>(0).eval(m_ir), shuffled);
+	}
+
+#endif
+
+	llvm::Value* canonical_spu_xfloat(llvm::Value* val)
+	{
+		const auto magnitude = m_ir->CreateAnd(val, 0x7fffffff);
+		const auto normal = m_ir->CreateICmpUGT(magnitude, splat<u32[4]>(0x7fffff).eval(m_ir));
+		return m_ir->CreateSelect(normal, val, splat<u32[4]>(0).eval(m_ir));
+	}
+
+	llvm::Value* spu_xfloat_order_key(llvm::Value* val)
+	{
+		const auto canonical = canonical_spu_xfloat(val);
+		const auto flip = m_ir->CreateAnd(m_ir->CreateAShr(canonical, 31), 0x7fffffff);
+		return m_ir->CreateXor(canonical, flip);
+	}
+
+	// Raw ordering is already correct if either exponent is nonzero.
+	// Only two flushed operands need to compare as the same positive zero.
+	llvm::Value* compare_spu_xfloat_gt(llvm::Value* a, llvm::Value* b)
+	{
+		const auto any_normal = m_ir->CreateIsNotNull(m_ir->CreateAnd(m_ir->CreateOr(a, b), 0x7f800000));
+		const auto ka = m_ir->CreateXor(a, m_ir->CreateAnd(m_ir->CreateAShr(a, 31), 0x7fffffff));
+		const auto kb = m_ir->CreateXor(b, m_ir->CreateAnd(m_ir->CreateAShr(b, 31), 0x7fffffff));
+		return m_ir->CreateSExt(m_ir->CreateAnd(m_ir->CreateICmpSGT(ka, kb), any_normal), get_type<u32[4]>());
+	}
+
+	llvm::Value* compare_spu_xfloat_eq(llvm::Value* a, llvm::Value* b)
+	{
+		const auto both_zero = m_ir->CreateICmpEQ(m_ir->CreateAnd(m_ir->CreateOr(a, b), 0x7f800000), splat<u32[4]>(0).eval(m_ir));
+		return m_ir->CreateSExt(m_ir->CreateOr(m_ir->CreateICmpEQ(a, b), both_zero), get_type<u32[4]>());
+	}
+
+	llvm::Value* compare_spu_xfloat_mgt(llvm::Value* a, llvm::Value* b)
+	{
+		const auto ma = m_ir->CreateAnd(a, 0x7fffffff);
+		const auto mb = m_ir->CreateAnd(b, 0x7fffffff);
+		const auto normal = m_ir->CreateICmpUGT(ma, splat<u32[4]>(0x7fffff).eval(m_ir));
+		return m_ir->CreateSExt(m_ir->CreateAnd(m_ir->CreateICmpUGT(ma, mb), normal), get_type<u32[4]>());
+	}
+
+	llvm::Value* compare_spu_xfloat_meq(llvm::Value* a, llvm::Value* b)
+	{
+		return m_ir->CreateSExt(m_ir->CreateICmpEQ(canonical_spu_xfloat(m_ir->CreateAnd(a, 0x7fffffff)), canonical_spu_xfloat(m_ir->CreateAnd(b, 0x7fffffff))), get_type<u32[4]>());
+	}
+
+	bool has_raw_xfloat_operands(u32 a, u32 b)
+	{
+		// Do not pack a live double just to compare it. Only skip widening
+		// when both operands still have the raw four-word SPU representation.
+		const auto av = get_reg_raw(a);
+		const auto bv = get_reg_raw(b);
+		return (!av || av->getType() != get_type<f64[4]>()) && (!bv || bv->getType() != get_type<f64[4]>());
 	}
 
 	llvm::Value* get_reg_raw(u32 index)
@@ -3899,6 +4188,9 @@ public:
 		for (auto& f : *m_module)
 		{
 			run_transforms(f);
+#ifdef ARCH_ARM64
+			lower_spu_variable_insertions(f);
+#endif
 		}
 
 		for (const auto& func : m_functions)
@@ -4469,6 +4761,9 @@ public:
 		for (auto& f : *_module)
 		{
 			run_transforms(f);
+#ifdef ARCH_ARM64
+			lower_spu_variable_insertions(f);
+#endif
 		}
 
 		std::string llvm_log;
@@ -5762,7 +6057,13 @@ public:
 	void ROT(spu_opcode_t op)
 	{
 		const auto [a, b] = get_vrs<u32[4]>(op.ra, op.rb);
+#ifdef ARCH_ARM64
+		value_t<u32[4]> result;
+		result.value = spu_rotate32(a.value, b.value);
+		set_vr(op.rt, result);
+#else
 		set_vr(op.rt, rol(a, b));
+#endif
 	}
 
 	void ROTM(spu_opcode_t op)
@@ -5800,7 +6101,13 @@ public:
 			return;
 		}
 
+#ifdef ARCH_ARM64
+		value_t<s32[4]> result;
+		result.value = spu_arithmetic_shift32(a.value, eval(minusb & 63).value);
+		set_vr(op.rt, result);
+#else
 		set_vr(op.rt, inf_ashr(a, minusb & 63));
+#endif
 	}
 
 	void SHL(spu_opcode_t op)
@@ -5819,7 +6126,13 @@ public:
 	void ROTH(spu_opcode_t op)
 	{
 		const auto [a, b] = get_vrs<u16[8]>(op.ra, op.rb);
+#ifdef ARCH_ARM64
+		value_t<u16[8]> result;
+		result.value = spu_rotate16(a.value, b.value);
+		set_vr(op.rt, result);
+#else
 		set_vr(op.rt, rol(a, b));
+#endif
 	}
 
 	void ROTHM(spu_opcode_t op)
@@ -5857,7 +6170,13 @@ public:
 			return;
 		}
 
+#ifdef ARCH_ARM64
+		value_t<s16[8]> result;
+		result.value = spu_arithmetic_shift16(a.value, eval(minusb & 31).value);
+		set_vr(op.rt, result);
+#else
 		set_vr(op.rt, inf_ashr(a, minusb & 31));
+#endif
 	}
 
 	void SHLH(spu_opcode_t op)
@@ -6571,8 +6890,14 @@ public:
 			}
 		}
 
+#ifdef ARCH_ARM64
+		value_t<u32[4]> result;
+		result.value = spu_quadrot(a.value, get_vr(op.rb).value);
+		set_vr(op.rt, result);
+#else
 		const auto b = splat_scalar(get_vr(op.rb) & 0x7);
 		set_vr(op.rt, fshl(a, zshuffle(a, 3, 0, 1, 2), b));
+#endif
 	}
 
 	void ROTQMBI(spu_opcode_t op)
@@ -6585,15 +6910,27 @@ public:
 			minusb = eval(x);
 		}
 
+#ifdef ARCH_ARM64
+		value_t<u32[4]> result;
+		result.value = spu_quadright(a.value, minusb.value);
+		set_vr(op.rt, result);
+#else
 		const auto bx = splat_scalar(minusb) & 0x7;
 		set_vr(op.rt, fshr(zshuffle(a, 1, 2, 3, 4), a, bx));
+#endif
 	}
 
 	void SHLQBI(spu_opcode_t op)
 	{
 		const auto a = get_vr(op.ra);
+#ifdef ARCH_ARM64
+		value_t<u32[4]> result;
+		result.value = spu_quadleft(a.value, get_vr(op.rb).value);
+		set_vr(op.rt, result);
+#else
 		const auto b = splat_scalar(get_vr(op.rb) & 0x7);
 		set_vr(op.rt, fshl(a, zshuffle(a, 4, 0, 1, 2), b));
+#endif
 	}
 
 #if defined(ARCH_X64)
@@ -6795,6 +7132,16 @@ public:
 	void ROTQBYI(spu_opcode_t op)
 	{
 		const auto a = get_vr<u8[16]>(op.ra);
+#ifdef ARCH_ARM64
+		// Fold identity/zero immediates without adding work to the dynamic interpreter.
+		if (!m_interp_magn)
+		{
+			value_t<u8[16]> result;
+			result.value = spu_byterot(a.value, get_imm<u8[16]>(op.i7, false).value);
+			set_vr(op.rt, result);
+			return;
+		}
+#endif
 		const auto sc = rotqby_forward_base();
 		const auto sh = (sc - get_imm<u8[16]>(op.i7, false)) & 0xf;
 		set_vr(op.rt, pshufb_for_x86_and_tbl_for_aarch64(a, sh));
@@ -6803,6 +7150,16 @@ public:
 	void ROTQMBYI(spu_opcode_t op)
 	{
 		const auto a = get_vr<u8[16]>(op.ra);
+#ifdef ARCH_ARM64
+		// Fold identity/zero immediates without adding work to the dynamic interpreter.
+		if (!m_interp_magn)
+		{
+			value_t<u8[16]> result;
+			result.value = spu_byteright(a.value, get_imm<u8[16]>(op.i7, false).value);
+			set_vr(op.rt, result);
+			return;
+		}
+#endif
 		const auto sc = rotqby_zero_base();
 		const auto sh = sc + (-get_imm<u8[16]>(op.i7, false) & 0x1f);
 		set_vr(op.rt, pshufb_for_x86_and_tbl_for_aarch64(a, sh));
@@ -6812,6 +7169,16 @@ public:
 	{
 		if (get_reg_raw(op.ra) && !op.i7) return set_reg_fixed(op.rt, get_reg_raw(op.ra), false); // For expressions matching
 		const auto a = get_vr<u8[16]>(op.ra);
+#ifdef ARCH_ARM64
+		// Fold identity/zero immediates without adding work to the dynamic interpreter.
+		if (!m_interp_magn)
+		{
+			value_t<u8[16]> result;
+			result.value = spu_byteleft(a.value, get_imm<u8[16]>(op.i7, false).value);
+			set_vr(op.rt, result);
+			return;
+		}
+#endif
 		const auto sc = rotqby_forward_base();
 		const auto sh = sc - (get_imm<u8[16]>(op.i7, false) & 0x1f);
 		set_vr(op.rt, pshufb_for_x86_and_tbl_for_aarch64(a, sh));
@@ -6923,11 +7290,31 @@ public:
 
 	void XSWD(spu_opcode_t op)
 	{
+#ifdef ARCH_ARM64
+		const auto raw = get_vr<s32[4]>(op.ra);
+		if (auto [ok, condition] = match_expr(raw, sext<s32[4]>(match<bool[4]>())); ok)
+		{
+			value_t<u64[2]> result;
+			result.value = extend_spu_boolean32(raw.value);
+			set_vr(op.rt, result);
+			return;
+		}
+#endif
 		set_vr(op.rt, get_vr<s64[2]>(op.ra) << 32 >> 32);
 	}
 
 	void XSHW(spu_opcode_t op)
 	{
+#ifdef ARCH_ARM64
+		const auto raw = get_vr<s16[8]>(op.ra);
+		if (auto [ok, condition] = match_expr(raw, sext<s16[8]>(match<bool[8]>())); ok)
+		{
+			value_t<u32[4]> result;
+			result.value = extend_spu_boolean16(raw.value);
+			set_vr(op.rt, result);
+			return;
+		}
+#endif
 		set_vr(op.rt, get_vr<s32[4]>(op.ra) << 16 >> 16);
 	}
 
@@ -6938,6 +7325,16 @@ public:
 
 	void XSBH(spu_opcode_t op)
 	{
+#ifdef ARCH_ARM64
+		const auto raw = get_vr<s8[16]>(op.ra);
+		if (auto [ok, condition] = match_expr(raw, sext<s8[16]>(match<bool[16]>())); ok)
+		{
+			value_t<u16[8]> result;
+			result.value = extend_spu_boolean8(raw.value);
+			set_vr(op.rt, result);
+			return;
+		}
+#endif
 		set_vr(op.rt, get_vr<s16[8]>(op.ra) << 8 >> 8);
 	}
 
@@ -6998,16 +7395,28 @@ public:
 	void CGX(spu_opcode_t op)
 	{
 		const auto [a, b] = get_vrs<u32[4]>(op.ra, op.rb);
+#ifdef ARCH_ARM64
+		value_t<u32[4]> result;
+		result.value = spu_cgx(a.value, b.value, get_vr(op.rt).value);
+		set_vr(op.rt, result);
+#else
 		const auto x = (get_vr<s32[4]>(op.rt) << 31) >> 31;
 		const auto s = eval(a + b);
 		set_vr(op.rt, noncast<u32[4]>(sext<s32[4]>(s < a) | (sext<s32[4]>(s == noncast<u32[4]>(x)) & x)) >> 31);
+#endif
 	}
 
 	void BGX(spu_opcode_t op)
 	{
 		const auto [a, b] = get_vrs<u32[4]>(op.ra, op.rb);
+#ifdef ARCH_ARM64
+		value_t<u32[4]> result;
+		result.value = spu_bgx(a.value, b.value, get_vr(op.rt).value);
+		set_vr(op.rt, result);
+#else
 		const auto c = get_vr<s32[4]>(op.rt) << 31;
 		set_vr(op.rt, noncast<u32[4]>(sext<s32[4]>(b > a) | (sext<s32[4]>(a == b) & c)) >> 31);
+#endif
 	}
 
 	void MPYHHA(spu_opcode_t op)
@@ -7558,6 +7967,18 @@ public:
 			// If the mask comes from a constant generation instruction, replace SHUFB with insert
 			if (auto [ok, i] = match_expr(c, spu_get_insertion_shuffle_mask<VT>(match<u32>())); ok)
 			{
+#ifdef ARCH_ARM64
+				if constexpr (std::is_same_v<VT, u8[16]>)
+				{
+					if (!llvm::isa<llvm::ConstantInt>(i.value))
+					{
+						value_t<VT> result;
+						result.value = insert_spu_byte(get_vr<VT>(op.rb).value, get_scalar(get_vr<VT>(op.ra)).eval(m_ir), i.value);
+						set_vr(op.rt4, result);
+						return true;
+					}
+				}
+#endif
 				set_vr(op.rt4, insert(get_vr<VT>(op.rb), i, get_scalar(get_vr<VT>(op.ra))));
 				return true;
 			}
@@ -7693,6 +8114,16 @@ public:
 		[[maybe_unused]] const bool consts_never_msb = known_idx.Zero[5];
 		[[maybe_unused]] const bool consts_never_allones = known_idx.One[5];
 		[[maybe_unused]] const bool idx_selects_single = known_idx.extractBits(1, 4).isConstant();
+#ifdef ARCH_ARM64
+		if (consts_only)
+		{
+			// Every selector has bit 7 set, so neither source can be read.
+			value_t<u8[16]> result;
+			result.value = spu_constant_shuffle(c.value);
+			set_vr(op.rt4, result);
+			return;
+		}
+#endif
 
 		const auto a = get_vr<u8[16]>(op.ra);
 		const auto b = get_vr<u8[16]>(op.rb);
@@ -8187,6 +8618,15 @@ public:
 	{
 		if (g_cfg.core.spu_xfloat_accuracy == xfloat_accuracy::accurate)
 		{
+#ifdef ARCH_ARM64
+			if (has_raw_xfloat_operands(op.ra, op.rb))
+			{
+				value_t<u32[4]> result;
+				result.value = compare_spu_xfloat_gt(get_vr<u32[4]>(op.ra).value, get_vr<u32[4]>(op.rb).value);
+				set_vr(op.rt, result);
+				return;
+			}
+#endif
 			set_vr(op.rt, sext<s32[4]>(fcmp_ord(get_vr<f64[4]>(op.ra) > get_vr<f64[4]>(op.rb))));
 			return;
 		}
@@ -8283,6 +8723,15 @@ public:
 	{
 		if (g_cfg.core.spu_xfloat_accuracy == xfloat_accuracy::accurate)
 		{
+#ifdef ARCH_ARM64
+			if (has_raw_xfloat_operands(op.ra, op.rb))
+			{
+				value_t<u32[4]> result;
+				result.value = compare_spu_xfloat_mgt(get_vr<u32[4]>(op.ra).value, get_vr<u32[4]>(op.rb).value);
+				set_vr(op.rt, result);
+				return;
+			}
+#endif
 			set_vr(op.rt, sext<s32[4]>(fcmp_ord(fabs(get_vr<f64[4]>(op.ra)) > fabs(get_vr<f64[4]>(op.rb)))));
 			return;
 		}
@@ -8561,6 +9010,15 @@ public:
 	{
 		if (g_cfg.core.spu_xfloat_accuracy == xfloat_accuracy::accurate)
 		{
+#ifdef ARCH_ARM64
+			if (has_raw_xfloat_operands(op.ra, op.rb))
+			{
+				value_t<u32[4]> result;
+				result.value = compare_spu_xfloat_eq(get_vr<u32[4]>(op.ra).value, get_vr<u32[4]>(op.rb).value);
+				set_vr(op.rt, result);
+				return;
+			}
+#endif
 			set_vr(op.rt, sext<s32[4]>(fcmp_ord(get_vr<f64[4]>(op.ra) == get_vr<f64[4]>(op.rb))));
 			return;
 		}
@@ -8610,6 +9068,15 @@ public:
 	{
 		if (g_cfg.core.spu_xfloat_accuracy == xfloat_accuracy::accurate)
 		{
+#ifdef ARCH_ARM64
+			if (has_raw_xfloat_operands(op.ra, op.rb))
+			{
+				value_t<u32[4]> result;
+				result.value = compare_spu_xfloat_meq(get_vr<u32[4]>(op.ra).value, get_vr<u32[4]>(op.rb).value);
+				set_vr(op.rt, result);
+				return;
+			}
+#endif
 			set_vr(op.rt, sext<s32[4]>(fcmp_ord(fabs(get_vr<f64[4]>(op.ra)) == fabs(get_vr<f64[4]>(op.rb)))));
 			return;
 		}
