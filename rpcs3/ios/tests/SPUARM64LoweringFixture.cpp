@@ -62,7 +62,24 @@ int main(int argc, char** argv)
 				++changed;
 			}
 		}
+		if (original->getName().starts_with("extended_fsm8"))
+		{
+			llvm::Value* a = nullptr;
+			llvm::Instruction* output = nullptr;
+			for (auto& block : *candidate)
+				for (auto& instruction : block)
+				{
+					if (instruction.getName() == "a") a = &instruction;
+					if (instruction.getName() == "out") output = &instruction;
+				}
+			if (!a || !output) return 1;
+			llvm::IRBuilder<> ir(output);
+			output->replaceAllUsesWith(spu_llvm::arm64::form_byte_mask(ir, a));
+			output->eraseFromParent();
+			++changed;
+		}
 		changed += spu_llvm::arm64::fold_byte_reversals(*candidate);
+		changed += spu_llvm::arm64::fold_single_source_tables(*candidate);
 		total += changed;
 		llvm::outs() << name << ": " << changed << " folds\n";
 		if (original->getName().starts_with("guard_") ? changed != 0 : changed != 1)

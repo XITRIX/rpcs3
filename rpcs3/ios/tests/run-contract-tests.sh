@@ -32,6 +32,13 @@ python3 "${SCRIPT_DIR}/emit-spu-batch-fixture.py" "${OUTPUT_ROOT}/SPUBatchOptimi
 # These fixtures execute AArch64-only intrinsics from the production lowering.
 case "$(uname -m)" in
     arm64|aarch64)
+        python3 -B "${SCRIPT_DIR}/emit-spu-reservation-hash-fixture.py" "${OUTPUT_ROOT}/SPUReservationHashFixture.h"
+        "${CXX_COMPILER}" -std=c++20 -O2 -Wall -Wextra -Werror \
+            -I "${SOURCE_ROOT}" -I "${SOURCE_ROOT}/rpcs3" \
+            -I "${SOURCE_ROOT}/3rdparty/asmjit/asmjit/src" -I "${OUTPUT_ROOT}" \
+            "${SCRIPT_DIR}/SPUReservationHashTests.cpp" -o "${OUTPUT_ROOT}/SPUReservationHashTests"
+        "${OUTPUT_ROOT}/SPUReservationHashTests"
+
         python3 -B "${SCRIPT_DIR}/emit-spu-int-fixture.py" "${OUTPUT_ROOT}/SPUIntOptimization.ll"
         "${CLANG:-clang}" -O3 -Wno-override-module -c "${OUTPUT_ROOT}/SPUIntOptimization.ll" \
             -o "${OUTPUT_ROOT}/SPUIntOptimization.o"
@@ -50,6 +57,7 @@ case "$(uname -m)" in
 
         if [[ -n "${LLVM_CONFIG:-}" ]] || command -v llvm-config >/dev/null 2>&1; then
             python3 -B "${SCRIPT_DIR}/run-spu-arm64-lowering-tests.py"
+            python3 -B "${SCRIPT_DIR}/run-spu-arm64-compare-tests.py"
         else
             echo "SPU ARM64 lowering tests not run: set LLVM_CONFIG to a native LLVM 20+ installation."
         fi
