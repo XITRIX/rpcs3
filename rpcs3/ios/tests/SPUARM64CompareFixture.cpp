@@ -1,4 +1,4 @@
-#include "Emu/Cell/SPUARM64Lowering.h"
+#include "Emu/Cell/SPUARM64CompareLowering.h"
 #include <llvm/AsmParser/Parser.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/IR/Module.h>
@@ -35,51 +35,13 @@ int main(int argc, char** argv)
 		const auto name = original->getName().drop_back(9).str() + "_candidate";
 		if (auto* old = module->getFunction(name))
 			old->eraseFromParent();
+		spu_llvm::arm64::fold_byte_reversals(*original);
+		spu_llvm::arm64::fold_single_source_tables(*original);
 		llvm::ValueToValueMapTy mapping;
 		auto* candidate = llvm::CloneFunction(original, mapping);
 		candidate->setName(name);
 		unsigned changed = 0;
-		if (original->getName().starts_with("splat_"))
-		{
-			llvm::SmallVector<llvm::CallInst*, 4> calls;
-			for (auto& block : *candidate)
-				for (auto& inst : block)
-					if (auto* call = llvm::dyn_cast<llvm::CallInst>(&inst); call && call->getCalledFunction() &&
-						call->getCalledFunction()->getIntrinsicID() == llvm::Intrinsic::aarch64_neon_tbx2)
-						calls.push_back(call);
-			for (auto* call : calls)
-			{
-				const bool constant_a = llvm::isa<llvm::Constant>(call->getArgOperand(1));
-				auto* splat = llvm::cast<llvm::Constant>(call->getArgOperand(constant_a ? 1 : 2))->getSplatValue();
-				auto* base = llvm::cast<llvm::CallInst>(call->getArgOperand(0));
-				auto* shift = llvm::cast<llvm::BinaryOperator>(base->getArgOperand(1));
-				auto* mask = llvm::cast<llvm::BinaryOperator>(call->getArgOperand(3));
-				llvm::IRBuilder<> ir(call);
-				auto* result = spu_llvm::arm64::shuffle_with_splat(ir, call->getArgOperand(constant_a ? 2 : 1),
-					shift->getOperand(0), mask->getOperand(0), llvm::cast<llvm::ConstantInt>(splat)->getZExtValue(), constant_a);
-				call->replaceAllUsesWith(result);
-				call->eraseFromParent();
-				++changed;
-			}
-		}
-		if (original->getName().starts_with("extended_fsm8"))
-		{
-			llvm::Value* a = nullptr;
-			llvm::Instruction* output = nullptr;
-			for (auto& block : *candidate)
-				for (auto& instruction : block)
-				{
-					if (instruction.getName() == "a") a = &instruction;
-					if (instruction.getName() == "out") output = &instruction;
-				}
-			if (!a || !output) return 1;
-			llvm::IRBuilder<> ir(output);
-			output->replaceAllUsesWith(spu_llvm::arm64::form_byte_mask(ir, a));
-			output->eraseFromParent();
-			++changed;
-		}
-		changed += spu_llvm::arm64::fold_byte_reversals(*candidate);
-		changed += spu_llvm::arm64::fold_single_source_tables(*candidate);
+		changed += spu_llvm::arm64::fold_wide_comparison_reversals(*candidate);
 		total += changed;
 		llvm::outs() << name << ": " << changed << " folds\n";
 		if (original->getName().starts_with("guard_") ? changed != 0 : changed != 1)
