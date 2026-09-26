@@ -112,6 +112,11 @@ namespace vk
 			{
 				auto as_cached_object = static_cast<cached_sampler_object_t*>(previous);
 				ensure(as_cached_object->has_refs());
+				if (as_cached_object->key == key)
+				{
+					// This binding already owns a reference to the requested sampler.
+					return previous;
+				}
 				as_cached_object->release();
 			}
 

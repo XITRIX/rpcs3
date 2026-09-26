@@ -147,6 +147,10 @@ namespace vk
 		std::unordered_map<u64, std::unique_ptr<vk::image_view>> views;
 		viewable_image* clone();
 
+	private:
+		u64 m_last_view_key = 0;
+		image_view* m_last_view = nullptr;
+
 	public:
 		using image::image;
 

@@ -57,6 +57,7 @@ namespace vk
 		owner = &dev;
 		query_type = type;
 		query_slot_status.resize(num_entries, {});
+		m_available_slots.set_capacity(num_entries);
 
 		for (unsigned i = 0; i < num_entries; ++i)
 		{
@@ -162,7 +163,8 @@ namespace vk
 
 	bool query_pool_manager::check_query_status(u32 index)
 	{
-		return poke_query(query_slot_status[index], index, result_flags);
+		auto& query = query_slot_status[index];
+		return query.ready || poke_query(query, index, result_flags);
 	}
 
 	u32 query_pool_manager::get_query_result(u32 index)
@@ -174,10 +176,15 @@ namespace vk
 		{
 			poke_query(query_info, index, result_flags);
 
+			// MoltenVK can sleep on its query-completion condition variable.
+			// Keep the first partial-result probe: a positive boolean result may
+			// already be usable without waiting for the entire submission.
+			const auto wait_flags = vk::get_driver_vendor() == vk::driver_vendor::MVK
+				? result_flags | VK_QUERY_RESULT_WAIT_BIT : result_flags;
 			while (!query_info.ready)
 			{
 				utils::pause();
-				poke_query(query_info, index, result_flags);
+				poke_query(query_info, index, wait_flags);
 			}
 		}
 
@@ -191,7 +198,7 @@ namespace vk
 		vkCmdCopyQueryPoolResults(cmd, *query_slot_status[index].pool, index, count, dst, dst_offset, 4, VK_QUERY_RESULT_WAIT_BIT);
 	}
 
-	void query_pool_manager::free_query(vk::command_buffer&/*cmd*/, u32 index)
+	bool query_pool_manager::release_query(u32 index)
 	{
 		// Release reference and discard
 		auto& query = query_slot_status[index];
@@ -199,14 +206,18 @@ namespace vk
 		ensure(query.active);
 		query.pool->release();
 
-		if (!query.pool->has_refs())
-		{
-			// No more refs held, remove if in discard pile
-			run_pool_cleanup();
-		}
-
+		const bool needs_cleanup = !query.pool->has_refs();
 		query = {};
 		m_available_slots.push_back(index);
+		return needs_cleanup;
+	}
+
+	void query_pool_manager::free_query(vk::command_buffer&/*cmd*/, u32 index)
+	{
+		if (release_query(index))
+		{
+			run_pool_cleanup();
+		}
 	}
 
 	u32 query_pool_manager::allocate_query(vk::command_buffer& cmd)

@@ -293,12 +293,9 @@ void VKGSRender::load_texture_env()
 
 	std::lock_guard lock(m_sampler_mutex);
 
-	for (u32 textures_ref = current_fp_metadata.referenced_textures_mask, i = 0; textures_ref; textures_ref >>= 1, ++i)
+	for (u32 textures_ref = current_fp_metadata.referenced_textures_mask; textures_ref; textures_ref &= textures_ref - 1)
 	{
-		if (!(textures_ref & 1))
-		{
-			continue;
-		}
+		const auto i = std::countr_zero(textures_ref);
 
 		if (!fs_sampler_state[i])
 		{
@@ -526,12 +523,9 @@ void VKGSRender::load_texture_env()
 			border_color, compare_enabled, depth_compare_mode);
 	}
 
-	for (u32 textures_ref = current_vp_metadata.referenced_textures_mask, i = 0; textures_ref; textures_ref >>= 1, ++i)
+	for (u32 textures_ref = current_vp_metadata.referenced_textures_mask; textures_ref; textures_ref &= textures_ref - 1)
 	{
-		if (!(textures_ref & 1))
-		{
-			continue;
-		}
+		const auto i = std::countr_zero(textures_ref);
 
 		if (!vs_sampler_state[i])
 		{
@@ -707,13 +701,9 @@ bool VKGSRender::bind_texture_env()
 {
 	bool out_of_memory = false;
 
-	for (u32 textures_ref = current_fp_metadata.referenced_textures_mask, i = 0; textures_ref; textures_ref >>= 1, ++i)
+	for (u32 textures_ref = current_fp_metadata.referenced_textures_mask; textures_ref; textures_ref &= textures_ref - 1)
 	{
-		if (!(textures_ref & 1))
-		{
-			// Unused TIU
-			continue;
-		}
+		const auto i = std::countr_zero(textures_ref);
 
 		if (m_fs_binding_table->ftex_location[i] == umax)
 		{
@@ -791,13 +781,9 @@ bool VKGSRender::bind_texture_env()
 		}
 	}
 
-	for (u32 textures_ref = current_vp_metadata.referenced_textures_mask, i = 0; textures_ref; textures_ref >>= 1, ++i)
+	for (u32 textures_ref = current_vp_metadata.referenced_textures_mask; textures_ref; textures_ref &= textures_ref - 1)
 	{
-		if (!(textures_ref & 1))
-		{
-			// Unused TIU
-			continue;
-		}
+		const auto i = std::countr_zero(textures_ref);
 
 		if (m_vs_binding_table->vtex_location[i] == umax)
 		{
@@ -974,10 +960,9 @@ bool VKGSRender::bind_interpreter_texture_env()
 		return image->get_view(decoded_remap, base->info.subresourceRange.aspectMask);
 	};
 
-	for (u32 textures_ref = current_fp_metadata.referenced_textures_mask, i = 0; textures_ref; textures_ref >>= 1, ++i)
+	for (u32 textures_ref = current_fp_metadata.referenced_textures_mask; textures_ref; textures_ref &= textures_ref - 1)
 	{
-		if (!(textures_ref & 1))
-			continue;
+		const auto i = std::countr_zero(textures_ref);
 
 		vk::image_view* view = nullptr;
 		auto sampler_state = static_cast<vk::texture_cache::sampled_image_descriptor*>(fs_sampler_state[i].get());
