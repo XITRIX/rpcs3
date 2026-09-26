@@ -656,6 +656,7 @@ fragment_program_utils::fragment_program_metadata fragment_program_utils::analys
 		case RSX_FP_OPCODE_TXD:
 		case RSX_FP_OPCODE_TXB:
 		case RSX_FP_OPCODE_TXL:
+			result.multiple_texture_reads_mask |= result.referenced_textures_mask & (1u << d0.tex_num);
 			result.referenced_textures_mask |= (1 << d0.tex_num);
 			result.bx2_texture_reads_mask |= ((d0.exp_tex ? 1u : 0u) << d0.tex_num);
 			break;
