@@ -62,6 +62,7 @@ const extern spu_decoder<spu_iflag> g_spu_iflag;
 
 #ifdef ARCH_ARM64
 #include "SPUARM64Lowering.h"
+#include "SPUARM64CompareLowering.h"
 #include "Emu/CPU/Backends/AArch64/AArch64JIT.h"
 #include "Emu/CPU/Backends/AArch64/SPUChecksum.h"
 #include "Emu/CPU/Backends/AArch64/SPUInterrupts.h"
@@ -4197,6 +4198,8 @@ public:
 #ifdef ARCH_ARM64
 			lower_spu_variable_insertions(f);
 			spu_llvm::arm64::fold_byte_reversals(f);
+			spu_llvm::arm64::fold_single_source_tables(f);
+			spu_llvm::arm64::fold_wide_comparison_reversals(f);
 #endif
 		}
 
@@ -6637,13 +6640,12 @@ public:
 
 	void FSMB(spu_opcode_t op)
 	{
-		const auto v = extract(get_vr(op.ra), 3);
 #ifdef ARCH_ARM64
-		const auto masks = build<u8[16]>(1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128);
-		const auto bytes = bitcast<u8[16]>(vsplat<u16[8]>(trunc<u16>(v)));
-		const auto bits = zshuffle(bytes, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1);
-		set_vr(op.rt, sext<s8[16]>((bits & masks) == masks));
+		value_t<u8[16]> result;
+		result.value = spu_llvm::arm64::form_byte_mask(*m_ir, get_vr<u8[16]>(op.ra).value);
+		set_vr(op.rt, result);
 #else
+		const auto v = extract(get_vr(op.ra), 3);
 		const auto m = bitcast<bool[16]>(trunc<u16>(v));
 		set_vr(op.rt, sext<s8[16]>(m));
 #endif

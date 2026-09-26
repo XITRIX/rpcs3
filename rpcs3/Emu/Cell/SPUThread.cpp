@@ -33,6 +33,7 @@
 #include "ios/IOSDMACopy.h"
 #ifdef ARCH_ARM64
 #include "Emu/CPU/Backends/AArch64/SPUReservationScan.h"
+#include "Emu/CPU/Backends/AArch64/SPUReservationHash.h"
 #endif
 #endif
 
@@ -420,6 +421,9 @@ __forceinline
 #endif
 extern u32 compute_rdata_hash32(const spu_rdata_t& _src)
 {
+#if defined(ARCH_ARM64) && defined(RPCS3_IOS)
+	return aarch64::spu_rdata_hash32(_src);
+#else
 	const auto rhs = reinterpret_cast<const v128*>(_src);
 	const v128 a = gv_add32(rhs[0], rhs[1]);
 	const v128 c = gv_add32(rhs[4], rhs[5]);
@@ -428,6 +432,7 @@ extern u32 compute_rdata_hash32(const spu_rdata_t& _src)
 	const v128 r = gv_add32(gv_add32(a, b), gv_add32(c, d));
 	const v128 r1 = gv_add32(r, gv_shuffle32<1, 0, 3, 2>(r));
 	return r1._u32[0] + r1._u32[2];
+#endif
 }
 
 #if defined(ARCH_X64)
