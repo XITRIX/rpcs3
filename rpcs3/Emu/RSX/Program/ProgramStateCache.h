@@ -386,15 +386,14 @@ public:
 		{
 			std::lock_guard lock(m_pipeline_mutex);
 
-			// Check if another submission completed in the mean time
-			if (const auto I = m_storage.find(key); I != m_storage.end())
+			// Atomically find or insert the placeholder under the writer lock.
+			// try_emplace leaves the null handle untouched when another submission won.
+			auto [I, inserted] = m_storage.try_emplace(key, std::move(__null_pipeline_handle));
+			if (!inserted)
 			{
 				m_cache_miss_flag = (I->second == __null_pipeline_handle);
 				return { I->second.get(), &vertex_program, &fragment_program };
 			}
-
-			// Insert a placeholder if the key still doesn't exist to avoid re-linking of the same pipeline
-			m_storage[key] = std::move(__null_pipeline_handle);
 		}
 
 		rsx_log.notice("Add program (vp id = %d, fp id = %d)", vertex_program.id, fragment_program.id);

@@ -3484,6 +3484,17 @@ bool spu_thread::do_putllc(const spu_mfc_cmd& args)
 		}
 
 		const auto& to_write = _ref<spu_rdata_t>(args.lsa & 0x3ff80);
+		// In relaxed reservation mode, unchanged local data succeeds regardless
+		// of the reservation timestamp. No guest-memory access or RSX lock is
+		// needed for this existing no-write case.
+		const bool accurate = static_cast<bool>(g_cfg.core.spu_accurate_reservations);
+		const bool unchanged = !accurate && cmp_rdata(to_write, rdata);
+		if (unchanged)
+		{
+			raddr = 0;
+			return true;
+		}
+
 		auto& res = vm::reservation_acquire(addr);
 
 		// TODO: Limit scope!!
@@ -3491,23 +3502,11 @@ bool spu_thread::do_putllc(const spu_mfc_cmd& args)
 
 		if (rtime != res)
 		{
-			if (!g_cfg.core.spu_accurate_reservations && cmp_rdata(to_write, rdata))
-			{
-				raddr = 0;
-				return true;
-			}
-
 			return false;
 		}
 
-		if (cmp_rdata(to_write, rdata))
+		if (accurate && cmp_rdata(to_write, rdata))
 		{
-			if (!g_cfg.core.spu_accurate_reservations)
-			{
-				raddr = 0;
-				return true;
-			}
-
 			// Writeback of unchanged data. Only check memory change
 			// For the comparison, load twice for atomicity
 			if (cmp_rdata(rdata, vm::_ref<spu_rdata_t>(addr)) && res == rtime && cmp_rdata(rdata, vm::_ref<spu_rdata_t>(addr)) && res.compare_and_swap_test(rtime, rtime + 128))
@@ -3522,7 +3521,8 @@ bool spu_thread::do_putllc(const spu_mfc_cmd& args)
 		static const auto cast_as = [](void* ptr, usz pos){ return reinterpret_cast<u128*>(ptr) + pos; };
 		static const auto cast_as_const = [](const void* ptr, usz pos){ return reinterpret_cast<const u128*>(ptr) + pos; };
 
-		const usz diff16_pos = scan16_rdata(to_write, rdata);
+		const bool relaxed_spurs = !accurate && addr - spurs_addr <= 0x80;
+		const usz diff16_pos = relaxed_spurs ? usz{umax} : scan16_rdata(to_write, rdata);
 
 		auto [_oldd, _ok] = res.fetch_op([&](u64& r)
 		{
@@ -3543,7 +3543,7 @@ bool spu_thread::do_putllc(const spu_mfc_cmd& args)
 
 		if (!g_cfg.core.spu_accurate_reservations)
 		{
-			if (addr - spurs_addr <= 0x80)
+			if (relaxed_spurs)
 			{
 				mov_rdata(*vm::_ptr<spu_rdata_t>(addr), to_write);
 				res += 64;
