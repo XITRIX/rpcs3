@@ -11,6 +11,7 @@ mkdir -p "${OUTPUT_ROOT}"
 python3 "${SCRIPT_DIR}/run-vm-savestate-page-tests.py"
 python3 "${SCRIPT_DIR}/run-exitspawn-container-tests.py"
 python3 "${SCRIPT_DIR}/run-vk-resolution-scale-tests.py"
+python3 "${SCRIPT_DIR}/run-gpu-deswizzle-tests.py"
 
 "${CXX_COMPILER}" -std=c++20 -O2 -Wall -Wextra -Werror \
     "${SCRIPT_DIR}/IOSGPUEventWaitTests.cpp" \
