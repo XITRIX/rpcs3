@@ -5264,9 +5264,25 @@ public:
 			{
 				auto wait_inbox = [](spu_thread* _spu, spu_channel_4_t* ch) -> u32
 				{
-					return ch->pop_wait(*_spu, false), ch->get_count();
+					if (const u32 count = ch->get_count())
+					{
+						return count;
+					}
+
+					// A parked SPU must acknowledge suspend_all, just like RDCH.
+					// Restore/check CPU state before continuing guest execution.
+					_spu->state += cpu_flag::wait;
+					ch->pop_wait(*_spu, false);
+					if (_spu->check_state())
+					{
+						spu_runtime::g_escape(_spu);
+					}
+					return ch->get_count();
 				};
 
+				// The wait may acknowledge a savestate/suspend request or escape.
+				update_pc();
+				ensure_gpr_stores();
 				res.value = call("wait_spu_inbox", +wait_inbox, m_thread, spu_ptr(&spu_thread::ch_in_mbox));
 				break;
 			}
