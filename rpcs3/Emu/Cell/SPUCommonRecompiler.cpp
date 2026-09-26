@@ -3196,6 +3196,55 @@ struct block_reg_info
 	}
 };
 
+// Waiting skips empty iterations. Only admit a short, straight-line loop whose
+// writes depend on this iteration's count, not on a prior iteration or memory.
+static bool is_simple_channel_loop(const spu_program& program, u32 read_pc, u32 branch_pc, u32 empty_target)
+{
+	if (empty_target != read_pc || read_pc < program.lower_bound || branch_pc <= read_pc ||
+		branch_pc - read_pc > 32 || branch_pc >= program.lower_bound + program.data.size() * 4)
+	{
+		return false;
+	}
+
+	const auto opcode = [&](u32 pc) { return spu_opcode_t{std::bit_cast<be_t<u32>>(program.data[(pc - program.lower_bound) / 4])}; };
+	const auto read = opcode(read_pc);
+	if (g_spu_itype.decode(read.opcode) != spu_itype::RCHCNT)
+		return false;
+
+	// 1 = count (or copy), 2 = comparison (or copy), 0 = unrelated/live-in.
+	std::array<u8, 128> values{};
+	values[read.rt] = 1;
+	bool compared = false;
+	for (u32 pc = read_pc + 4; pc < branch_pc; pc += 4)
+	{
+		const auto op = opcode(pc);
+		switch (g_spu_itype.decode(op.opcode))
+		{
+		case spu_itype::NOP:
+		case spu_itype::LNOP:
+			break;
+		case spu_itype::ORI:
+			if (op.si10 != 0 || !values[op.ra])
+				return false;
+			values[op.rt] = values[op.ra];
+			break;
+		case spu_itype::CEQI:
+			if (compared || values[op.ra] != 1 || (op.si10 != 0 && op.si10 != 1))
+				return false;
+			compared = true;
+			values[op.rt] = 2;
+			break;
+		default:
+			return false;
+		}
+	}
+
+	const auto branch = opcode(branch_pc);
+	const auto type = g_spu_itype.decode(branch.opcode);
+	return (type == spu_itype::BRZ || type == spu_itype::BRNZ) && values[branch.rt] &&
+		spu_branch_target(branch_pc, branch.i16) == read_pc;
+}
+
 spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, std::map<u32, std::vector<u32>>* out_target_list)
 {
 	// Result: addr + raw instruction data
@@ -6852,7 +6901,14 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
 			{
 				const reg_state_t& rt = vregs[op.rt];
 
-				if (rt.is_instruction && (rchcnt_loop->ch_state.origin == rt.origin || rchcnt_loop->ch_product.origin == rt.origin))
+				// CEQI produces a derived value, so is_instruction is false and
+				// its origin may still be the channel read. Match the full value
+				// state to distinguish it from the count and modified copies.
+				const bool tests_count = rt == rchcnt_loop->ch_state;
+				// Keep newly recognized comparisons scoped to the audited inbox wait.
+				const bool tests_product = rchcnt_loop->channel == SPU_RdInMbox &&
+					!(rchcnt_loop->ch_product & vf::is_null) && rt == rchcnt_loop->ch_product;
+				if (tests_count || tests_product)
 				{
 					if (rchcnt_loop->conditioned)
 					{
@@ -6863,7 +6919,11 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
 
 					rchcnt_loop->conditioned = true;
 					rchcnt_loop->branch_pc = pos;
-					rchcnt_loop->branch_target = rchcnt_loop->product_test_negate != (type == spu_itype::BRZ) ? target : next_pc;
+					// Follow the edge taken when the channel is empty. A comparison
+					// only changes the polarity when this branch uses its result,
+					// not when it still tests the original channel count.
+					const bool negate = tests_product && rchcnt_loop->product_test_negate;
+					rchcnt_loop->branch_target = negate != (type == spu_itype::BRZ) ? target : next_pc;
 				}
 
 				break;
@@ -8767,7 +8827,7 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
 
 			if (rchcnt_loop->active)
 			{
-				if (ra.is_instruction && ra.origin == rchcnt_loop->ch_state.origin)
+				if (ra == rchcnt_loop->ch_state)
 				{
 					if (op.si10 != 0 && op.si10 != 1)
 					{
@@ -8776,7 +8836,9 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
 					}
 
 					rchcnt_loop->ch_product = vregs[op.rt];
-					rchcnt_loop->product_test_negate = op.si10 == 1;
+					// CEQI count, 0 is true for an empty channel; CEQI count, 1
+					// is false. Keep the runtime comparison for counts above one.
+					rchcnt_loop->product_test_negate = op.si10 == 0;
 				}
 			}
 
@@ -9043,6 +9105,11 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
 		if (pattern.active)
 		{
 			spu_log.error("Channel loop error! (get_pc=0x%x,  0x%x-%s)", read_pc, entry_point, func_hash);
+			continue;
+		}
+
+		if (!is_simple_channel_loop(result, read_pc, pattern.branch_pc, pattern.branch_target))
+		{
 			continue;
 		}
 
