@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "VKGSRender.h"
+#include "Emu/RSX/Common/sampler_invalidation.h"
 #include "vkutils/buffer_object.h"
 #include "vkutils/memory.h"
 #include "Emu/RSX/Overlays/overlay_manager.h"
@@ -1107,6 +1108,25 @@ void VKGSRender::flip(const rsx::display_flip_info_t& info)
 
 	if (active_res_scaling_config != this->resolution_scaling_config)
 	{
+		// Scaling replaces host surfaces without changing the guest framebuffer
+		// registers. Drop the binding before reclamation can destroy its images
+		// (and cached FBO), and bypass both prepare_rtts reuse paths on the next draw.
+		// queue_swap_request already ended the old pass and began a fresh command
+		// buffer. There is no active render pass to end here.
+		if (m_draw_fbo)
+		{
+			m_draw_fbo->release();
+			m_draw_fbo = nullptr;
+		}
+		m_fbo_images.clear();
+		m_graphics_state |= rsx::rtt_config_dirty | rsx::scissor_config_state_dirty | rsx::vertex_state_dirty;
+
+		// Samplers can retain views of the replaced surfaces even in slots the
+		// next shader does not use. A global refresh alone loses those slots.
+		rsx::invalidate_sampler_context(fs_sampler_state, m_textures_dirty, rsx::texture_upload_context::framebuffer_storage);
+		rsx::invalidate_sampler_context(vs_sampler_state, m_vertex_textures_dirty, rsx::texture_upload_context::framebuffer_storage);
+		m_samplers_dirty.store(true);
+
 		// First, try to reclaim any memory since the res scale upgrade is so memory intensive
 		if (const auto severity = vk::vmm_determine_memory_load_severity();
 			severity > rsx::problem_severity::low && m_rtts.handle_memory_pressure(*m_current_command_buffer, severity))
