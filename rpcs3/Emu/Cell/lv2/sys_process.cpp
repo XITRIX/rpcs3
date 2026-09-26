@@ -516,6 +516,12 @@ void lv2_exitspawn(ppu_thread& ppu, std::vector<std::string>& argv, std::vector<
 
 			if (res != game_boot_result::no_errors)
 			{
+				// BootGame can reject exitspawn before Load consumes its setup
+				// (for example, while a user-requested Stop restricts booting).
+				Emu.init_mem_containers = nullptr;
+				Emu.SetForceBoot(false);
+				Emu.SetContinuousMode(false);
+				Emu.Kill(false);
 				sys_process.fatal("Failed to boot from exitspawn! (path=\"%s\", error=%s)", path, res);
 			}
 		};
