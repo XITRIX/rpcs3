@@ -2728,12 +2728,13 @@ bool ppu_load_exec(const ppu_exec_object& elf, bool virtual_load, const std::str
 		// Set ppc fixed allocations segment permission
 		g_ps3_process_info.ppc_seg = ppc_seg;
 
-		if (Emu.init_mem_containers)
+		// An exitspawn handoff belongs only to its executable boot. Save
+		// states restore their own containers through init_fxo_for_exec.
+		const auto init_mem_containers = std::exchange(Emu.init_mem_containers, nullptr);
+		if (!ar && init_mem_containers)
 		{
 			// Refer to sys_process_exit2 for explanation
-			// Make init_mem_containers empty before call
-			const auto callback = std::move(Emu.init_mem_containers);
-			callback(mem_size);
+			init_mem_containers(mem_size);
 
 			ensure(g_fxo->is_init<id_manager::id_map<lv2_memory_container>>());
 			ensure(g_fxo->is_init<lv2_memory_container>());
