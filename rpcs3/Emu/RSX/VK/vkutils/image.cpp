@@ -469,6 +469,7 @@ namespace vk
 		result->value = this->value;
 		result->memory = std::move(this->memory);
 		result->views = std::move(this->views);
+		m_last_view = nullptr;
 		this->value = VK_NULL_HANDLE;
 		return result;
 	}
@@ -488,11 +489,16 @@ namespace vk
 		}
 
 		const u64 storage_key = remap_encoding | (static_cast<u64>(mask) << 32);
+		if (m_last_view && m_last_view_key == storage_key)
+		{
+			return m_last_view;
+		}
 		auto found = views.find(storage_key);
 		if (found != views.end())
 		{
 			ensure(found->second->info.subresourceRange.aspectMask & mask);
-			return found->second.get();
+			m_last_view_key = storage_key;
+			return m_last_view = found->second.get();
 		}
 
 		VkComponentMapping real_mapping;
@@ -519,7 +525,8 @@ namespace vk
 		auto view = std::make_unique<vk::image_view>(*g_render_device, this, format(), VK_IMAGE_VIEW_TYPE_MAX_ENUM, real_mapping, range);
 		auto result = view.get();
 		views.emplace(storage_key, std::move(view));
-		return result;
+		m_last_view_key = storage_key;
+		return m_last_view = result;
 	}
 
 	void viewable_image::set_native_component_layout(VkComponentMapping new_layout)
@@ -530,6 +537,7 @@ namespace vk
 			new_layout.a != native_component_map.a)
 		{
 			native_component_map = new_layout;
+			m_last_view = nullptr;
 
 			// Safely discard existing views
 			auto gc = vk::get_resource_manager();
