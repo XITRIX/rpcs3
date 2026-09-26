@@ -1,8 +1,10 @@
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string_view>
 #include <vector>
@@ -58,6 +60,86 @@ bytes reference(const test& t, const bytes& x, const bytes& y, const bytes& z)
 			}
 			break;
 		}
+		case 12:
+		case 13:
+		case 14:
+		{
+			unsigned selector = z[i];
+			if (!(t.size & 4))
+				selector = (selector & ~16u) | ((t.size & 1) * 16);
+			else if (t.size & 8)
+				selector = (selector & ~16u) | ((i % 2) * 16);
+			unsigned index = selector ^ ((t.size & 6) ? 0 : 15);
+			if (t.kind == 14)
+				index &= 159;
+			if (index < 32)
+				result[i] = index < 16 ? x[index] : y[index - 16];
+			else if (t.kind == 12)
+				result[i] = 0;
+			else if (t.kind == 13)
+				result[i] = x[i] ^ y[i];
+			else
+				result[i] = selector < 192 ? 0 : selector < 224 ? 255 : 128;
+			break;
+		}
+		case 15: result[i] = x[i] + y[i]; break;
+		case 16: result[i] = x[i] - y[i]; break;
+		case 17: result[i] = x[i] * y[i]; break;
+		case 18: result[i] = x[i] << (y[i] & 7); break;
+		case 19: result[i] = x[i] >> (y[i] & 7); break;
+		case 20: result[i] = (x[i] < 128 ? int(x[i]) : int(x[i]) - 256) >> (y[i] & 7); break;
+		case 21: result[i] = x[i] == y[i] ? 255 : 0; break;
+		case 22: result[i] = x[i] > y[i] ? 255 : 0; break;
+		case 23: result[i] = (x[i] ^ 128) > (y[i] ^ 128) ? 255 : 0; break;
+		case 24: result[i] = std::popcount(x[i]); break;
+		case 25:
+		case 31: result[i] = x[i] > y[i] ? x[i] - y[i] : y[i] - x[i]; break;
+		case 26:
+		case 32: result[i] = (unsigned(x[i]) + y[i] + 1) / 2; break;
+		case 27: result[i] = std::min(x[i], y[i]); break;
+		case 28: result[i] = std::max(x[i], y[i]); break;
+		case 29: result[i] = (x[i] ^ 128) < (y[i] ^ 128) ? x[i] : y[i]; break;
+		case 30: result[i] = (x[i] ^ 128) > (y[i] ^ 128) ? x[i] : y[i]; break;
+		case 43: result[i] = (x[12 + i / 8] >> (i % 8)) & 1 ? 255 : 0; break;
+		case 44: result[i] = (x[i] > y[i] ? 255 : 0) ^ unsigned(x[15-i] > y[15-i]); break;
+		case 45:
+		{
+			std::uint32_t lhs = 0, rhs = 0;
+			for (unsigned j = (i / 4) * 4; j < (i / 4) * 4 + 4; ++j)
+			{
+				lhs = (lhs << 8) | x[j];
+				rhs = (rhs << 8) | y[j];
+			}
+			result[i] = (lhs + rhs) >> ((3 - i % 4) * 8);
+			break;
+		}
+		case 46: result[i] = std::uint8_t(x[i] + y[i]) ^ std::uint8_t(x[15-i] + y[15-i]); break;
+		case 47: result[i] = std::min(x[i], y[i]) ^ (x[15-i] < y[15-i] ? 255 : 0); break;
+		case 48: result[i] = (unsigned(x[i]) + y[i]) / 2; break;
+		case 49:
+		{
+			const int lhs = x[i] < 128 ? int(x[i]) : int(x[i]) - 256;
+			const int rhs = y[i] < 128 ? int(y[i]) : int(y[i]) - 256;
+			result[i] = std::uint16_t(lhs + rhs + 1) >> 1;
+			break;
+		}
+		case 50: result[i] = std::uint8_t((unsigned(x[i]) + y[i] + 1) / 2) ^ std::uint8_t(x[15-i] + y[15-i]); break;
+		case 51:
+		{
+			const unsigned width = (t.size & 255) / 8;
+			std::uint32_t lhs = 0, rhs = 0;
+			for (unsigned j = (i / width) * width; j < (i / width + 1) * width; ++j)
+			{
+				lhs = (lhs << 8) | x[j];
+				rhs = (rhs << 8) | y[j];
+			}
+			const bool match = t.size & 256 ? lhs > rhs : lhs == rhs;
+			result[i] = match ? (t.size & 512 ? unsigned(i % width == width - 1) : 255) : 0;
+			break;
+		}
+		case 52: result[i] = x[i] == t.size ? 255 : 0; break;
+		case 53: result[i] = x[i] > t.size ? 255 : 0; break;
+		case 54: result[i] = (x[i] ^ 128) > (t.size ^ 128) ? 255 : 0; break;
 		}
 	}
 	return result;
@@ -85,9 +167,14 @@ void make_expected(const test& t, unsigned offset)
 int main(int argc, char** argv)
 {
 	const bool benchmark = argc == 2 && std::string_view(argv[1]) == "--bench";
+	const bool long_tables = std::getenv("SPU_LOWERING_LONG_TABLE_BENCH") != nullptr;
+	const char* filter = std::getenv("SPU_LOWERING_BENCH_FILTER");
+	const char* repeat_env = std::getenv("SPU_LOWERING_BENCH_REPETITIONS");
+	const unsigned repetitions = repeat_env ? std::max(1, std::atoi(repeat_env)) : long_tables ? 32768 : 2048;
 	for (const auto& t : tests)
 	{
-		for (unsigned pass = 0; pass < 320; ++pass)
+		const unsigned passes = t.kind >= 52 ? 16 : 320;
+		for (unsigned pass = 0; pass < passes; ++pass)
 		{
 			for (auto* input : {&a, &b, &c})
 				for (auto& byte : *input)
@@ -95,11 +182,38 @@ int main(int argc, char** argv)
 			const auto offset = pass & 15;
 			// Enumerate every possible table selector and bounded insert
 			// index, including TBL's high-bit/out-of-range zero behavior.
-			if (pass < 256)
+			if (pass < 256 && passes == 320)
 			{
 				std::fill(b.begin(), b.end(), pass);
 				std::fill(c.begin(), c.end(), pass);
 			}
+			if (t.kind >= 52)
+				for (unsigned j = 0; j < count * 16; ++j)
+					a[offset + j] = j; // all input bytes for every immediate/alignment
+			if (t.kind == 43 && pass >= 256)
+				for (unsigned j = 0; j < count; ++j)
+				{
+					const unsigned mask = (pass - 256) * count + j;
+					a[offset + j * 16 + 12] = mask;
+					a[offset + j * 16 + 13] = mask >> 8;
+				}
+			if (t.kind == 51 && pass >= 256 && pass < 288)
+			{
+				b = a; // equal lanes, then a single-byte mismatch/carry boundary
+				if (pass >= 272)
+					for (unsigned j = offset; j < offset + count * 16; j += (t.size & 255) / 8)
+						b[j] ^= 1;
+			}
+			// All 65536 pairs of byte operands, packed into four batches.
+			// Repeat at every alignment; independent fixtures test each pair
+			// directly, while chained fixtures additionally exercise feedback.
+			if (t.kind >= 15 && t.kind <= 32 && pass >= 256)
+				for (unsigned j = 0; j < count * 16; ++j)
+				{
+					const unsigned pair = ((pass - 256) / 16) * count * 16 + j;
+					a[offset + j] = pair >> 8;
+					b[offset + j] = pair;
+				}
 			make_expected(t, offset);
 			for (unsigned version = 0; version < 2; ++version)
 			{
@@ -114,13 +228,19 @@ int main(int argc, char** argv)
 				}
 			}
 		}
-		std::printf("PASS %s scalar oracle: 327680 vectors per version\n", t.name);
+		std::printf("PASS %s scalar oracle: %u vectors per version\n", t.name, passes * count);
 	}
 	if (!benchmark)
 		return 0;
 	for (const auto& t : tests)
 	{
-		if ((t.kind >= 7 && t.kind != 11) || (t.kind == 11 && (t.size & 255) != 37))
+		if (filter && std::string_view(t.name).find(filter) == std::string_view::npos)
+			continue;
+		if (std::string_view(t.name).starts_with("guard_") || (t.kind >= 52 && t.size != 37))
+			continue;
+		if (long_tables && t.kind < 12)
+			continue;
+		if ((t.kind >= 7 && t.kind <= 10) || (t.kind == 11 && (t.size & 255) != 37) || (t.kind >= 12 && t.kind <= 14 && (t.size & 4)))
 			continue;
 		std::array<std::vector<double>, 2> samples;
 		for (unsigned round = 0; round < 14; ++round)
@@ -128,9 +248,9 @@ int main(int argc, char** argv)
 			{
 				const auto version = order ^ (round & 1);
 				const auto start = std::chrono::steady_clock::now();
-				for (unsigned repeat = 0; repeat < 2048; ++repeat)
+				for (unsigned repeat = 0; repeat < repetitions; ++repeat)
 					t.functions[version](a.data(), b.data(), c.data(), actual.data(), count);
-				const auto ns = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - start).count() / (count * 2048.0);
+				const auto ns = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - start).count() / (count * double(repetitions));
 				if (round >= 2)
 					samples[version].push_back(ns);
 			}
