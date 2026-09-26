@@ -1926,7 +1926,13 @@ namespace vm
 				pflags |= alloc_hidden;
 			}
 
-			if ((flags & block_size_64k) == block_size_64k)
+			// An omitted page size defaults to 1M in try_alloc. Preserve 4K
+			// stacks so their interior pages stay consistent with the guards.
+			if (flags & block_size_4k)
+			{
+				pflags |= block_size_4k;
+			}
+			else if ((flags & block_size_64k) == block_size_64k)
 			{
 				pflags |= block_size_64k;
 			}
