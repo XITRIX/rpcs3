@@ -271,6 +271,7 @@ private:
 	void upload_transform_constants(const rsx::io_buffer& buffer);
 
 	rsx::flags32_t load_texture_env();
+	vk::image_view* snapshot_color_feedback(u32 texture_index, vk::image_view* view);
 	bool bind_texture_env();
 	bool bind_interpreter_texture_env();
 
