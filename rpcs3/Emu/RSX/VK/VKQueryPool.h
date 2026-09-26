@@ -1,5 +1,6 @@
 #pragma once
 #include "VulkanAPI.h"
+#include "vkutils/query_slot_queue.hpp"
 #include "Utilities/mutex.h"
 
 #include <deque>
@@ -37,7 +38,7 @@ namespace vk
 
 		std::vector<std::unique_ptr<query_pool>> m_consumed_pools;
 		std::unique_ptr<query_pool> m_current_query_pool;
-		std::deque<u32> m_available_slots;
+		query_slot_queue m_available_slots;
 		u32 m_pool_lifetime_counter = 0;
 
 		std::deque<std::unique_ptr<query_pool>> m_query_pool_cache;
@@ -54,6 +55,7 @@ namespace vk
 		void allocate_new_pool(vk::command_buffer& cmd);
 		void reallocate_pool(vk::command_buffer& cmd);
 		void run_pool_cleanup();
+		bool release_query(u32 index);
 
 	public:
 		query_pool_manager(vk::render_device& dev, VkQueryType type, u32 num_entries);
@@ -75,11 +77,16 @@ namespace vk
 
 		template<typename T>
 			requires std::ranges::range<T> && std::same_as<std::ranges::range_value_t<T>, u32> // List of u32
-		void free_queries(vk::command_buffer& cmd, T& list)
+		void free_queries(vk::command_buffer& /*cmd*/, T& list)
 		{
+			bool needs_cleanup = false;
 			for (const auto index : list)
 			{
-				free_query(cmd, index);
+				needs_cleanup |= release_query(index);
+			}
+			if (needs_cleanup)
+			{
+				run_pool_cleanup();
 			}
 		}
 	};
