@@ -48,11 +48,11 @@ bool init_invocation_properties(const in uint offset)
 	while (offset >= level_end && level < lod_count)
 	{
 		invocation.data_offset = level_end;
-		invocation.size.xy /= 2;
-		invocation.size.xy = max(invocation.size.xy, uvec2(1));
-		invocation.size_log2.xy = max(invocation.size_log2.xy, uvec2(1));
-		invocation.size_log2.xy --;
-		level_end += (invocation.size.x * invocation.size.y * image_depth);
+		// Volume mipmaps shrink along Z as well as X/Y. Keep the Morton
+		// dimensions and packed level boundaries in sync with the upload layout.
+		invocation.size = max(invocation.size / 2, uvec3(1));
+		invocation.size_log2 = max(invocation.size_log2, uvec3(1)) - 1;
+		level_end += (invocation.size.x * invocation.size.y * invocation.size.z);
 		level++;
 	}
 
