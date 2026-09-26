@@ -61,9 +61,43 @@ def generate(output):
                 a, b = (vec(8, [splat]*16), '%b') if side == 0 else ('%a', vec(8, [splat]*16))
                 body += f'%out = call <16 x i8> {tbx2}(<16 x i8> %base, <16 x i8> {a}, <16 x i8> {b}, <16 x i8> %cm)'
                 cases.append((f'splat_{side}_{swapped}_{splat}', 11, splat | side << 8 | swapped << 9, body))
+    tbl2 = '@llvm.aarch64.neon.tbl2.v16i8'
+    for kind in (12, 13, 14):
+        for side in (0, 1):
+            for swapped in (0, 1):
+                body = '%masked = and <16 x i8> %c, '+vec(8, [239]*16)+'\n'
+                body += '%selector = or <16 x i8> %masked, '+vec(8, [side*16]*16)+'\n'
+                body += '%cv = xor <16 x i8> %selector, '+vec(8, [0 if swapped else 15]*16)+'\n'
+                if kind == 14:
+                    body += '%hi = lshr <16 x i8> %selector, '+vec(8, [4]*16)+'\n'
+                    body += '%base = '+call(vec(8, [0]*12+[255,255,128,128]), '%hi')+'\n'
+                    body += '%idx = and <16 x i8> %cv, '+vec(8, [159]*16)+'\n'
+                else:
+                    body += '%base = xor <16 x i8> %a, %b\n'
+                    body += '%idx = xor <16 x i8> %cv, zeroinitializer\n'
+                body += f'%out = call <16 x i8> {tbl2 if kind == 12 else tbx2}('
+                body += ('' if kind == 12 else '<16 x i8> %base, ')
+                body += '<16 x i8> %a, <16 x i8> %b, <16 x i8> %idx)'
+                cases.append((f'single_{kind}_{side}_{swapped}', kind, side | swapped << 1, body))
+    for kind in (12, 13):
+        for mixed in (False, True):
+            # Unknown source bits and nonuniform per-lane source selection
+            # must retain the two-register table.
+            body = '%base = xor <16 x i8> %a, %b\n'
+            if mixed:
+                body += '%masked = and <16 x i8> %c, '+vec(8, [239]*16)+'\n'
+                body += '%idx = or <16 x i8> %masked, '+vec(8, [(i%2)*16 for i in range(16)])+'\n'
+            else:
+                body += '%idx = xor <16 x i8> %c, zeroinitializer\n'
+            body += f'%out = call <16 x i8> {tbl2 if kind == 12 else tbx2}('
+            body += ('' if kind == 12 else '<16 x i8> %base, ')
+            body += '<16 x i8> %a, <16 x i8> %b, <16 x i8> %idx)'
+            cases.append((f'guard_table_{kind}_{int(mixed)}', kind, 4 | int(mixed) << 3, body))
+    from spu_byte_cases import CASES
+    cases.extend(CASES)
     functions, tests = [], []
     for name, kind, size, body in cases:
-        for chain in range(4):
+        for chain in range(2 if kind >= 52 else 4):
             fname = name + ('', '_chain', '_chain_b', '_chain_c')[chain]
             text = f'define void @{fname}_baseline(ptr %asrc, ptr %bsrc, ptr %csrc, ptr %dst, i64 %n) {{\nentry:\n  br label %loop\nloop:\n  %i = phi i64 [0, %entry], [%next, %loop]\n'
             if chain:
@@ -77,7 +111,8 @@ def generate(output):
             text += '  %dp = getelementptr <16 x i8>, ptr %dst, i64 %i\n  store <16 x i8> %out, ptr %dp, align 1\n  %next = add i64 %i, 1\n  %again = icmp ult i64 %next, %n\n  br i1 %again, label %loop, label %end, !llvm.loop !0\nend:\n  ret void\n}\n'
             functions.append(text)
             tests.append((fname, kind, size, chain))
-    output.write_text(f'declare <16 x i8> {tbl}(<16 x i8>, <16 x i8>)\n'+f'declare <16 x i8> {tbx2}(<16 x i8>, <16 x i8>, <16 x i8>, <16 x i8>)\n'+'\n'.join(functions)+'\n!0 = distinct !{!0, !1}\n!1 = !{!"llvm.loop.unroll.disable"}\n')
+    declarations = '\n'.join('declare <16 x i8> @llvm.'+name+'.v16i8(<16 x i8>'+('' if name == 'ctpop' else ', <16 x i8>')+')' for name in ['ctpop','umin','umax','smin','smax','aarch64.neon.uabd','aarch64.neon.urhadd'])+'\n'
+    output.write_text(declarations+f'declare <16 x i8> {tbl}(<16 x i8>, <16 x i8>)\n'+f'declare <16 x i8> {tbl2}(<16 x i8>, <16 x i8>, <16 x i8>)\n'+f'declare <16 x i8> {tbx2}(<16 x i8>, <16 x i8>, <16 x i8>, <16 x i8>)\n'+'\n'.join(functions)+'\n!0 = distinct !{!0, !1}\n!1 = !{!"llvm.loop.unroll.disable"}\n')
     header = 'using fn=void(*)(const void*,const void*,const void*,void*,unsigned long long);\n'
     for name, *_ in tests:
         for variant in ('baseline', 'candidate'):
@@ -86,7 +121,7 @@ def generate(output):
     for name, kind, size, chain in tests:
         header += f'{{"{name}",{kind},{size},{chain},{{{name}_baseline,{name}_candidate}}}},\n'
     output.with_suffix('.h').write_text(header+'};\n')
-    print(f'Emitted {len(tests)} baseline shapes: ten reversal paths, scalar-select coverage, three guards and sixteen constant-source SHUFB combinations, each with four dependency layouts.')
+    print(f'Emitted {len(tests)} baseline shapes, including no-transform guards, each with four dependency layouts.')
 
 if __name__ == '__main__':
     generate(Path(sys.argv[1]))
