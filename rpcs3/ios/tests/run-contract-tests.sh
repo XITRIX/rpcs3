@@ -264,6 +264,11 @@ case "$(uname -m)" in
             "${SCRIPT_DIR}/SPUReservationScanTests.cpp" \
             -o "${OUTPUT_ROOT}/SPUReservationScanTests"
         "${OUTPUT_ROOT}/SPUReservationScanTests"
+
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+            CXX="${CXX_COMPILER}" SPU_MAILBOX_TEST_OUTPUT="${OUTPUT_ROOT}/mailbox" \
+                python3 -B "${SCRIPT_DIR}/run-spu-mailbox-tests.py"
+        fi
         ;;
 esac
 
