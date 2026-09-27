@@ -43,7 +43,7 @@ struct rsx_iomap_table
 	std::array<std::shared_mutex, 8> mutexes;
 
 	template <bool Full, uint Stride>
-	bool lock(u32 addr, u32 length, void*)
+	bool lock(u32 addr, u32 length)
 	{
 		// This is the production IO-map contract for single-byte transfers.
 		if (length <= 1) return false;
