@@ -3,6 +3,7 @@
 #include "../VulkanAPI.h"
 #include "device.h"
 #include "sync.h"
+#include "dynamic_state_cache.hpp"
 
 #include <span>
 
@@ -74,6 +75,7 @@ namespace vk
 		// State cache
 		mutable std::array<VkDescriptorSet, 2> m_bound_descriptor_sets {{ VK_NULL_HANDLE }};
 		mutable std::array<VkPipeline, 2> m_bound_pipelines{{ VK_NULL_HANDLE }};
+		mutable dynamic_state_cache m_dynamic_state;
 
 		void clear_state_cache();
 
@@ -111,6 +113,13 @@ namespace vk
 
 		// Abstractions with caching
 		void bind_pipeline(VkPipeline pipeline, VkPipelineBindPoint bind_point) const;
+		void set_line_width(float width) const;
+		void set_blend_constants(const float* colors) const;
+		void set_depth_bias(float constant, float clamp, float slope) const;
+		void set_depth_bounds(float minimum, float maximum) const;
+		void set_stencil_write_mask(VkStencilFaceFlags faces, u32 value) const;
+		void set_stencil_compare_mask(VkStencilFaceFlags faces, u32 value) const;
+		void set_stencil_reference(VkStencilFaceFlags faces, u32 value) const;
 		void bind_descriptor_sets(const std::span<VkDescriptorSet>& sets, VkPipelineBindPoint bind_point, VkPipelineLayout pipe_layout) const;
 		void bind_descriptor_sets(const std::span<VkDescriptorSet>& sets, const std::span<u32>& dynamic_offsets, VkPipelineBindPoint bind_point, VkPipelineLayout pipe_layout) const;
 

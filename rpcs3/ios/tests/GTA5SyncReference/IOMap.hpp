@@ -21,11 +21,7 @@ namespace rsx
 			{
 				if constexpr (Shared)
 				{
-#ifdef RPCS3_IOS
-					return ref.try_lock_shared(8);
-#else
 					return ref.try_lock_shared();
-#endif
 				}
 
 				return ref.try_lock();
@@ -62,28 +58,12 @@ namespace rsx
 		}
 
 		template <bool IsFullLock, uint Stride>
-		bool lock(u32 addr, u32 len) noexcept
+		bool lock(u32 addr, u32 len, cpu_thread* self = nullptr) noexcept
 		{
 			if (len <= 1) return false;
 			const u32 end = addr + len - 1;
 
-#ifdef RPCS3_IOS
-			if constexpr (!IsFullLock)
-			{
-				// Most SPU ranges visit only one lock. Try it before entering
-				// the generic range loop and its contended-thread bookkeeping.
-				const u32 first = addr / c_lock_stride;
-				const u32 last = end / c_lock_stride;
-				if (first <= last && last - first < Stride && rs[first].try_lock_shared(8))
-				{
-					return true;
-				}
-			}
-#endif
-
 			bool added_wait = false;
-			cpu_thread* self = nullptr;
-			bool have_self = false;
 
 			for (u32 block = addr / c_lock_stride; block <= (end / c_lock_stride); block += Stride)
 			{
@@ -91,12 +71,6 @@ namespace rsx
 
 				if (!mutex_.try_lock()) [[ unlikely ]]
 				{
-					// The thread identity is only needed on the contended path.
-					if (!have_self)
-					{
-						self = get_current_cpu_thread();
-						have_self = true;
-					}
 					if (self)
 					{
 						added_wait |= !self->state.test_and_set(cpu_flag::wait);

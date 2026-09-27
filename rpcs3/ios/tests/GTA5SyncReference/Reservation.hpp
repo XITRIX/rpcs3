@@ -12,16 +12,11 @@ namespace rsx
 		u32 addr = 0;
 		u32 length = 0;
 		bool enabled = false;
-		rsx_iomap_table* table = nullptr;
 
 		inline void lock_range(u32 addr, u32 length)
 		{
 			enabled = true;
-			if (!table)
-			{
-				table = &get_current_renderer()->iomap_table;
-			}
-			if (!table->lock<IsFullLock, Stride>(addr, length))
+			if (!get_current_renderer()->iomap_table.lock<IsFullLock, Stride>(addr, length, get_current_cpu_thread()))
 			{
 				length = 0;
 			}
@@ -114,7 +109,7 @@ namespace rsx
 				return;
 			}
 
-			table->unlock<IsFullLock, Stride>(addr, length);
+			get_current_renderer()->iomap_table.unlock<IsFullLock, Stride>(addr, length);
 
 			if (!destructor)
 			{

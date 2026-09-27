@@ -3487,6 +3487,7 @@ bool spu_thread::do_putllc(const spu_mfc_cmd& args)
 		// In relaxed reservation mode, unchanged local data succeeds regardless
 		// of the reservation timestamp. No guest-memory access or RSX lock is
 		// needed for this existing no-write case.
+		// This setting is static for the running emulation session.
 		const bool accurate = static_cast<bool>(g_cfg.core.spu_accurate_reservations);
 		const bool unchanged = !accurate && cmp_rdata(to_write, rdata);
 		if (unchanged)
@@ -3541,7 +3542,7 @@ bool spu_thread::do_putllc(const spu_mfc_cmd& args)
 			return false;
 		}
 
-		if (!g_cfg.core.spu_accurate_reservations)
+		if (!accurate)
 		{
 			if (relaxed_spurs)
 			{
@@ -3558,7 +3559,7 @@ bool spu_thread::do_putllc(const spu_mfc_cmd& args)
 		auto& super_data = *vm::get_super_ptr<spu_rdata_t>(addr);
 		const bool success = [&]()
 		{
-			if (!g_cfg.core.spu_accurate_reservations && diff16_pos != umax)
+			if (!accurate && diff16_pos != umax)
 			{
 				vm::range_lock<128>(range_lock, addr, 128);
 				const bool ok = cmp_rdata(rdata, super_data) && atomic_storage<u128>::compare_exchange(*cast_as(super_data, diff16_pos), *cast_as(rdata, diff16_pos), *cast_as_const(to_write, diff16_pos));
@@ -3983,7 +3984,7 @@ bool spu_thread::do_mfc(bool can_escape, bool must_finish)
 
 bool spu_thread::check_mfc_interrupts(u32 next_pc)
 {
-	if (ch_events.load().count && std::exchange(interrupts_enabled, false))
+	if (interrupts_enabled && ch_events.load().count && std::exchange(interrupts_enabled, false))
 	{
 		srr0 = next_pc;
 

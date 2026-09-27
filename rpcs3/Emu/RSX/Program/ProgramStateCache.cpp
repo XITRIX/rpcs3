@@ -753,12 +753,32 @@ bool fragment_program_compare::operator()(const RSXFragmentProgram& binary1, con
 
 	const void* instBuffer1 = binary1.get_data();
 	const void* instBuffer2 = binary2.get_data();
+#ifdef RPCS3_IOS
+	if (binary1.ucode_length < 16)
+	{
+		return true;
+	}
+	// Hash collisions usually differ immediately. Preserve that cheap rejection
+	// before asking libc to compare an exact repeat (including its constants).
+	if (v128::loadu(instBuffer1)._u ^ v128::loadu(instBuffer2)._u)
+	{
+		return false;
+	}
+	if (std::memcmp(instBuffer1, instBuffer2, (binary1.ucode_length / 16) * 16) == 0)
+	{
+		return true;
+	}
+#endif
 	for (usz instIndex = 0; instIndex < (binary1.ucode_length / 16); instIndex++)
 	{
 		const auto inst1 = v128::loadu(instBuffer1, instIndex);
 		const auto inst2 = v128::loadu(instBuffer2, instIndex);
 
+#ifdef RPCS3_IOS
+		if (vmaxvq_u32(veorq_u32(static_cast<uint32x4_t>(inst1), static_cast<uint32x4_t>(inst2))))
+#else
 		if (inst1._u ^ inst2._u)
+#endif
 		{
 			return false;
 		}
@@ -786,6 +806,31 @@ namespace rsx
 #if defined(ARCH_X64) || defined(ARCH_ARM64)
 	static inline void write_fragment_constants_to_buffer_sse2(const std::span<f32>& buffer, const RSXFragmentProgram& rsx_prog, const std::vector<u32>& offsets_cache, bool sanitize)
 	{
+#ifdef RPCS3_IOS
+		f32* dst = buffer.data();
+		const auto* source = static_cast<const u8*>(rsx_prog.get_data());
+		const auto emit = [&](u32 offset)
+		{
+			// Preserve all payload bits except the requested NaN/Inf sanitization.
+			auto value = vreinterpretq_u32_u8(vrev16q_u8(vld1q_u8(source + offset)));
+			if (sanitize)
+			{
+				const auto valid = vcltq_u32(vandq_u32(value, vdupq_n_u32(0x7fffffff)), vdupq_n_u32(0x7f800000));
+				value = vandq_u32(value, valid);
+			}
+			vst1q_u32(reinterpret_cast<u32*>(dst), value);
+			dst += 4;
+		};
+		usz i = 0;
+		for (; i + 4 <= offsets_cache.size(); i += 4)
+		{
+			emit(offsets_cache[i]);
+			emit(offsets_cache[i + 1]);
+			emit(offsets_cache[i + 2]);
+			emit(offsets_cache[i + 3]);
+		}
+		for (; i < offsets_cache.size(); ++i) emit(offsets_cache[i]);
+#else
 		f32* dst = buffer.data();
 		for (u32 offset_in_fragment_program : offsets_cache)
 		{
@@ -809,6 +854,7 @@ namespace rsx
 
 			dst += 4;
 		}
+#endif
 	}
 #else
 	static inline void write_fragment_constants_to_buffer_fallback(const std::span<f32>& buffer, const RSXFragmentProgram& rsx_prog, const std::vector<u32>& offsets_cache, bool sanitize)
