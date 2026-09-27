@@ -33,12 +33,21 @@ public:
 		return m_value;
 	}
 
-	bool try_lock_shared()
+	bool try_lock_shared(u32 attempts = 1)
 	{
-		const u32 value = m_value.load();
+		u32 value = m_value.load();
 
-		// Conditional increment
-		return value < c_one - 1 && m_value.compare_and_swap_test(value, value + 1);
+		// A competing reader may change the count without blocking another reader.
+		// Reuse the failed CAS value for a bounded retry when the caller requests
+		// it. Writers, notification state and reader saturation still fail here.
+		for (u32 i = 0; i < attempts && value < c_one - 1; ++i)
+		{
+			if (m_value.compare_exchange(value, value + 1))
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	void lock_shared()

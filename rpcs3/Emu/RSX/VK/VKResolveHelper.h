@@ -237,7 +237,7 @@ namespace vk
 
 			for (s32 write_mask = 0x1; write_mask <= 0x80; write_mask <<= 1)
 			{
-				vkCmdSetStencilWriteMask(cmd, VK_STENCIL_FRONT_AND_BACK, write_mask);
+				cmd.set_stencil_write_mask(VK_STENCIL_FRONT_AND_BACK, write_mask);
 				vkCmdPushConstants(cmd, program->layout(), VK_SHADER_STAGE_FRAGMENT_BIT, 8, 4, &write_mask);
 
 				overlay_pass::emit_geometry(cmd, program);
@@ -296,7 +296,7 @@ namespace vk
 
 			for (s32 write_mask = 0x1; write_mask <= 0x80; write_mask <<= 1)
 			{
-				vkCmdSetStencilWriteMask(cmd, VK_STENCIL_FRONT_AND_BACK, write_mask);
+				cmd.set_stencil_write_mask(VK_STENCIL_FRONT_AND_BACK, write_mask);
 				vkCmdPushConstants(cmd, program->layout(), VK_SHADER_STAGE_FRAGMENT_BIT, 8, 4, &write_mask);
 
 				overlay_pass::emit_geometry(cmd, program);
