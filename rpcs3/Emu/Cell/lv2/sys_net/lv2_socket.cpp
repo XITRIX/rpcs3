@@ -118,9 +118,12 @@ void lv2_socket::handle_events(const pollfd& native_pfd, [[maybe_unused]] bool u
 {
 	bs_t<lv2_socket::poll_t> events_happening{};
 
-	if (native_pfd.revents & (POLLIN | POLLHUP) && events.test_and_reset(lv2_socket::poll_t::read))
+	// A failed connection can report only POLLHUP on Darwin. Wake pending
+	// operations on terminal events too, so connect_followup/recv/send can
+	// retrieve the socket error or EOF instead of leaving the PPU asleep.
+	if (native_pfd.revents & (POLLIN | POLLHUP | POLLERR) && events.test_and_reset(lv2_socket::poll_t::read))
 		events_happening += lv2_socket::poll_t::read;
-	if (native_pfd.revents & POLLOUT && events.test_and_reset(lv2_socket::poll_t::write))
+	if (native_pfd.revents & (POLLOUT | POLLHUP | POLLERR) && events.test_and_reset(lv2_socket::poll_t::write))
 		events_happening += lv2_socket::poll_t::write;
 	if (native_pfd.revents & POLLERR && events.test_and_reset(lv2_socket::poll_t::error))
 		events_happening += lv2_socket::poll_t::error;
