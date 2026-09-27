@@ -14,7 +14,8 @@ bool timed=false;u64 timestamp=0;unsigned timestamp_reads=0,event_reads=0;
 namespace utils {u64 get_tsc(){++timestamp_reads;if(!timed)return timestamp;u64 r;asm volatile("mrs %0, cntvct_el0":"=r"(r));return r;}}
 struct thread
 {
-    bool interrupts_enabled=false;u32 pc=0,srr0=0,instruction=0;
+    bool interrupts_enabled=false;u32 pc=0,srr0=0,instruction=0,cancellations=0;
+    void cancel_dec_interrupt(){++cancellations;}
     struct {std::atomic<u32> count{0};struct value{u32 count;};value load(){++event_reads;return {count.load()};}} ch_events;
     template <typename T>T _ref(u32){return instruction;}
 #include "old-mfc.inc"
@@ -35,7 +36,7 @@ int main(int argc,char**)
         t.instruction=instruction;t.pc=pc;t.srr0=srr0;t.interrupts_enabled=enabled;t.ch_events.count=count;
         bool a=t.interrupt_old(next);auto pa=t.pc,sa=t.srr0;bool ea=t.interrupts_enabled;
         t.pc=pc;t.srr0=srr0;t.interrupts_enabled=enabled;event_reads=0;
-        bool b=t.interrupt_new(next);assert(a==b&&pa==t.pc&&sa==t.srr0&&ea==t.interrupts_enabled);
+        t.cancellations=0;bool b=t.interrupt_new(next);assert(t.cancellations==unsigned(b));assert(a==b&&pa==t.pc&&sa==t.srr0&&ea==t.interrupts_enabled);
         assert(event_reads==unsigned(enabled));++checks;
     }
     std::printf("PASS MFC: %u mask/interrupt/guest-PC differential cases; disabled interrupts omit event reads\n",checks);
