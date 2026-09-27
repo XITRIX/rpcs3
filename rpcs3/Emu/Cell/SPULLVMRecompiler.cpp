@@ -1461,9 +1461,26 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 		m_ir->SetInsertPoint(check);
 		update_pc(addr);
 
-		if (may_be_unsafe_for_savestate && m_block && m_block->bb->preds.empty())
+		if (m_block && !(m_finfo && m_finfo->fn))
 		{
+			// A nonlocal interrupt escape discards LLVM temporaries. Materialize all
+			// live registers, including loop PHIs whose normal stores were elided.
+			ensure_gpr_stores();
+			for (u32 index = 0; index < s_reg_max; index++)
+			{
+				if (const auto value = m_block->reg[index])
+				{
+					const auto saved = value->getType() == get_type<f64[4]>()
+						? double_to_xfloat(value) : bitcast(value, get_reg_type(index));
+					spu_context_attr(m_ir->CreateStore(saved, init_reg_fixed(index)))->setVolatile(true);
+				}
+			}
 			may_be_unsafe_for_savestate = false;
+		}
+		else if (m_finfo && m_finfo->fn)
+		{
+			// True functions retain caller state on the native stack.
+			may_be_unsafe_for_savestate = true;
 		}
 
 		if (may_be_unsafe_for_savestate)
@@ -4847,7 +4864,7 @@ public:
 
 	static bool exec_check_state(spu_thread* _spu)
 	{
-		return _spu->check_state();
+		return _spu->check_state_with_interrupts();
 	}
 
 	template <spu_intrp_func_t F>
@@ -5938,29 +5955,8 @@ public:
 			return;
 		}
 		case SPU_WrDec:
-		{
-			call("spu_get_events", &exec_get_events, m_thread, m_ir->getInt32(SPU_EVENT_TM));
-
-#if defined(ARCH_X64) || defined(ARCH_ARM64)
-			if (utils::get_tsc_freq() && !(g_cfg.core.spu_loop_detection) && (g_cfg.core.clocks_scale == 100))
-			{
-				const auto timebase_offs = m_ir->CreateLoad(get_type<u64>(), m_ir->CreateIntToPtr(m_ir->getInt64(reinterpret_cast<u64>(&g_timebase_offs)), get_type<u64*>()));
-				const auto tsc = m_ir->CreateCall(get_intrinsic(llvm::Intrinsic::readcyclecounter));
-				const auto tscx = m_ir->CreateMul(m_ir->CreateUDiv(tsc, m_ir->getInt64(utils::get_tsc_freq())), m_ir->getInt64(80000000));
-				const auto tscm = m_ir->CreateUDiv(m_ir->CreateMul(m_ir->CreateURem(tsc, m_ir->getInt64(utils::get_tsc_freq())), m_ir->getInt64(80000000)), m_ir->getInt64(utils::get_tsc_freq()));
-				const auto tsctb = m_ir->CreateSub(m_ir->CreateAdd(tscx, tscm), timebase_offs);
-				m_ir->CreateStore(tsctb, spu_ptr(&spu_thread::ch_dec_start_timestamp));
-			}
-			else
-#endif
-			{
-				m_ir->CreateStore(call("get_timebased_time", &get_timebased_time), spu_ptr(&spu_thread::ch_dec_start_timestamp));
-			}
-
-			m_ir->CreateStore(val.value, spu_ptr(&spu_thread::ch_dec_value));
-			m_ir->CreateStore(m_ir->getInt8(0), spu_ptr(&spu_thread::is_dec_frozen));
-			return;
-		}
+			// The shared channel path updates the interrupt timer as well as the value.
+			break;
 		case SPU_Set_Bkmk_Tag:
 		case SPU_PM_Start_Ev:
 		case SPU_PM_Stop_Ev:
@@ -10282,7 +10278,7 @@ public:
 
 		if (_spu->ch_events.load().count)
 		{
-			_spu->interrupts_enabled = false;
+			_spu->set_interrupt_status(false);
 			_spu->srr0 = addr;
 
 			// Test for BR/BRA instructions (they are equivalent at zero pc)
@@ -10297,6 +10293,13 @@ public:
 		}
 
 		return addr;
+	}
+
+	void disable_interrupts()
+	{
+		m_ir->CreateStore(m_ir->getFalse(), spu_ptr(&spu_thread::interrupts_enabled));
+		// The worker only consumes the token; the owner refreshes the deadline on rearm.
+		m_ir->CreateStore(m_ir->getInt64(0), spu_ptr(&spu_thread::dec_intr_armed))->setAtomic(llvm::AtomicOrdering::Monotonic);
 	}
 
 	llvm::BasicBlock* add_block_indirect(spu_opcode_t op, value_t<u32> addr, bool ret = true)
@@ -10322,7 +10325,7 @@ public:
 			target->addIncoming(e_addr, e_exec);
 			m_ir->CreateCondBr(get_imm<bool>(op.d).value, d_exec, d_done, m_md_unlikely);
 			m_ir->SetInsertPoint(d_exec);
-			m_ir->CreateStore(m_ir->getFalse(), spu_ptr(&spu_thread::interrupts_enabled));
+			disable_interrupts();
 			m_ir->CreateBr(d_done);
 			m_ir->SetInsertPoint(d_done);
 			m_ir->CreateBr(m_interp_bblock);
@@ -10381,7 +10384,7 @@ public:
 
 		if (op.d)
 		{
-			m_ir->CreateStore(m_ir->getFalse(), spu_ptr(&spu_thread::interrupts_enabled));
+			disable_interrupts();
 		}
 
 		m_ir->CreateStore(addr.value, spu_ptr(&spu_thread::pc));
@@ -10668,7 +10671,7 @@ public:
 		if (op.d && tfound != m_targets.end() && tfound->second.size() == 1 && tfound->second[0] == spu_branch_target(m_pos, 1))
 		{
 			// Interrupts-disable pattern
-			m_ir->CreateStore(m_ir->getFalse(), spu_ptr(&spu_thread::interrupts_enabled));
+			disable_interrupts();
 			return;
 		}
 

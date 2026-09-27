@@ -406,6 +406,19 @@ public:
 };
 
 
+// Detached ownership while guest mappings are created or released without the
+// audio mutex. Closed ports retain their backing until reuse, growth or Quit.
+struct audio_port_mapping
+{
+	shared_ptr<lv2_memory> memory;
+	u32 area = 0;
+	u32 addr = 0;
+	u32 number = 0;
+	u32 server_index = 0;
+	u32 generation = 0;
+	bool mapped = false;
+};
+
 class cell_audio_thread
 {
 private:
@@ -437,6 +450,10 @@ public:
 	u32 free_port_count = 0;
 	std::array<u32, AUDIO_PORT_COUNT> free_ports{};
 	std::array<u32, AUDIO_PORT_COUNT> free_indices{};
+	// Bumped by cellAudioQuit, so a port whose close raced it is not handed to the free list the
+	// next cellAudioInit builds. Not serialized: no savestate is taken while a close is in flight.
+	u32 m_generation = 0;
+	bool memory_transition = false; // protected by mutex; transient, excluded from savestates
 
 	u32 key_count = 0;
 	u8 event_period = 0;
@@ -488,10 +505,22 @@ public:
 	cell_audio_thread(utils::serial& ar);
 	void save(utils::serial& ar);
 
+	// Under the mutex: reserve a port, and later hand it back (see audio_port_mapping).
 	audio_port* open_port();
-	error_code allocate_port(ppu_thread& ppu, audio_port& port);
-	void close_port(ppu_thread& ppu, audio_port& port);
-	void release_shared_memory(ppu_thread& ppu);
+	static bool reuse_port_memory(audio_port_mapping& mapping, u32 alloc_size);
+	audio_port_mapping take_kept_memory(audio_port& port);
+	void close_port(audio_port& port);
+	audio_port_mapping detach_port(audio_port& port);
+	void return_port(const audio_port_mapping& mapping);
+	u32 drop_shared_ref();
+
+	// The shared memory block a port of this many bytes gets.
+	static u32 port_alloc_size(u32 port_size);
+
+	// Without the mutex: the sys_mmapper half.
+	static error_code map_port(ppu_thread& ppu, u32 port_size, audio_port_mapping& mapping);
+	static void unmap_port(ppu_thread& ppu, audio_port_mapping& mapping);
+	static void unmap_shared(ppu_thread& ppu, u32 address, const shared_ptr<lv2_memory>& memory = {});
 
 	static constexpr auto thread_name = "cellAudio Thread"sv;
 };

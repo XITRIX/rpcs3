@@ -313,6 +313,14 @@ extern bool cmp_rdata(const spu_rdata_t& _lhs, const spu_rdata_t& _rhs)
 #endif
 }
 
+// Bracket reservation snapshots, and order later guest loads after data-based
+// reservation loss. LDAR alone does not order the preceding line comparison.
+static FORCE_INLINE bool rdata_fence()
+{
+	atomic_fence_acquire();
+	return true;
+}
+
 #if defined(ARCH_X64)
 static FORCE_INLINE void mov_rdata_avx(__m256i* dst, const __m256i* src)
 {
@@ -1360,6 +1368,7 @@ void spu_thread::cpu_init()
 
 	ch_events.raw() = {};
 	interrupts_enabled = false;
+	cancel_dec_interrupt();
 	raddr = 0;
 
 	ch_dec_start_timestamp = get_timebased_time();
@@ -1493,6 +1502,8 @@ extern thread_local std::string(*g_tls_log_prefix)();
 
 void spu_thread::cpu_task()
 {
+	allow_interrupts_in_cpu_work = false;
+	interrupt_requires_escape = true;
 #ifdef __APPLE__
 	jit_write_protect(true);
 #endif
@@ -1574,7 +1585,7 @@ void spu_thread::cpu_task()
 		{
 			if (state) [[unlikely]]
 			{
-				if (check_state())
+				if (check_state_with_interrupts(false))
 					break;
 			}
 
@@ -1594,6 +1605,7 @@ void spu_thread::cpu_task()
 			}
 
 			spu_runtime::g_gateway(*this, _ptr<u8>(0), nullptr);
+			allow_interrupts_in_cpu_work = false;
 		}
 
 		if (unsavable && is_stopped(state - cpu_flag::stop))
@@ -1666,7 +1678,10 @@ void spu_thread::cpu_work()
 		return;
 	}
 
-	const u32 old_iter_count = cpu_work_iteration_count++;
+	// Only calls that may take an interrupt advance the count. Compiled code alternates checks
+	// where it may (every register in memory) with checks where it may not, and counting both
+	// could park the every-16th interrupt check below on the second kind for good.
+	const u32 old_iter_count = allow_interrupts_in_cpu_work ? cpu_work_iteration_count++ : cpu_work_iteration_count;
 
 	bool work_left = false;
 
@@ -1710,13 +1725,19 @@ void spu_thread::cpu_work()
 
 	bool gen_interrupt = false;
 
+	const u32 busy_mask = ch_events.load().mask & SPU_EVENT_INTR_BUSY_CHECK;
+
+	// The decrementer has underflowed with interrupts on (spu_dec_intr_timer raised ::pending):
+	// take it at the first check that may, not the next 16th
+	const bool dec_due = interrupts_enabled && (busy_mask & SPU_EVENT_TM) && read_dec().second;
+
 	// Check interrupts every 16 iterations
-	if (!(old_iter_count % 16) && allow_interrupts_in_cpu_work)
+	if ((!(old_iter_count % 16) || dec_due) && allow_interrupts_in_cpu_work)
 	{
-		if (u32 mask = ch_events.load().mask & SPU_EVENT_INTR_BUSY_CHECK)
+		if (u32 mask = busy_mask)
 		{
 			// LR check is expensive, do it once in a while
-			if (old_iter_count /*% 256*/)
+			if (old_iter_count % 256)
 			{
 				mask &= ~SPU_EVENT_LR;
 			}
@@ -1725,7 +1746,16 @@ void spu_thread::cpu_work()
 		}
 
 		gen_interrupt = check_mfc_interrupts(pc);
-		work_left |= interrupts_enabled;
+		arm_dec_interrupt();
+	}
+
+	// Busy checking has to keep going while an interrupt can still be taken. Only the line above
+	// kept ::pending, and only on every 16th call, so the next call with no MFC work cleared it
+	// and the busy check stopped after one round. Reservation loss and signals are polled for as
+	// long as they are enabled; the decrementer only once it has underflowed.
+	if (interrupts_enabled && ((busy_mask & ~SPU_EVENT_TM) || dec_due))
+	{
+		work_left = true;
 	}
 
 	in_cpu_work = false;
@@ -1747,7 +1777,7 @@ void spu_thread::cpu_work()
 		});
 	}
 
-	if (gen_interrupt)
+	if (gen_interrupt && interrupt_requires_escape)
 	{
 		// Interrupt! escape everything and restart execution
 		spu_runtime::g_escape(this);
@@ -1772,6 +1802,7 @@ struct raw_spu_cleanup
 
 void spu_thread::cleanup()
 {
+	cancel_dec_interrupt();
 	// Deallocate local storage
 	ensure(vm::dealloc(vm_offset(), vm::spu, &shm));
 
@@ -2337,6 +2368,8 @@ void spu_thread::do_dma_transfer(spu_thread* _this, const spu_mfc_cmd& args, u8*
 					break;
 				}
 				}
+
+				atomic_fence_acquire();
 
 				if (time0 != vm::reservation_acquire(eal) || (size0 == 128 && !cmp_rdata(*reinterpret_cast<spu_rdata_t*>(dst0), *reinterpret_cast<const spu_rdata_t*>(src))))
 				{
@@ -3510,7 +3543,7 @@ bool spu_thread::do_putllc(const spu_mfc_cmd& args)
 		{
 			// Writeback of unchanged data. Only check memory change
 			// For the comparison, load twice for atomicity
-			if (cmp_rdata(rdata, vm::_ref<spu_rdata_t>(addr)) && res == rtime && cmp_rdata(rdata, vm::_ref<spu_rdata_t>(addr)) && res.compare_and_swap_test(rtime, rtime + 128))
+			if (cmp_rdata(rdata, vm::_ref<spu_rdata_t>(addr)) && rdata_fence() && res == rtime && cmp_rdata(rdata, vm::_ref<spu_rdata_t>(addr)) && res.compare_and_swap_test(rtime, rtime + 128))
 			{
 				raddr = 0; // Disable notification
 				return true;
@@ -3674,7 +3707,7 @@ void do_cell_atomic_128_store(u32 addr, const void* to_write)
 
 			if (!(at_read_time & 127))
 			{
-				if (cmp_rdata(sdata, write_data) && at_read_time ==  vm::reservation_acquire(addr) && cmp_rdata(sdata, write_data))
+				if (cmp_rdata(sdata, write_data) && rdata_fence() && at_read_time ==  vm::reservation_acquire(addr) && cmp_rdata(sdata, write_data))
 				{
 					// Write of the same data (verified atomically)
 					vm::try_reservation_update(addr);
@@ -3986,6 +4019,7 @@ bool spu_thread::check_mfc_interrupts(u32 next_pc)
 {
 	if (interrupts_enabled && ch_events.load().count && std::exchange(interrupts_enabled, false))
 	{
+		cancel_dec_interrupt();
 		srr0 = next_pc;
 
 		// Test for BR/BRA instructions (they are equivalent at zero pc)
@@ -4398,7 +4432,7 @@ bool spu_thread::process_mfc_cmd()
 					// Need to check twice for it to be accurate, the code is before and not after this check for:
 					// 1. Reduce time between reservation accesses so TSX panelty would be lowered
 					// 2. Increase the chance of change detection: if GETLLAR has been called again new data is probably wanted
-					if (this_time == res && cmp_rdata(rdata, data))
+					if (rdata_fence() && this_time == res && cmp_rdata(rdata, data))
 					{
 						if (this_time != rtime)
 						{
@@ -4576,7 +4610,7 @@ bool spu_thread::process_mfc_cmd()
 						// Quick check if there were reservation changes
 						const u64 new_time = res;
 
-						if (new_time % 128 == 0 && cmp_rdata(rdata, data) && res == new_time && cmp_rdata(rdata, data))
+						if (new_time % 128 == 0 && cmp_rdata(rdata, data) && rdata_fence() && res == new_time && cmp_rdata(rdata, data))
 						{
 							if (g_cfg.core.mfc_debug)
 							{
@@ -4701,6 +4735,8 @@ bool spu_thread::process_mfc_cmd()
 			}
 
 			mov_rdata(rdata, data);
+
+			atomic_fence_acquire();
 
 			if (u64 time0 = vm::reservation_acquire(addr); ntime != time0)
 			{
@@ -5118,7 +5154,7 @@ bool spu_thread::reservation_check(u32 addr, const decltype(rdata)& data, u32 cu
 	if ((addr >> 28) < 2 || (addr >> 28) == 0xd)
 	{
 		// Always-allocated memory does not need strict checking (vm::main or vm::stack)
-		return !cmp_rdata(data, *vm::get_super_ptr<decltype(rdata)>(addr));
+		return !cmp_rdata(data, *vm::get_super_ptr<decltype(rdata)>(addr)) && rdata_fence();
 	}
 
 	if ((addr >> 20) == (current_eal >> 20))
@@ -5126,13 +5162,13 @@ bool spu_thread::reservation_check(u32 addr, const decltype(rdata)& data, u32 cu
 		if (vm::check_addr(addr, vm::page_1m_size))
 		{
 			// Same random-access-memory page as the current MFC command, assume allocated
-			return !cmp_rdata(data, vm::_ref<decltype(rdata)>(addr));
+			return !cmp_rdata(data, vm::_ref<decltype(rdata)>(addr)) && rdata_fence();
 		}
 
 		if ((addr >> 16) == (current_eal >> 16) && vm::check_addr(addr, vm::page_64k_size))
 		{
 			// Same random-access-memory page as the current MFC command, assume allocated
-			return !cmp_rdata(data, vm::_ref<decltype(rdata)>(addr));
+			return !cmp_rdata(data, vm::_ref<decltype(rdata)>(addr)) && rdata_fence();
 		}
 	}
 
@@ -5206,7 +5242,7 @@ bool spu_thread::reservation_check(u32 addr, const decltype(rdata)& data, u32 cu
 	const bool res = cmp_rdata(data, vm::_ref<decltype(rdata)>(addr));
 
 	range_lock->release(0);
-	return !res;
+	return !res && rdata_fence();
 }
 
 bool spu_thread::reservation_check(u32 addr, u32 hash, atomic_t<u64, 128>* range_lock)
@@ -5214,7 +5250,7 @@ bool spu_thread::reservation_check(u32 addr, u32 hash, atomic_t<u64, 128>* range
 	if ((addr >> 28) < 2 || (addr >> 28) == 0xd)
 	{
 		// Always-allocated memory does not need strict checking (vm::main or vm::stack)
-		return compute_rdata_hash32(*vm::get_super_ptr<decltype(rdata)>(addr)) != hash;
+		return compute_rdata_hash32(*vm::get_super_ptr<decltype(rdata)>(addr)) != hash && rdata_fence();
 	}
 
 	// Ensure data is allocated (HACK: would raise LR event if not)
@@ -5287,7 +5323,7 @@ bool spu_thread::reservation_check(u32 addr, u32 hash, atomic_t<u64, 128>* range
 	const bool res = compute_rdata_hash32(*vm::get_super_ptr<decltype(rdata)>(addr)) == hash;
 
 	range_lock->release(0);
-	return !res;
+	return !res && rdata_fence();
 }
 
 usz spu_thread::register_cache_line_waiter(u32 addr)
@@ -5395,6 +5431,7 @@ retry:
 			// Set next event to the next time the decrementer underflows
 			ch_dec_start_timestamp -= res << 32;
 			collect |= SPU_EVENT_TM;
+			arm_dec_interrupt();
 		}
 	}
 
@@ -5443,29 +5480,134 @@ void spu_thread::set_events(u32 bits)
 	}
 }
 
-void spu_thread::set_interrupt_status(bool enable)
+// Wake an SPU at decrementer underflow without polling during the countdown.
+// Entries carry a process-unique token: cancellation and reused thread IDs cannot
+// deliver an old deadline to a new decrementer or a different SPU.
+struct spu_dec_intr_timer
 {
-	if (enable)
+	struct entry
 	{
-		// Detect enabling interrupts with events masked
-		if (auto mask = ch_events.load().mask; mask & SPU_EVENT_INTR_BUSY_CHECK)
+		u64 due;
+		u32 id;
+		u64 token;
+	};
+
+	shared_mutex mutex;
+	std::vector<entry> armed;
+
+	void arm(u64 due, u32 id, u64 token)
+	{
 		{
-			if (g_cfg.core.spu_decoder != spu_decoder_type::_static && g_cfg.core.spu_decoder != spu_decoder_type::dynamic)
+			std::lock_guard lock(mutex);
+			const auto it = std::find_if(armed.begin(), armed.end(), [&](const auto& e) { return e.id == id; });
+			if (it != armed.end())
+				*it = {due, id, token};
+			else
+				armed.push_back({due, id, token});
+		}
+		thread_ctrl::notify(g_fxo->get<named_thread<spu_dec_intr_timer>>());
+	}
+
+	void operator()()
+	{
+		u64 sleep_us = umax;
+		while (thread_ctrl::state() != thread_state::aborting)
+		{
+			thread_ctrl::wait_for(sleep_us);
+			if (thread_ctrl::state() == thread_state::aborting)
+				break;
+
+			const u64 now = get_timebased_time();
+			std::vector<entry> due_entries;
+			sleep_us = umax;
 			{
-				fmt::throw_exception("SPU Interrupts not implemented (mask=0x%x): Use [%s] SPU decoder", mask, spu_decoder_type::dynamic);
+				std::lock_guard lock(mutex);
+				for (auto it = armed.begin(); it != armed.end();)
+				{
+					if (it->due <= now)
+					{
+						due_entries.push_back(*it);
+						it = armed.erase(it);
+						continue;
+					}
+					// The guest timebase runs at 80 MHz times clocks_scale / 100.
+					const u64 us = (it->due - now) * 100 / (80 * std::max<u64>(g_cfg.core.clocks_scale, 1)) + 1;
+					sleep_us = std::min(sleep_us, us);
+					++it;
+				}
 			}
-
-			spu_log.trace("SPU Interrupts (mask=0x%x) are using CPU busy checking mode", mask);
-
-			// Process interrupts in cpu_work()
-			if (state.none_of(cpu_flag::pending))
+			for (const auto& e : due_entries)
 			{
-				state += cpu_flag::pending;
+				// Retain the thread while publishing work, outside the timer lock.
+				if (const auto spu = idm::get<named_thread<spu_thread>>(e.id, [](auto&) {}))
+				{
+					if (spu->dec_intr_armed.compare_and_swap_test(e.token, 0))
+					{
+						spu->state += cpu_flag::pending + cpu_flag::pending_recheck;
+						spu->state.notify_one();
+					}
+				}
 			}
 		}
 	}
 
+	static constexpr auto thread_name = "SPU DEC Interrupts"sv;
+};
+
+void spu_thread::cancel_dec_interrupt()
+{
+	dec_intr_armed = 0;
+	dec_intr_deadline = umax;
+}
+
+void spu_thread::arm_dec_interrupt()
+{
+	if (!interrupts_enabled || is_dec_frozen || !(ch_events.load().mask & SPU_EVENT_TM))
+	{
+		cancel_dec_interrupt();
+		return;
+	}
+	if (read_dec().second)
+	{
+		cancel_dec_interrupt();
+		state += cpu_flag::pending;
+		return;
+	}
+
+	// Underflow is one tick after zero, including a write of zero.
+	const u64 due = ch_dec_start_timestamp + ch_dec_value + 1;
+	if (dec_intr_deadline != due || !dec_intr_armed.load())
+	{
+		static atomic_t<u64> next_token{1};
+		const u64 token = next_token.fetch_add(1);
+		dec_intr_deadline = due;
+		dec_intr_armed = token;
+		g_fxo->get<named_thread<spu_dec_intr_timer>>().arm(due, id, token);
+	}
+}
+
+void spu_thread::set_interrupt_status(bool enable)
+{
 	interrupts_enabled = enable;
+	if (enable && (ch_events.load().mask & SPU_EVENT_INTR_BUSY_CHECK & ~SPU_EVENT_TM))
+	{
+		state += cpu_flag::pending;
+	}
+	arm_dec_interrupt();
+}
+
+bool spu_thread::check_state_with_interrupts(bool may_escape)
+{
+	// An escape is permitted only when the caller has materialized the guest PC
+	// and registers. cpu_task resets this flag if g_escape skips this return.
+	const bool previous = allow_interrupts_in_cpu_work;
+	const bool previous_escape = interrupt_requires_escape;
+	allow_interrupts_in_cpu_work = !unsavable;
+	interrupt_requires_escape = may_escape;
+	const bool result = check_state();
+	interrupt_requires_escape = previous_escape;
+	allow_interrupts_in_cpu_work = previous;
+	return result;
 }
 
 u32 spu_thread::get_ch_count(u32 ch)
@@ -5835,7 +5977,7 @@ s64 spu_thread::get_ch_value(u32 ch)
 				{
 					set_lr = true;
 				}
-				else if (!cmp_rdata(rdata, *resrv_mem))
+				else if (!cmp_rdata(rdata, *resrv_mem) && rdata_fence())
 				{
 					if (vm::reservation_acquire(raddr) == rtime)
 					{
@@ -5972,7 +6114,7 @@ s64 spu_thread::get_ch_value(u32 ch)
 						// Abort notifications are handled specially for performance reasons
 						if (auto [wait_var, flag_val] = vm::reservation_notifier_begin_wait(raddr, rtime); wait_var)
 						{
-							if (!cmp_rdata(rdata, *resrv_mem))
+							if (!cmp_rdata(rdata, *resrv_mem) && rdata_fence())
 							{
 								raddr = 0;
 								set_events(SPU_EVENT_LR);
@@ -5992,7 +6134,7 @@ s64 spu_thread::get_ch_value(u32 ch)
 #ifdef __linux__
 					if (auto [wait_var, flag_val] = vm::reservation_notifier_begin_wait(_raddr, rtime); wait_var)
 					{
-						if (!cmp_rdata(rdata, *resrv_mem))
+						if (!cmp_rdata(rdata, *resrv_mem) && rdata_fence())
 						{
 							raddr = 0;
 							set_events(SPU_EVENT_LR);
@@ -6072,7 +6214,7 @@ s64 spu_thread::get_ch_value(u32 ch)
 
 					if (auto [wait_var, flag_val] = vm::reservation_notifier_begin_wait(_raddr, rtime); wait_var)
 					{
-						if (!cmp_rdata(rdata, *resrv_mem))
+						if (!cmp_rdata(rdata, *resrv_mem) && rdata_fence())
 						{
 							raddr = 0;
 							set_events(SPU_EVENT_LR);
@@ -6495,6 +6637,9 @@ bool spu_thread::set_ch_value(u32 ch, u32 value)
 		ch_dec_start_timestamp = get_timebased_time();
 		ch_dec_value = value;
 		is_dec_frozen = false;
+
+		arm_dec_interrupt();
+
 		return true;
 	}
 
@@ -6521,6 +6666,8 @@ bool spu_thread::set_ch_value(u32 ch, u32 value)
 				spu_runtime::g_escape(this);
 			}
 		}
+
+		set_interrupt_status(interrupts_enabled);
 
 		return true;
 	}
@@ -6552,6 +6699,7 @@ bool spu_thread::set_ch_value(u32 ch, u32 value)
 			// Save current time, this will be the reported value until the decrementer resumes
 			ch_dec_value = read_dec().first;
 			is_dec_frozen = true;
+			cancel_dec_interrupt();
 		}
 
 		if (check_intr)
