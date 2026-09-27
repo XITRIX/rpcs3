@@ -67,20 +67,6 @@ namespace rsx
 			if (len <= 1) return false;
 			const u32 end = addr + len - 1;
 
-#ifdef RPCS3_IOS
-			if constexpr (!IsFullLock)
-			{
-				// Most SPU ranges visit only one lock. Try it before entering
-				// the generic range loop and its contended-thread bookkeeping.
-				const u32 first = addr / c_lock_stride;
-				const u32 last = end / c_lock_stride;
-				if (first <= last && last - first < Stride && rs[first].try_lock_shared(8))
-				{
-					return true;
-				}
-			}
-#endif
-
 			bool added_wait = false;
 			cpu_thread* self = nullptr;
 			bool have_self = false;

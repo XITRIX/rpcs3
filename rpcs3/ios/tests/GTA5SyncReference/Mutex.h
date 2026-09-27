@@ -28,21 +28,12 @@ class shared_mutex final
 public:
 	constexpr shared_mutex() = default;
 
-	bool try_lock_shared(u32 attempts = 1)
+	bool try_lock_shared()
 	{
-		u32 value = m_value.load();
+		const u32 value = m_value.load();
 
-		// A competing reader may change the count without blocking another reader.
-		// Reuse the failed CAS value for a bounded retry when the caller requests
-		// it. Writers, notification state and reader saturation still fail here.
-		for (u32 i = 0; i < attempts && value < c_one - 1; ++i)
-		{
-			if (m_value.compare_exchange(value, value + 1))
-			{
-				return true;
-			}
-		}
-		return false;
+		// Conditional increment
+		return value < c_one - 1 && m_value.compare_and_swap_test(value, value + 1);
 	}
 
 	void lock_shared()
