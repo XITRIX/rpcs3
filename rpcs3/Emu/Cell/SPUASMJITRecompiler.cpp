@@ -981,7 +981,7 @@ inline asmjit::x86::Mem spu_recompiler::get_pc(u32 addr)
 
 static void check_state(spu_thread* _spu)
 {
-	if (_spu->state && _spu->check_state())
+	if (_spu->state && _spu->check_state_with_interrupts())
 	{
 		spu_runtime::g_escape(_spu);
 	}
@@ -1062,50 +1062,20 @@ void spu_recompiler::branch_indirect(spu_opcode_t op, bool jt, bool ret)
 	if (op.d)
 	{
 		c->mov(SPU_OFF_8(interrupts_enabled), 0);
+		c->mov(SPU_OFF_64(dec_intr_armed), 0);
 	}
 	else if (op.e)
 	{
-		auto _throw = [](spu_thread* _spu)
+		const auto enable = [](spu_thread* spu, u32 target) -> u32
 		{
-			_spu->state += cpu_flag::dbg_pause;
-			spu_log.fatal("SPU Interrupts not implemented (mask=0x%x)", +_spu->ch_events.load().mask);
-			spu_runtime::g_escape(_spu);
+			spu->set_interrupt_status(true);
+			spu->pc = target;
+			spu->check_mfc_interrupts(target);
+			return spu->pc;
 		};
-
-		Label no_intr = c->newLabel();
-		Label intr = c->newLabel();
-		Label fail = c->newLabel();
-
-		c->mov(*qw1, SPU_OFF_64(ch_events));
-		c->ror(*qw1, 32);
-		c->test(qw1->r32(), ~SPU_EVENT_INTR_IMPLEMENTED);
-		c->ror(*qw1, 32);
-		c->jnz(fail);
-		c->mov(SPU_OFF_8(interrupts_enabled), 1);
-		c->bt(qw1->r32(), 31);
-		c->jc(intr);
-		c->jmp(no_intr);
-		c->bind(fail);
-		c->mov(SPU_OFF_32(pc), *addr);
+		c->mov(arg1->r32(), *addr);
 		c->mov(*arg0, *cpu);
-		c->add(x86::rsp, 0x28);
-		c->jmp(+_throw);
-
-		// Save addr in srr0 and disable interrupts
-		c->bind(intr);
-		c->mov(SPU_OFF_8(interrupts_enabled), 0);
-		c->mov(SPU_OFF_32(srr0), *addr);
-
-		// Test for BR/BRA instructions (they are equivalent at zero pc)
-		c->mov(*addr, x86::dword_ptr(*ls));
-		c->and_(*addr, 0xfffffffd);
-		c->xor_(*addr, 0x30);
-		c->bswap(*addr);
-		c->test(*addr, 0xff80007f);
-		c->cmovnz(*addr, rip->r32());
-		c->shr(*addr, 5);
-		c->align(AlignMode::kCode, 16);
-		c->bind(no_intr);
+		c->call(+enable); // Returned target is already in addr (eax).
 	}
 
 	c->mov(SPU_OFF_32(pc), *addr);
@@ -2521,20 +2491,8 @@ void spu_recompiler::WRCH(spu_opcode_t op)
 		return;
 	}
 	case SPU_WrDec:
-	{
-		auto sub = [](spu_thread* _spu)
-		{
-			_spu->get_events(SPU_EVENT_TM);
-			_spu->ch_dec_start_timestamp = get_timebased_time();
-		};
-
-		c->mov(*arg0, *cpu);
-		c->call(+sub);
-		c->mov(qw0->r32(), SPU_OFF_32(gpr, op.rt, &v128::_u32, 3));
-		c->mov(SPU_OFF_32(ch_dec_value), qw0->r32());
-		c->mov(SPU_OFF_8(is_dec_frozen), 0);
-		return;
-	}
+		// Keep timer scheduling in the shared channel implementation.
+		break;
 	case SPU_WrEventMask:
 	{
 		// TODO
@@ -2668,6 +2626,7 @@ void spu_recompiler::BI(spu_opcode_t op)
 	{
 		// Interrupts-disable pattern
 		c->mov(SPU_OFF_8(interrupts_enabled), 0);
+		c->mov(SPU_OFF_64(dec_intr_armed), 0);
 		return;
 	}
 
