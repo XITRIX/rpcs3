@@ -11,9 +11,15 @@ mkdir -p "${OUTPUT_ROOT}"
 python3 "${SCRIPT_DIR}/run-socket-event-tests.py"
 python3 "${SCRIPT_DIR}/run-vm-savestate-page-tests.py"
 python3 "${SCRIPT_DIR}/run-exitspawn-container-tests.py"
+python3 "${SCRIPT_DIR}/run-iso-read-tests.py"
+python3 "${SCRIPT_DIR}/run-rsx-offload-lifecycle-tests.py"
+python3 "${SCRIPT_DIR}/run-fsr-sync-tests.py"
 python3 "${SCRIPT_DIR}/run-vk-resolution-scale-tests.py"
 python3 "${SCRIPT_DIR}/run-vk-feedback-tests.py"
 python3 "${SCRIPT_DIR}/run-vk-query-tests.py"
+python3 "${SCRIPT_DIR}/run-audio-lifetime-tests.py"
+python3 "${SCRIPT_DIR}/run-spu-interrupt-tests.py"
+python3 "${SCRIPT_DIR}/run-spu-ordering-tests.py"
 python3 "${SCRIPT_DIR}/run-spu-putllc-tests.py"
 python3 "${SCRIPT_DIR}/run-rsx-sync-tests.py"
 python3 "${SCRIPT_DIR}/run-rsx-single-lock-tests.py"
@@ -75,6 +81,8 @@ case "$(uname -m)" in
         "${OUTPUT_ROOT}/SPUWideOptimizationTests" validate
 
         if [[ -n "${LLVM_CONFIG:-}" ]] || command -v llvm-config >/dev/null 2>&1; then
+            python3 -B "${SCRIPT_DIR}/run-spu-checkpoint-tests.py"
+            python3 -B "${SCRIPT_DIR}/run-ppu-arithmetic-tests.py"
             python3 -B "${SCRIPT_DIR}/run-spu-arm64-lowering-tests.py"
             python3 -B "${SCRIPT_DIR}/run-spu-arm64-compare-tests.py"
         else

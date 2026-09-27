@@ -18,6 +18,7 @@ def transaction(s):
     s=s[s.index('bool spu_thread::do_putllc('):]
     start=s.index('\t\tif (raddr != addr)')
     return s[start:s.index('\n\t}())')]
+fence = new[new.index("static FORCE_INLINE bool rdata_fence()"):new.index("\n}", new.index("static FORCE_INLINE bool rdata_fence()"))+2].replace("FORCE_INLINE", "inline")
 base=transaction(base);new=transaction(new)
 scan='const usz diff16_pos = scan16_rdata(to_write, rdata);'
 lazy='const bool relaxed_spurs = !accurate && addr - spurs_addr <= 0x80;\n\t\tconst usz diff16_pos = relaxed_spurs ? usz{umax} : scan16_rdata(to_write, rdata);'
@@ -27,7 +28,7 @@ lazy_only=base.replace(scan,lazy.replace('!accurate','!g_cfg.core.spu_accurate_r
 with tempfile.TemporaryDirectory(prefix='rpcs3-putllc-') as d:
     temp=Path(d)
     for variant,body in [('noop',noop),('lazy_scan',lazy_only),('combined',new)]:
-        (temp/'Putllc.inc').write_text('bool baseline(const spu_mfc_cmd& args) {const u32 addr=args.eal & -128;'+base+'}\n' +
+        (temp/'Putllc.inc').write_text(fence+'\n'+'bool baseline(const spu_mfc_cmd& args) {const u32 addr=args.eal & -128;'+base+'}\n' +
                                      'bool candidate(const spu_mfc_cmd& args) {const u32 addr=args.eal & -128;'+body+'}\n')
         exe=temp/'test'
         cmd=[os.environ.get('CXX','clang++'),'-std=c++20','-O2','-Wall','-Wextra','-Werror','-I',str(temp),str(HERE/'SPUPutllcTests.cpp'),'-o',str(exe)]

@@ -123,4 +123,6 @@ error_code sys_mmapper_free_shared_memory(ppu_thread&, u32 mem_id);
 error_code sys_mmapper_map_shared_memory(ppu_thread&, u32 addr, u32 mem_id, u64 flags);
 error_code sys_mmapper_search_and_map(ppu_thread&, u32 start_addr, u32 mem_id, u64 flags, vm::ptr<u32> alloc_addr);
 error_code sys_mmapper_unmap_shared_memory(ppu_thread&, u32 addr, vm::ptr<u32> mem_id);
+// Internal owner-aware teardown; never unmap a guest replacement at the same address.
+error_code sys_mmapper_unmap_shared_memory_if_matches(ppu_thread&, u32 addr, vm::ptr<u32> mem_id, const std::shared_ptr<utils::shm>& expected);
 error_code sys_mmapper_enable_page_fault_notification(ppu_thread&, u32 start_addr, u32 event_queue_id);
