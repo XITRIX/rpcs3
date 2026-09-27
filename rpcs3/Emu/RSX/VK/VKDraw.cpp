@@ -178,13 +178,13 @@ void VKGSRender::update_draw_state()
 	{
 		const float actual_line_width =
 			m_device->get_wide_lines_support() ? raster.line_width * RSX(m_ctx)->resolution_scaling_config.scale_factor() : 1.f;
-		vkCmdSetLineWidth(*m_current_command_buffer, actual_line_width);
+		m_current_command_buffer->set_line_width(actual_line_width);
 	}
 
 	if (blend.enable_mask)
 	{
 		// Update blend constants
-		vkCmdSetBlendConstants(*m_current_command_buffer, blend.constant_color.data());
+		m_current_command_buffer->set_blend_constants(blend.constant_color.data());
 	}
 
 	if (depth_stencil.stencil_test_enabled)
@@ -192,15 +192,15 @@ void VKGSRender::update_draw_state()
 		const bool two_sided_stencil = depth_stencil.two_sided_stencil_test_enabled;
 		VkStencilFaceFlags face_flag = (two_sided_stencil) ? VK_STENCIL_FACE_FRONT_BIT : VK_STENCIL_FRONT_AND_BACK;
 
-		vkCmdSetStencilWriteMask(*m_current_command_buffer, face_flag, depth_stencil.front.write_mask);
-		vkCmdSetStencilCompareMask(*m_current_command_buffer, face_flag, depth_stencil.front.func_mask);
-		vkCmdSetStencilReference(*m_current_command_buffer, face_flag, depth_stencil.front.func_ref);
+		m_current_command_buffer->set_stencil_write_mask(face_flag, depth_stencil.front.write_mask);
+		m_current_command_buffer->set_stencil_compare_mask(face_flag, depth_stencil.front.func_mask);
+		m_current_command_buffer->set_stencil_reference(face_flag, depth_stencil.front.func_ref);
 
 		if (two_sided_stencil)
 		{
-			vkCmdSetStencilWriteMask(*m_current_command_buffer, VK_STENCIL_FACE_BACK_BIT, depth_stencil.back.write_mask);
-			vkCmdSetStencilCompareMask(*m_current_command_buffer, VK_STENCIL_FACE_BACK_BIT, depth_stencil.back.func_mask);
-			vkCmdSetStencilReference(*m_current_command_buffer, VK_STENCIL_FACE_BACK_BIT, depth_stencil.back.func_ref);
+			m_current_command_buffer->set_stencil_write_mask(VK_STENCIL_FACE_BACK_BIT, depth_stencil.back.write_mask);
+			m_current_command_buffer->set_stencil_compare_mask(VK_STENCIL_FACE_BACK_BIT, depth_stencil.back.func_mask);
+			m_current_command_buffer->set_stencil_reference(VK_STENCIL_FACE_BACK_BIT, depth_stencil.back.func_ref);
 		}
 	}
 
@@ -233,12 +233,12 @@ void VKGSRender::update_draw_state()
 			polygon_offset_bias *= 0.5f;
 		}
 
-		vkCmdSetDepthBias(*m_current_command_buffer, polygon_offset_bias, 0.f, polygon_offset_scale);
+		m_current_command_buffer->set_depth_bias(polygon_offset_bias, 0.f, polygon_offset_scale);
 	}
 	else
 	{
 		// Zero bias value - disables depth bias
-		vkCmdSetDepthBias(*m_current_command_buffer, 0.f, 0.f, 0.f);
+		m_current_command_buffer->set_depth_bias(0.f, 0.f, 0.f);
 	}
 
 	if (m_device->get_depth_bounds_support())
@@ -269,7 +269,7 @@ void VKGSRender::update_draw_state()
 			bounds_max = std::clamp(bounds_max, 0.f, 1.f);
 		}
 
-		vkCmdSetDepthBounds(*m_current_command_buffer, bounds_min, bounds_max);
+		m_current_command_buffer->set_depth_bounds(bounds_min, bounds_max);
 	}
 
 	bind_viewport();

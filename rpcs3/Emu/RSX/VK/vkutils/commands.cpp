@@ -79,6 +79,7 @@ namespace vk
 
 	void command_buffer::clear_state_cache()
 	{
+		m_dynamic_state.clear();
 		m_bound_pipelines[0] = VK_NULL_HANDLE;
 		m_bound_pipelines[1] = VK_NULL_HANDLE;
 		m_bound_descriptor_sets[0] = VK_NULL_HANDLE;
@@ -156,7 +157,69 @@ namespace vk
 		}
 
 		cached = pipeline;
+		if (bind_point == VK_PIPELINE_BIND_POINT_GRAPHICS)
+		{
+			// Static state in a different pipeline can invalidate dynamic state.
+			m_dynamic_state.clear();
+		}
 		vkCmdBindPipeline(commands, bind_point, pipeline);
+	}
+
+	void command_buffer::set_line_width(float width) const
+	{
+		if (m_dynamic_state.update(dynamic_state_cache::line_width, { std::bit_cast<u32>(width) }))
+			vkCmdSetLineWidth(commands, width);
+	}
+
+	void command_buffer::set_blend_constants(const float* colors) const
+	{
+		if (m_dynamic_state.update(dynamic_state_cache::blend_constants,
+			{ std::bit_cast<u32>(colors[0]), std::bit_cast<u32>(colors[1]), std::bit_cast<u32>(colors[2]), std::bit_cast<u32>(colors[3]) }))
+			vkCmdSetBlendConstants(commands, colors);
+	}
+
+	void command_buffer::set_depth_bias(float constant, float clamp, float slope) const
+	{
+		if (m_dynamic_state.update(dynamic_state_cache::depth_bias,
+			{ std::bit_cast<u32>(constant), std::bit_cast<u32>(clamp), std::bit_cast<u32>(slope) }))
+			vkCmdSetDepthBias(commands, constant, clamp, slope);
+	}
+
+	void command_buffer::set_depth_bounds(float minimum, float maximum) const
+	{
+		if (m_dynamic_state.update(dynamic_state_cache::depth_bounds,
+			{ std::bit_cast<u32>(minimum), std::bit_cast<u32>(maximum) }))
+			vkCmdSetDepthBounds(commands, minimum, maximum);
+	}
+
+	void command_buffer::set_stencil_write_mask(VkStencilFaceFlags faces, u32 value) const
+	{
+		VkStencilFaceFlags changed = 0;
+		if ((faces & VK_STENCIL_FACE_FRONT_BIT) && m_dynamic_state.update(dynamic_state_cache::stencil_write_front, { value }))
+			changed |= VK_STENCIL_FACE_FRONT_BIT;
+		if ((faces & VK_STENCIL_FACE_BACK_BIT) && m_dynamic_state.update(dynamic_state_cache::stencil_write_back, { value }))
+			changed |= VK_STENCIL_FACE_BACK_BIT;
+		if (changed) vkCmdSetStencilWriteMask(commands, changed, value);
+	}
+
+	void command_buffer::set_stencil_compare_mask(VkStencilFaceFlags faces, u32 value) const
+	{
+		VkStencilFaceFlags changed = 0;
+		if ((faces & VK_STENCIL_FACE_FRONT_BIT) && m_dynamic_state.update(dynamic_state_cache::stencil_compare_front, { value }))
+			changed |= VK_STENCIL_FACE_FRONT_BIT;
+		if ((faces & VK_STENCIL_FACE_BACK_BIT) && m_dynamic_state.update(dynamic_state_cache::stencil_compare_back, { value }))
+			changed |= VK_STENCIL_FACE_BACK_BIT;
+		if (changed) vkCmdSetStencilCompareMask(commands, changed, value);
+	}
+
+	void command_buffer::set_stencil_reference(VkStencilFaceFlags faces, u32 value) const
+	{
+		VkStencilFaceFlags changed = 0;
+		if ((faces & VK_STENCIL_FACE_FRONT_BIT) && m_dynamic_state.update(dynamic_state_cache::stencil_reference_front, { value }))
+			changed |= VK_STENCIL_FACE_FRONT_BIT;
+		if ((faces & VK_STENCIL_FACE_BACK_BIT) && m_dynamic_state.update(dynamic_state_cache::stencil_reference_back, { value }))
+			changed |= VK_STENCIL_FACE_BACK_BIT;
+		if (changed) vkCmdSetStencilReference(commands, changed, value);
 	}
 
 	void command_buffer::bind_descriptor_sets(

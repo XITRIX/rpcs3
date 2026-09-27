@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 
 HERE=Path(__file__).resolve().parent
-CORE=HERE.parents[2]
+CORE=Path(os.environ.get("RPCS3_TEST_SOURCE_ROOT", HERE.parents[2]))
 parser=argparse.ArgumentParser()
 parser.add_argument('--sanitize',action='store_true')
 args=parser.parse_args()
