@@ -164,7 +164,7 @@ namespace rsx
 	{
 		if (auto cpu = thread_ctrl::get_current())
 		{
-			return m_thread->current_thread_ == cpu;
+			return m_thread && m_thread->current_thread_ == cpu;
 		}
 
 		return false;
@@ -172,6 +172,13 @@ namespace rsx
 
 	bool dma_manager::sync() const
 	{
+		// Stop can destroy a renderer before its offloader starts. No worker
+		// means no queued work to drain.
+		if (!m_thread) [[unlikely]]
+		{
+			return true;
+		}
+
 		auto& _thr = *m_thread;
 
 		if (_thr.m_enqueued_count.load() <= _thr.m_processed_count.load()) [[likely]]
@@ -232,6 +239,11 @@ namespace rsx
 
 	void dma_manager::join()
 	{
+		if (!m_thread)
+		{
+			return; // Never started (see sync)
+		}
+
 		sync();
 		*m_thread = thread_state::aborting;
 	}

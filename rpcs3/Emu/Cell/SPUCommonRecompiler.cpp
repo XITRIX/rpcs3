@@ -1520,7 +1520,7 @@ spu_runtime::spu_runtime()
 	if (rpcs3::ios::get_experimental_policy().persistent_spu_object_cache)
 	{
 		// v3 retires objects produced before ARM64 persistence was disabled.
-		constexpr u32 cache_version = 3;
+		constexpr u32 cache_version = 4;
 		constexpr usz max_files = 12'000;
 		sha1_context ctx;
 		u8 key[20];

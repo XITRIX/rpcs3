@@ -895,6 +895,14 @@ u64 iso_file_encrypted::read_at(u64 offset, void* buffer, u64 size)
 
 	u64 total_read = m_file.read_at(first_sec.address_aligned, &reinterpret_cast<u8*>(aligned_buf)[first_sec.offset_aligned], first_sec.size_aligned);
 
+	if (total_read != first_sec.size_aligned)
+	{
+		iso_log.error("read_at: %s: Error reading from file - O: %llu (%llu), S: %llu/%llu/%llu (%llu), TR: %llu", m_meta.name,
+			offset, first_sec.address_aligned, first_sec.size_aligned, max_size, size, total_size, total_read);
+
+		return 0;
+	}
+
 	m_dec->decrypt(first_sec.address_aligned, {&reinterpret_cast<u8*>(aligned_buf)[first_sec.offset_aligned], first_sec.size_aligned}, m_meta.name);
 	std::memcpy(buffer, &reinterpret_cast<u8*>(aligned_buf)[first_sec.offset], first_sec.size);
 
@@ -902,14 +910,6 @@ u64 iso_file_encrypted::read_at(u64 offset, void* buffer, u64 size)
 
 	if (sector_count < 2) // If no more sector(s)
 	{
-		if (total_read != first_sec.size_aligned)
-		{
-			iso_log.error("read_at: %s: Error reading from file - O: %llu (%llu), S: %llu/%llu/%llu (%llu), TR: %llu", m_meta.name,
-				offset, first_sec.address_aligned, first_sec.size_aligned, max_size, size, total_size, total_read);
-
-			return 0;
-		}
-
 		// If present, read the remaining chunk of data on next extent
 		if (size > max_size && (offset + max_size) < total_size)
 		{
@@ -930,7 +930,13 @@ u64 iso_file_encrypted::read_at(u64 offset, void* buffer, u64 size)
 		{
 			const u64 inner_sector_size = (sector_count - 2) * ISO_SECTOR_SIZE;
 
-			total_read += m_file.read_at(first_sec.lba_address + ISO_SECTOR_SIZE, &reinterpret_cast<u8*>(buffer)[first_sec.size], inner_sector_size);
+			const u64 bytes_read = m_file.read_at(first_sec.lba_address + ISO_SECTOR_SIZE, &reinterpret_cast<u8*>(buffer)[first_sec.size], inner_sector_size);
+			if (bytes_read != inner_sector_size)
+			{
+				iso_log.error("read_at: %s: Short sector read (%llu/%llu)", m_meta.name, bytes_read, inner_sector_size);
+				return 0;
+			}
+			total_read += bytes_read;
 
 			m_dec->decrypt(first_sec.lba_address + ISO_SECTOR_SIZE, {&reinterpret_cast<u8*>(buffer)[first_sec.size], inner_sector_size}, m_meta.name);
 		}
@@ -941,8 +947,13 @@ u64 iso_file_encrypted::read_at(u64 offset, void* buffer, u64 size)
 			for (u64 inner_sector_offset = 0; inner_sector_offset < inner_sector_size;)
 			{
 				const u64 block_size = std::min<u64>(inner_sector_size - inner_sector_offset, ISO_RAW_READ_SIZE);
-
-				total_read += m_file.read_at(first_sec.lba_address + ISO_SECTOR_SIZE + inner_sector_offset, aligned_buf, block_size);
+				const u64 bytes_read = m_file.read_at(first_sec.lba_address + ISO_SECTOR_SIZE + inner_sector_offset, aligned_buf, block_size);
+				if (bytes_read != block_size)
+				{
+					iso_log.error("read_at: %s: Short sector read (%llu/%llu)", m_meta.name, bytes_read, block_size);
+					return 0;
+				}
+				total_read += bytes_read;
 
 				m_dec->decrypt(first_sec.lba_address + ISO_SECTOR_SIZE + inner_sector_offset, {reinterpret_cast<u8*>(aligned_buf), block_size}, m_meta.name);
 				std::memcpy(&reinterpret_cast<u8*>(buffer)[first_sec.size + inner_sector_offset], aligned_buf, block_size);
@@ -967,13 +978,19 @@ u64 iso_file_encrypted::read_at(u64 offset, void* buffer, u64 size)
 		last_sec.size_aligned = ISO_SECTOR_SIZE;
 	}
 
-	total_read += m_file.read_at(last_sec.address_aligned, aligned_buf, last_sec.size_aligned);
+	const u64 bytes_read = m_file.read_at(last_sec.address_aligned, aligned_buf, last_sec.size_aligned);
+	if (bytes_read != last_sec.size_aligned)
+	{
+		iso_log.error("read_at: %s: Short sector read (%llu/%llu)", m_meta.name, bytes_read, last_sec.size_aligned);
+		return 0;
+	}
+	total_read += bytes_read;
 
 	m_dec->decrypt(last_sec.address_aligned, {reinterpret_cast<u8*>(aligned_buf), last_sec.size_aligned}, m_meta.name);
 	std::memcpy(&reinterpret_cast<u8*>(buffer)[max_size - last_sec.size], aligned_buf, last_sec.size);
 
 	//
-	// As last, check for an unlikely reading error (decoding also failed due to use of partially initialized buffer)
+	// Verify the aggregate byte count after all individual reads succeeded
 	//
 
 	if (total_read != first_sec.size_aligned + last_sec.size_aligned + (sector_count - 2) * ISO_SECTOR_SIZE)
@@ -1701,20 +1718,20 @@ u64 iso_file::read_at(u64 offset, void* buffer, u64 size)
 
 	u64 total_read = m_file.read_at(first_sec.lba_address, aligned_buf, ISO_SECTOR_SIZE);
 
+	if (total_read != ISO_SECTOR_SIZE)
+	{
+		iso_log.error("read_at: %s: Error reading from file - O: %llu (%llu), S: %llu/%llu/%llu (%llu), TR: %llu", m_meta.name,
+			offset, first_sec.lba_address, ISO_SECTOR_SIZE, max_size, size, total_size, total_read);
+
+		return 0;
+	}
+
 	std::memcpy(buffer, &reinterpret_cast<u8*>(aligned_buf)[first_sec.offset], first_sec.size);
 
 	const u64 sector_count = (last_sec.lba_address - first_sec.lba_address) / ISO_SECTOR_SIZE + 1;
 
 	if (sector_count < 2) // If no more sector(s)
 	{
-		if (total_read != ISO_SECTOR_SIZE)
-		{
-			iso_log.error("read_at: %s: Error reading from file - O: %llu (%llu), S: %llu/%llu/%llu (%llu), TR: %llu", m_meta.name,
-				offset, first_sec.lba_address, ISO_SECTOR_SIZE, max_size, size, total_size, total_read);
-
-			return 0;
-		}
-
 		// If present, read the remaining chunk of data on next extent
 		if (size > max_size && (offset + max_size) < total_size)
 		{
@@ -1736,8 +1753,13 @@ u64 iso_file::read_at(u64 offset, void* buffer, u64 size)
 		for (u64 sector_offset = 0; sector_offset < inner_sector_size;)
 		{
 			const u64 block_size = std::min<u64>(inner_sector_size - sector_offset, ISO_RAW_READ_SIZE);
-
-			total_read += m_file.read_at(first_sec.lba_address + ISO_SECTOR_SIZE + sector_offset, aligned_buf, block_size);
+			const u64 bytes_read = m_file.read_at(first_sec.lba_address + ISO_SECTOR_SIZE + sector_offset, aligned_buf, block_size);
+			if (bytes_read != block_size)
+			{
+				iso_log.error("read_at: %s: Short sector read (%llu/%llu)", m_meta.name, bytes_read, block_size);
+				return 0;
+			}
+			total_read += bytes_read;
 
 			std::memcpy(&reinterpret_cast<u8*>(buffer)[first_sec.size + sector_offset], aligned_buf, block_size);
 
@@ -1749,7 +1771,13 @@ u64 iso_file::read_at(u64 offset, void* buffer, u64 size)
 	// Last sector
 	//
 
-	total_read += m_file.read_at(last_sec.address_aligned, aligned_buf, ISO_SECTOR_SIZE);
+	const u64 bytes_read = m_file.read_at(last_sec.address_aligned, aligned_buf, ISO_SECTOR_SIZE);
+	if (bytes_read != ISO_SECTOR_SIZE)
+	{
+		iso_log.error("read_at: %s: Short sector read (%llu/%llu)", m_meta.name, bytes_read, ISO_SECTOR_SIZE);
+		return 0;
+	}
+	total_read += bytes_read;
 
 	std::memcpy(&reinterpret_cast<u8*>(buffer)[max_size - last_sec.size], aligned_buf, last_sec.size);
 
