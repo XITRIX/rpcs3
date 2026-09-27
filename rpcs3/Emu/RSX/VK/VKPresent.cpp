@@ -751,7 +751,9 @@ void VKGSRender::flip(const rsx::display_flip_info_t& info)
 
 		if (g_cfg.video.record_with_overlays && has_overlay)
 		{
-			const auto key = vk::get_renderpass_key(m_swapchain->get_surface_format());
+			// Overlay capture renders into a copy of the source frame. Its attachment
+			// format can differ from the swapchain used by the later present pass.
+			const auto key = vk::get_renderpass_key(image_to_flip->format());
 			single_target_pass = vk::get_renderpass(*m_device, key);
 			ensure(single_target_pass != VK_NULL_HANDLE);
 

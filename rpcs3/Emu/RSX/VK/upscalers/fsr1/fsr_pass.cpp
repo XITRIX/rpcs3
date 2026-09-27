@@ -235,9 +235,9 @@ namespace vk
 		bool failed = true;
 		VkFormat data_format = VK_FORMAT_UNDEFINED;
 
-		// Check if it is possible to actually write to the format we want.
-		// Fallback to RGBA8 is supported as well
-		std::array<VkFormat, 2> supported_formats = { VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_R8G8B8A8_UNORM };
+		// The compute shaders declare rgba8 storage images. BGRA8 is not a
+		// compatible fallback; unsupported devices use the existing bilinear path.
+		std::array<VkFormat, 1> supported_formats = { VK_FORMAT_R8G8B8A8_UNORM };
 		for (const auto& format : supported_formats)
 		{
 			const VkFlags all_required_bits = VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
@@ -320,11 +320,24 @@ namespace vk
 				auto cs_rcas_task = vk::get_compute_task<vk::FidelityFX::rcas_pass>();
 
 				// Prepare for EASU pass
-				src->push_layout(cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				// The generic layout helper scopes shader reads to graphics stages.
+				// Synchronize compute explicitly, including an already-readable input.
+				const auto input_layout = src->current_layout;
+				vk::insert_image_memory_barrier(cmd, src->value,
+					input_layout, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+					VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+					VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+					{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
+				src->current_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
 				if (m_intermediate_data->current_layout != VK_IMAGE_LAYOUT_GENERAL)
 				{
-					m_intermediate_data->change_layout(cmd, VK_IMAGE_LAYOUT_GENERAL);
+					vk::insert_image_memory_barrier(cmd, m_intermediate_data->value,
+						m_intermediate_data->current_layout, VK_IMAGE_LAYOUT_GENERAL,
+						VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+						0, VK_ACCESS_SHADER_WRITE_BIT,
+						{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
+					m_intermediate_data->current_layout = VK_IMAGE_LAYOUT_GENERAL;
 				}
 				else
 				{
@@ -343,7 +356,15 @@ namespace vk
 				cs_easu_task->run(cmd, src, m_intermediate_data.get(), input_size, output_size);
 
 				// Prepare for RCAS pass
-				m_output_data->change_layout(cmd, VK_IMAGE_LAYOUT_GENERAL);
+				// Previous output may still be sampled, blitted, or written by RCAS.
+				vk::insert_image_memory_barrier(cmd, m_output_data->value,
+					m_output_data->current_layout, VK_IMAGE_LAYOUT_GENERAL,
+					VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+					VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+					VK_ACCESS_SHADER_WRITE_BIT,
+					{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
+				m_output_data->current_layout = VK_IMAGE_LAYOUT_GENERAL;
 
 				// R/W CS-CS barrier before RCAS
 				vk::insert_image_memory_barrier(cmd,
@@ -358,8 +379,14 @@ namespace vk
 				// RCAS
 				cs_rcas_task->run(cmd, m_intermediate_data.get(), m_output_data.get(), input_size, output_size);
 
-				// Cleanup
-				src->pop_layout(cmd);
+				// Complete EASU's read before restoring the input for other consumers
+				// or writers. Keep this local to FSR rather than broadening all barriers.
+				vk::insert_image_memory_barrier(cmd, src->value,
+					src->current_layout, input_layout,
+					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+					VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+					{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
+				src->current_layout = input_layout;
 
 				// Swap input for FSR target
 				src_image = m_output_data.get();
@@ -394,6 +421,16 @@ namespace vk
 					{
 						std::swap(output_request.srcOffsets[0].y, output_request.srcOffsets[1].y);
 					}
+				}
+				else
+				{
+					// Calibration/presentation samples this output in a fragment shader.
+					vk::insert_image_memory_barrier(cmd, m_output_data->value,
+						m_output_data->current_layout, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+						VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+						VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+						{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
+					m_output_data->current_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 				}
 			}
 		}

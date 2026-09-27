@@ -16,6 +16,19 @@ namespace rpcs3::ios
 	inline constexpr std::uint32_t automatic_llvm_compile_threads = 3;
 	inline constexpr std::uint32_t savestate_compression_threads = 3;
 
+	// Sample the process allowance when the PPU queue is created. Reserve a
+	// quarter for non-LLVM work, then apply the existing 2000:1 file-size estimate.
+	// Zero headroom is pressure, not a reason to fall back to all device RAM.
+	constexpr std::uint32_t get_ppu_compile_file_budget(
+		std::uint64_t total_memory, std::uint64_t process_headroom)
+	{
+		const auto available = process_headroom < total_memory ? process_headroom : total_memory;
+		const auto budget = available - available / 4;
+		const auto file_bytes = budget / 2000 + (budget % 2000 != 0);
+		return file_bytes < 65536 ? 65536 :
+			file_bytes > UINT32_MAX ? UINT32_MAX : static_cast<std::uint32_t>(file_bytes);
+	}
+
 	// LLVM compilation has a large transient working set. On iOS, a zero
 	// configuration value means a memory-safe automatic limit instead of every
 	// performance core; an explicit value remains an opt-in override.

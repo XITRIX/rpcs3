@@ -752,6 +752,11 @@ public:
 	u32 ch_dec_value = 0; // written decrementer value
 	bool is_dec_frozen = false;
 	std::pair<u32, u32> read_dec() const; // Read decrementer
+	atomic_t<u64> dec_intr_armed{0}; // Transient timer token, never serialized
+	u64 dec_intr_deadline = umax; // Owner-thread countdown deadline
+	void arm_dec_interrupt();
+	void cancel_dec_interrupt();
+	bool check_state_with_interrupts(bool may_escape = true);
 
 	atomic_t<u32> run_ctrl = 0; // SPU Run Control register (only provided to get latest data written)
 	shared_mutex run_ctrl_mtx;
@@ -851,6 +856,7 @@ public:
 
 	bool in_cpu_work = false;
 	bool allow_interrupts_in_cpu_work = false;
+	bool interrupt_requires_escape = true; // false at the outer, fully materialized JIT boundary
 	u8 cpu_work_iteration_count = 0;
 
 	std::array<v128, 0x4000> stack_mirror; // Return address information

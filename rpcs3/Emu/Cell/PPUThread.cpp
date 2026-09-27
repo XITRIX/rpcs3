@@ -4359,7 +4359,13 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_
 	// The growth in memory requirements of LLVM is not linear with file size of course
 	// But these estimates should hopefully protect RPCS3 in the coming years
 	// Especially when thread count is on the rise with each CPU generation
+#ifdef RPCS3_IOS
+	const u64 compile_headroom = rpcs3::ios::available_process_memory_headroom();
+	atomic_t<u32> file_size_limit = rpcs3::ios::get_ppu_compile_file_budget(utils::get_total_memory(), compile_headroom);
+	ppu_log.notice("PPU compilation queue: process headroom %u MiB, file budget %u KiB", compile_headroom >> 20, file_size_limit.load() >> 10);
+#else
 	atomic_t<u32> file_size_limit = static_cast<u32>(std::clamp<u64>(utils::aligned_div<u64>(utils::get_total_memory(), 2000), 65536, u32{umax}));
+#endif
 
 	const u32 software_thread_limit = std::min<u32>(rpcs3::utils::get_max_threads(), ::size32(file_queue));
 	const u32 cpu_thread_limit = utils::get_thread_count() > 8u ? std::max<u32>(utils::get_thread_count(), 2) - 1 : utils::get_thread_count(); // One LLVM thread less
@@ -5584,6 +5590,7 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 				daz_and_ftz,
 				arm64_codegen_v2,
 				arm64_codegen_v3,
+				arithmetic_codegen_v4,
 
 				__bitset_enum_max
 			};
@@ -5591,6 +5598,8 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 			be_t<bs_t<ppu_settings>> settings{};
 
 			settings += ppu_settings::_reserved_for_backwards_compatibility;
+			// XER layout and OE/CR0 fixes affect every host; ARM64 also fixes NaN conversions.
+			settings += ppu_settings::arithmetic_codegen_v4;
 #if !defined(_WIN32) && !defined(__APPLE__)
 			settings += ppu_settings::platform_bit;
 #endif

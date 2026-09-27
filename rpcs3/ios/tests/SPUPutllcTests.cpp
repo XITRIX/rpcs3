@@ -1,3 +1,5 @@
+#include <atomic>
+inline void atomic_fence_acquire(){std::atomic_thread_fence(std::memory_order_acquire);}
 #include <array>
 #include <cassert>
 #include <cstddef>

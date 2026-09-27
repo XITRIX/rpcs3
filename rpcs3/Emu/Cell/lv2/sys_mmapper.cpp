@@ -886,7 +886,7 @@ error_code sys_mmapper_search_and_map(ppu_thread& ppu, u32 start_addr, u32 mem_i
 	return CELL_OK;
 }
 
-error_code sys_mmapper_unmap_shared_memory(ppu_thread& ppu, u32 addr, vm::ptr<u32> mem_id)
+static error_code unmap_shared_memory(ppu_thread& ppu, u32 addr, vm::ptr<u32> mem_id, const std::shared_ptr<utils::shm>& expected)
 {
 	ppu.state += cpu_flag::wait;
 
@@ -901,7 +901,7 @@ error_code sys_mmapper_unmap_shared_memory(ppu_thread& ppu, u32 addr, vm::ptr<u3
 
 	const auto shm = area->peek(addr);
 
-	if (!shm.second)
+	if (!shm.second || (expected && shm.second != expected))
 	{
 		return {CELL_EINVAL, addr};
 	}
@@ -934,6 +934,17 @@ error_code sys_mmapper_unmap_shared_memory(ppu_thread& ppu, u32 addr, vm::ptr<u3
 	mem->counter--;
 
 	return CELL_OK;
+}
+
+error_code sys_mmapper_unmap_shared_memory(ppu_thread& ppu, u32 addr, vm::ptr<u32> mem_id)
+{
+	return unmap_shared_memory(ppu, addr, mem_id, {});
+}
+
+error_code sys_mmapper_unmap_shared_memory_if_matches(ppu_thread& ppu, u32 addr, vm::ptr<u32> mem_id, const std::shared_ptr<utils::shm>& expected)
+{
+	ensure(expected);
+	return unmap_shared_memory(ppu, addr, mem_id, expected);
 }
 
 error_code sys_mmapper_enable_page_fault_notification(ppu_thread& ppu, u32 start_addr, u32 event_queue_id)
