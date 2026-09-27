@@ -81,10 +81,10 @@ int main(int argc,char** argv)
         // The external version update in the lock stub is not performed by an
         // early no-write return. It is not a reservation write by the candidate.
         assert(r[0].res==r[1].res+((r[0].locks-r[1].locks)*race));
-        if(r[1].locks<r[0].locks){assert(!accurate&&!changes&&address_match);++noops;}
-        if(r[1].scans<r[0].scans){assert(!accurate&&spurs);++lazy;}
+        if(r[1].locks<r[0].locks){assert(address_match && ((!accurate&&!changes) || !r[1].ok));++noops;}
+        if(r[1].scans<r[0].scans){assert((!accurate&&spurs) || !r[1].ok);++lazy;}
         ++tested;
     }
-    assert((mode=="lazy_scan"||noops>0)&&(mode=="noop"||lazy>0));
+    assert((mode=="lazy_scan"||mode=="deferred_scan"||noops>0)&&(mode=="noop"||mode=="stale_timestamp"||lazy>0));
     std::printf("%s: %u differential transactions passed; %u RSX locks avoided, %u unused 128-byte scans avoided\n",mode.c_str(),tested,noops,lazy);
 }

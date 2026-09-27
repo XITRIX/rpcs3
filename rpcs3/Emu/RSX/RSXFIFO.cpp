@@ -199,13 +199,12 @@ namespace rsx
 				u32 bytes_read = 0;
 				const auto next_cache_line = [&](int current)
 				{
-					if (m_cache_line_count == 8)
-					{
-						// Original RPCS3's 1 KiB cache traversal.
-						return (std::countr_zero<u32>(std::rotl<u8>(static_cast<u8>(to_fetch), 0 - current - 1)) + current + 1) % 8;
-					}
-					// ARMSX3's 4 KiB cache traversal.
-					return (std::countr_zero<u32>(std::rotl<u32>(to_fetch, 0 - current - 1)) + current + 1) % 32;
+					// to_fetch is nonzero here. Search above the current line,
+					// wrapping to its lowest set bit when the upper range is empty.
+					// This also handles current == -1 for strict retry ordering.
+					const u32 after = (current + 1) & (m_cache_line_count - 1);
+					const u32 upper = to_fetch & (~u32{0} << after);
+					return std::countr_zero(upper ? upper : to_fetch);
 				};
 
 				// Find the next set bit after every iteration
