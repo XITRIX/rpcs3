@@ -44,6 +44,7 @@ struct audio_port_mapping{shared_ptr<lv2_memory>memory;u32 area=0,addr=0,number=
 struct cell_audio_thread{
  checked_mutex mutex;bool memory_transition=false;u32 init=0,free_port_count=0,shared_refs=0,shared_address=0,shared_area=0;u64 m_generation=0,m_counter=0,m_last_period_end=0;
  std::array<audio_port,8>ports;std::array<shared_ptr<lv2_memory>,8>port_memories;shared_ptr<lv2_memory>shared_memory;
+ std::array<u64,8>guest_timestamps{};
  std::array<u32,8>free_ports{},free_indices{},m_periods_without_tag{};std::array<bool,8>m_front_only_reported{},m_front_only_port{};
  audio_port*open_port();static u32 port_alloc_size(u32);static error_code map_port(ppu_thread&,u32,audio_port_mapping&);
  audio_port_mapping detach_port(audio_port&);static bool reuse_port_memory(audio_port_mapping&,u32);audio_port_mapping take_kept_memory(audio_port&);void close_port(audio_port&);
