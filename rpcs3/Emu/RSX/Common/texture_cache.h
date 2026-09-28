@@ -291,7 +291,8 @@ namespace rsx
 			//   [43..47] mipmaps    - log2(4096) + 1 = 13 max. Allow upto 31.
 			//   [48..55] gcm_format - only a few actual enumerants but the values are in the 0x80-0x9F range
 			//   [56..60] op         - deferred_request_command, 10 values defined, allow upto 31
-			//   [61..63] unused
+			//   [61]     cubemap border
+			//   [62..63] unused
 			u64 encoded_properties() const
 			{
 				return (static_cast<u64>(width)) |
@@ -299,7 +300,8 @@ namespace rsx
 					((static_cast<u64>(depth) & 0x7ff) << 32) |
 					((static_cast<u64>(mipmaps) & 0x1f) << 43) |
 					((static_cast<u64>(gcm_format) & 0xff) << 48) |
-					((static_cast<u64>(op) & 0x1f) << 56);
+					((static_cast<u64>(op) & 0x1f) << 56) |
+					(static_cast<u64>(cubemap_border) << 61);
 			}
 
 			viewable_image_type as_viewable() const
@@ -2597,7 +2599,7 @@ namespace rsx
 			if (options.prefer_surface_cache)
 			{
 				const u32 block_h = (attr.depth * attr.slice_h);
-				overlapping_fbos = m_rtts.get_merged_texture_memory_region(cmd, attr.address, attr.width, block_h, attr.pitch, attr.bpp, rsx::surface_access::shader_read);
+				overlapping_fbos = m_rtts.get_merged_texture_memory_region(cmd, attr.address, attr.width + (attr.cubemap_border ? 2u : 0u), block_h, attr.pitch, attr.bpp, rsx::surface_access::shader_read);
 
 				if (!overlapping_fbos.empty())
 				{
@@ -2672,7 +2674,7 @@ namespace rsx
 			{
 				// Now check for surface cache hits
 				const u32 block_h = (attr.depth * attr.slice_h);
-				overlapping_fbos = m_rtts.get_merged_texture_memory_region(cmd, attr.address, attr.width, block_h, attr.pitch, attr.bpp, rsx::surface_access::shader_read);
+				overlapping_fbos = m_rtts.get_merged_texture_memory_region(cmd, attr.address, attr.width + (attr.cubemap_border ? 2u : 0u), block_h, attr.pitch, attr.bpp, rsx::surface_access::shader_read);
 			}
 
 			if (!overlapping_fbos.empty() || !overlapping_locals.empty())
@@ -2760,6 +2762,13 @@ namespace rsx
 							attr.address
 						};
 					}
+				}
+
+				if (attr.cubemap_border)
+				{
+					// The partial atlas merge has no per-mip border layout. Let the
+					// synchronized CPU upload handle fragmented bordered cubemaps.
+					return {};
 				}
 
 				auto result = helpers::merge_cache_resources<sampled_image_descriptor>(
@@ -3091,6 +3100,7 @@ namespace rsx
 			attributes.height = tex.height();
 			attributes.mipmaps = tex.get_exact_mipmap_count();
 			attributes.swizzled = !(tex.format() & CELL_GCM_TEXTURE_LN);
+			attributes.cubemap_border = !attributes.swizzled && tex.cubemap() && tex.border_type() == CELL_GCM_TEXTURE_BORDER_TEXTURE;
 
 			const bool is_unnormalized = !!(tex.format() & CELL_GCM_TEXTURE_UN);
 			auto extended_dimension = tex.get_extended_texture_dimension();
