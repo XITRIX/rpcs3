@@ -6,7 +6,12 @@ LOG_CHANNEL(ios_graphics_log, "iOS Graphics");
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wold-style-cast"
+#include <TargetConditionals.h>
+#if TARGET_OS_OSX
+#import <AppKit/AppKit.h>
+#else
 #import <UIKit/UIKit.h>
+#endif
 #pragma clang diagnostic pop
 
 #include <TargetConditionals.h>
@@ -43,6 +48,10 @@ graphics_lifecycle& graphics_lifecycle_state()
 
 void initialize_graphics_lifecycle()
 {
+#if TARGET_OS_OSX
+	// macOS permits rendering while another app (including LLDB) has focus.
+	graphics_lifecycle_state().set_active(true);
+#else
 	// Never dispatch synchronously to UIKit while holding the lifecycle ABI lock.
 	static std::once_flag once;
 	std::call_once(once, []
@@ -58,6 +67,7 @@ void initialize_graphics_lifecycle()
 			graphics_lifecycle_state().set_active(UIApplication.sharedApplication.applicationState == UIApplicationStateActive);
 		});
 	});
+#endif
 }
 
 namespace
@@ -66,7 +76,23 @@ namespace
 void apply_display_sleep(void* context)
 {
 	const bool enable = context != nullptr;
+#if TARGET_OS_OSX
+	static id activity = nil;
+	if (enable && activity)
+	{
+		[NSProcessInfo.processInfo endActivity:activity];
+		[activity release];
+		activity = nil;
+	}
+	else if (!enable && !activity)
+	{
+		activity = [[NSProcessInfo.processInfo
+			beginActivityWithOptions:NSActivityIdleDisplaySleepDisabled
+			reason:@"RPCS3 emulation"] retain];
+	}
+#else
 	UIApplication.sharedApplication.idleTimerDisabled = !enable;
+#endif
 }
 #endif
 }

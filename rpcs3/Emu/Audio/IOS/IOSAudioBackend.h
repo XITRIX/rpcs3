@@ -23,7 +23,14 @@ public:
 	IOSAudioBackend(const IOSAudioBackend&) = delete;
 	IOSAudioBackend& operator=(const IOSAudioBackend&) = delete;
 
-	std::string_view GetName() const override { return "iOS RemoteIO"; }
+	std::string_view GetName() const override
+	{
+#ifdef RPCS3_MACOS
+		return "macOS Core Audio";
+#else
+		return "iOS RemoteIO";
+#endif
+	}
 
 	bool Initialized() override;
 	bool Operational() override;
