@@ -69,8 +69,16 @@ option(USE_GAMEMODE "Choose whether to enable GameMode features or not." ON)
 option(BUNDLE_UDEV_RULES "Include udev rules on Linux/FreeBSD" OFF)
 
 if(RPCS3_FRONTEND STREQUAL "IOS")
-    if(NOT CMAKE_SYSTEM_NAME MATCHES "^(iOS|visionOS)$")
-        message(FATAL_ERROR "RPCS3_FRONTEND=IOS requires an iOS or visionOS CMake toolchain")
+    if(NOT CMAKE_SYSTEM_NAME MATCHES "^(iOS|visionOS|Darwin)$")
+        message(FATAL_ERROR "RPCS3_FRONTEND=IOS requires an Apple CMake toolchain")
+    endif()
+
+    # The native macOS wrapper shares the Qt-free Apple frontend and ABI.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+        if(NOT CMAKE_OSX_ARCHITECTURES STREQUAL "arm64")
+            message(FATAL_ERROR "The Qt-free macOS frontend requires Apple Silicon (arm64)")
+        endif()
+        add_compile_definitions(RPCS3_MACOS=1)
     endif()
 
     add_compile_definitions(RPCS3_IOS=1)

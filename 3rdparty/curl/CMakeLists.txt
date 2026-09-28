@@ -25,6 +25,13 @@ else()
 	set(CURL_USE_LIBPSL OFF CACHE INTERNAL "")
 	set(BUILD_TESTING OFF CACHE INTERNAL "")
 	set(BUILD_EXAMPLES OFF CACHE INTERNAL "")
+	if(RPCS3_FRONTEND STREQUAL "IOS" AND CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+		# Match the mobile HTTP profile and keep this core relocatable. Native
+		# package discovery must not add optional Homebrew runtime dylibs.
+		set(CURL_BROTLI OFF CACHE STRING "" FORCE)
+		set(CURL_ZSTD OFF CACHE STRING "" FORCE)
+		set(USE_NGHTTP2 OFF CACHE BOOL "" FORCE)
+	endif()
 
 	add_subdirectory(curl EXCLUDE_FROM_ALL)
 

@@ -141,7 +141,7 @@ void record_presented_frame(u32 rsx_load) noexcept
 
 u64 available_process_memory_headroom() noexcept
 {
-#if defined(RPCS3_IOS) && !TARGET_OS_SIMULATOR
+#if defined(RPCS3_IOS) && !TARGET_OS_SIMULATOR && !TARGET_OS_OSX
 	return os_proc_available_memory();
 #else
 	// Simulator has no iOS process limit and returns zero from this query.

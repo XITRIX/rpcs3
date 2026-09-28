@@ -374,7 +374,7 @@ void update_live_bytes(bool executable, usz amount) noexcept
 
 rpcs3::ios::jit::arena_backend current_backend() noexcept
 {
-#if !TARGET_OS_SIMULATOR
+#if !TARGET_OS_SIMULATOR && !TARGET_OS_OSX
 	if (__builtin_available(iOS 26.0, visionOS 26.0, *))
 	{
 		return rpcs3::ios::jit::arena_backend::universal_mirrored;
@@ -385,7 +385,7 @@ rpcs3::ios::jit::arena_backend current_backend() noexcept
 
 bool legacy_debugger_is_ready() noexcept
 {
-#if !TARGET_OS_SIMULATOR
+#if !TARGET_OS_SIMULATOR && !TARGET_OS_OSX
 	int status = 0;
 	if (::csops(::getpid(), cs_ops_status, &status, sizeof(status)) != 0)
 	{
