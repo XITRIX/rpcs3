@@ -75,6 +75,34 @@ namespace rsx
 
 	namespace texture_cache_helpers
 	{
+		template <typename OverlapList>
+		const auto& select_framebuffer_source(const OverlapList& overlaps, bool depth_texture)
+		{
+			const auto& newest = overlaps.back();
+			if (!newest.is_clipped && newest.is_depth != depth_texture)
+			{
+				// Color and depth written by one draw share a tag. Their allocations
+				// can overlap even when the draw does not touch the overlapping pixels.
+				// Prefer the requested aspect among equally recent, complete sources.
+				// Newer writes and partial regions still follow the normal merge rules.
+				for (auto i = overlaps.size() - 1; i > 0; --i)
+				{
+					const auto& candidate = overlaps[i - 1];
+					if (candidate.surface->last_use_tag != newest.surface->last_use_tag)
+					{
+						break;
+					}
+
+					if (!candidate.is_clipped && candidate.is_depth == depth_texture)
+					{
+						return candidate;
+					}
+				}
+			}
+
+			return newest;
+		}
+
 		static inline bool force_strict_fbo_sampling(u8 samples)
 		{
 			if (g_cfg.video.strict_rendering_mode)

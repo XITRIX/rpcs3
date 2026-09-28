@@ -2569,7 +2569,7 @@ namespace rsx
 
 			auto fast_fbo_check = [&]() -> sampled_image_descriptor
 			{
-				const auto& last = overlapping_fbos.back();
+				const auto& last = helpers::select_framebuffer_source(overlapping_fbos, helpers::is_gcm_depth_format(attr.gcm_format));
 
 				if (!last.is_clipped) //<- A non-clipped hit fully contains the requested box. We're good to go with the framebuffer processing.
 				{

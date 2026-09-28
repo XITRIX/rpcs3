@@ -320,3 +320,4 @@ python3 "${SCRIPT_DIR}/run-self-decryption-tests.py"
 python3 "${SCRIPT_DIR}/run-arm64-memory-decoder-tests.py"
 
 python3 "${SCRIPT_DIR}/run-texture-lookup-tests.py"
+python3 "${SCRIPT_DIR}/run-framebuffer-source-tests.py"
