@@ -1923,6 +1923,11 @@ namespace rsx
 
 	void thread::notify_zcull_info_changed()
 	{
+		// Query counting can require an otherwise unused framebuffer attachment.
+		if (m_graphics_state.test(rsx::rtt_config_contested))
+		{
+			m_graphics_state.set(rsx::rtt_config_dirty);
+		}
 		check_zcull_status(false);
 	}
 
