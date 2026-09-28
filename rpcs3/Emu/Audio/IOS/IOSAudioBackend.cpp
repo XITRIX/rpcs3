@@ -27,7 +27,11 @@ IOSAudioBackend::IOSAudioBackend()
 {
 	AudioComponentDescription description{};
 	description.componentType = kAudioUnitType_Output;
+#ifdef RPCS3_MACOS
+	description.componentSubType = kAudioUnitSubType_DefaultOutput;
+#else
 	description.componentSubType = kAudioUnitSubType_RemoteIO;
+#endif
 	description.componentManufacturer = kAudioUnitManufacturer_Apple;
 	m_component = AudioComponentFindNext(nullptr, &description);
 
