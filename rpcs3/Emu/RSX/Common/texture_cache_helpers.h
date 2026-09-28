@@ -593,6 +593,10 @@ namespace rsx
 			case rsx::texture_dimension_extended::texture_dimension_3d:
 				return (surface_width >= attr.width && surface_height >= u32{attr.slice_h} * attr.depth);
 			case rsx::texture_dimension_extended::texture_dimension_cubemap:
+				if (attr.cubemap_border)
+				{
+					return surface_width >= attr.width + 2u && surface_height >= (u32{attr.slice_h} * 6);
+				}
 				return (surface_width == attr.height && surface_width >= attr.width && surface_height >= (u32{attr.slice_h} * 6));
 			}
 
@@ -679,6 +683,51 @@ namespace rsx
 				cyclic_reference);
 		}
 
+		// Copy only the texels inside each linear cubemap border. Keep the layout
+		// in guest coordinates until each rectangle is scaled: scaling a one-texel
+		// border separately would accumulate rounding errors through the mip chain.
+		template <typename Sections, typename Image, typename ScaleCoordinates>
+		void append_bordered_cubemap_sections(Sections& sections, Image image,
+			const image_section_attributes_t& layout, const position2u& offset,
+			const size2u& output_size, ScaleCoordinates&& scale_coordinates)
+		{
+			sections.reserve(sections.size() + 6u * layout.mipmaps);
+			for (u16 face = 0; face < 6; ++face)
+			{
+				u16 width = layout.width, height = layout.height;
+				u16 dst_width = output_size.width, dst_height = output_size.height;
+				u32 y = offset.y + face * layout.slice_h;
+				for (u8 level = 0; level < layout.mipmaps; ++level)
+				{
+					const auto [x0, y0] = scale_coordinates(offset.x + 1, y + 1);
+					const auto [x1, y1] = scale_coordinates(offset.x + 1 + width, y + 1 + height);
+					sections.push_back({
+						.src = image,
+						.xform = surface_transform::coordinate_transform,
+						.level = level,
+						.src_x = x0,
+						.src_y = y0,
+						.dst_z = face,
+						.src_w = static_cast<u16>(std::max<int>(x1 - x0, 1)),
+						.src_h = static_cast<u16>(std::max<int>(y1 - y0, 1)),
+						.dst_w = dst_width,
+						.dst_h = dst_height
+					});
+					// Downscaling may leave fewer host mip levels than the guest
+					// chain. The next face still starts at the full guest stride.
+					if (dst_width == 1 && dst_height == 1)
+					{
+						break;
+					}
+					y += height + 2;
+					width = std::max<u16>(width / 2, 1);
+					height = std::max<u16>(height / 2, 1);
+					dst_width = std::max<u16>(dst_width / 2, 1);
+					dst_height = std::max<u16>(dst_height / 2, 1);
+				}
+			}
+		}
+
 		template <typename sampled_image_descriptor, typename commandbuffer_type, typename render_target_type>
 		sampled_image_descriptor process_framebuffer_resource_fast(commandbuffer_type& cmd,
 			render_target_type texptr,
@@ -712,6 +761,8 @@ namespace rsx
 					scaled_offset.x = (scaled_offset.x * surface_bpp) / attr.bpp;
 				}
 			}
+
+			const auto native_offset = scaled_offset;
 
 			if (texptr->resolution_scaling_config.scale_percent != 100)
 			{
@@ -846,6 +897,23 @@ namespace rsx
 			}
 
 			ensure(extended_dimension == rsx::texture_dimension_extended::texture_dimension_cubemap);
+
+			if (attr.cubemap_border)
+			{
+				typename deferred_subresource_type::section_array_type sections;
+				append_bordered_cubemap_sections(sections, texptr->get_surface(rsx::surface_access::transfer_read),
+					attr, native_offset, size2u(attr2.width, attr2.height), [&](u16 x, u16 y)
+					{
+						return rsx::apply_resolution_scale<false>(texptr->resolution_scaling_config, x, y, surface_width, surface_height);
+					});
+				return
+				{
+					deferred_subresource_type::create_cubemap_gather(attr2, std::move(sections), decoded_remap),
+					texture_upload_context::framebuffer_storage, format_class, scale,
+					rsx::texture_dimension_extended::texture_dimension_cubemap,
+					texptr->base_addr
+				};
+			}
 
 			return
 			{
