@@ -5,12 +5,14 @@
 #include "Emu/system_config.h"
 #include "Emu/Cell/ErrorCodes.h"
 #include "Emu/Cell/timers.hpp"
+#include "Emu/Cell/GuestClock.h"
 #include "util/tsc.hpp"
 
 #include "util/sysinfo.hpp"
 
 u64 g_timebase_offs{};
 static u64 systemtime_offset;
+static guest_clock s_guest_clock;
 
 #ifndef __linux__
 #include "util/asm.hpp"
@@ -145,7 +147,7 @@ static constexpr u64 g_timebase_freq = /*79800000*/ 80000000ull; // 80 Mhz
 // Convert time is microseconds to timebased time
 u64 convert_to_timebased_time(u64 time)
 {
-	const u64 result = time * (g_timebase_freq / 1000000ull) * g_cfg.core.clocks_scale / 100u;
+	const u64 result = get_active_system_time(time) * (g_timebase_freq / 1000000ull) * g_cfg.core.clocks_scale / 100u;
 	ensure(result >= g_timebase_offs);
 	return result - g_timebase_offs;
 }
@@ -157,10 +159,11 @@ u64 get_timebased_time()
 		const u64 tsc = utils::get_tsc();
 
 #if _MSC_VER
-		const u64 result = static_cast<u64>(u128_from_mul(tsc, g_timebase_freq) / freq) * g_cfg.core.clocks_scale / 100u;
+		const u64 ticks = static_cast<u64>(u128_from_mul(tsc, g_timebase_freq) / freq);
 #else
-		const u64 result = (tsc / freq * g_timebase_freq + tsc % freq * g_timebase_freq / freq) * g_cfg.core.clocks_scale / 100u;
+		const u64 ticks = tsc / freq * g_timebase_freq + tsc % freq * g_timebase_freq / freq;
 #endif
+		const u64 result = s_guest_clock.get(ticks, g_timebase_freq / 1000000ull) * g_cfg.core.clocks_scale / 100u;
 		return result - g_timebase_offs;
 	}
 
@@ -174,16 +177,17 @@ u64 get_timebased_time()
 		const u64 freq = s_time_aux_info.perf_freq;
 
 #if _MSC_VER
-		const u64 result = static_cast<u64>(u128_from_mul(time * g_cfg.core.clocks_scale, g_timebase_freq) / freq / 100u);
+		const u64 ticks = static_cast<u64>(u128_from_mul(time, g_timebase_freq) / freq);
 #else
-		const u64 result = (time / freq * g_timebase_freq + time % freq * g_timebase_freq / freq) * g_cfg.core.clocks_scale / 100u;
+		const u64 ticks = time / freq * g_timebase_freq + time % freq * g_timebase_freq / freq;
 #endif
 #else
 		struct timespec ts;
 		ensure(::clock_gettime(CLOCK_MONOTONIC, &ts) == 0);
 
-		const u64 result = (static_cast<u64>(ts.tv_sec) * g_timebase_freq + static_cast<u64>(ts.tv_nsec) * g_timebase_freq / 1000000000ull) * g_cfg.core.clocks_scale / 100u;
+		const u64 ticks = static_cast<u64>(ts.tv_sec) * g_timebase_freq + static_cast<u64>(ts.tv_nsec) * g_timebase_freq / 1000000000ull;
 #endif
+		const u64 result = s_guest_clock.get(ticks, g_timebase_freq / 1000000ull) * g_cfg.core.clocks_scale / 100u;
 		if (result) return result - g_timebase_offs;
 	}
 }
@@ -193,6 +197,7 @@ u64 get_timebased_time()
 // If none-zero arg is specified it will become the base time (for savestates)
 void initialize_timebased_time(u64 timebased_init, bool reset)
 {
+	s_guest_clock.reset();
 	g_timebase_offs = 0;
 
 	if (reset)
@@ -249,10 +254,25 @@ u64 get_system_time()
 	}
 }
 
-// As get_system_time but obeys Clocks scaling setting
+u64 get_active_system_time(u64 time)
+{
+	return s_guest_clock.get(time != umax ? time : get_system_time());
+}
+
+void pause_guest_time()
+{
+	s_guest_clock.pause(get_system_time());
+}
+
+void resume_guest_time()
+{
+	s_guest_clock.resume(get_system_time());
+}
+
+// As get_system_time but excludes pauses and obeys Clocks scaling setting.
 u64 get_guest_system_time(u64 time)
 {
-	const u64 result = (time != umax ? time : get_system_time()) * g_cfg.core.clocks_scale / 100;
+	const u64 result = get_active_system_time(time) * g_cfg.core.clocks_scale / 100;
 	return result - systemtime_offset;
 }
 

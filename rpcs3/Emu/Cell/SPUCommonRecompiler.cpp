@@ -1519,8 +1519,8 @@ spu_runtime::spu_runtime()
 #ifdef RPCS3_IOS
 	if (rpcs3::ios::get_experimental_policy().persistent_spu_object_cache)
 	{
-		// v3 retires objects produced before ARM64 persistence was disabled.
-		constexpr u32 cache_version = 4;
+		// v5 makes compiled decrementer reads use the pause-aware guest clock.
+		constexpr u32 cache_version = 5;
 		constexpr usz max_files = 12'000;
 		sha1_context ctx;
 		u8 key[20];

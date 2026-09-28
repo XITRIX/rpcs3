@@ -9,6 +9,7 @@ CXX_COMPILER="${CXX:-clang++}"
 mkdir -p "${OUTPUT_ROOT}"
 
 python3 "${SCRIPT_DIR}/run-socket-event-tests.py"
+python3 "${SCRIPT_DIR}/run-guest-clock-tests.py"
 python3 "${SCRIPT_DIR}/run-vm-savestate-page-tests.py"
 python3 "${SCRIPT_DIR}/run-exitspawn-container-tests.py"
 python3 "${SCRIPT_DIR}/run-iso-read-tests.py"

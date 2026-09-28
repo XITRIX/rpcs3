@@ -20,6 +20,7 @@
 #include "Emu/Cell/PPUThread.h"
 #include "Emu/Cell/PPUDisAsm.h"
 #include "Emu/Cell/PPUAnalyser.h"
+#include "Emu/Cell/timers.hpp"
 #include "Emu/Cell/SPUThread.h"
 #include "Emu/Cell/SPURecompiler.h"
 #include "Emu/RSX/RSXThread.h"
@@ -3111,6 +3112,10 @@ bool Emulator::Pause(bool freeze_emulation, bool show_resume_message)
 		return false;
 	}
 
+	// Freeze guest deadlines before parking their producers and consumers.
+	// Host clocks remain live for shader compilation, UI and shutdown watchdogs.
+	pause_guest_time();
+
 	if (old_state == system_state::ready || old_state == system_state::paused)
 	{
 		// Perform the side effects of Resume here when transforming paused to frozen state
@@ -3255,6 +3260,9 @@ void Emulator::Resume()
 	{
 		return;
 	}
+
+	// Restore the guest clock before waking any guest threads.
+	resume_guest_time();
 
 	// Get pause start time
 	const u64 time = m_pause_start_time.exchange(0);
