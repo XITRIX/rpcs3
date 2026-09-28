@@ -2161,6 +2161,7 @@ bool lv2_obj::wait_timeout(u64 usec, ppu_thread* cpu, bool scale, bool is_usleep
 	static_assert(u64{umax} / max_timeout >= 100, "max timeout is not valid for scaling");
 
 	const u64 start_time = get_system_time();
+	const u64 active_start_time = get_active_system_time(start_time);
 
 	if (cpu)
 	{
@@ -2271,7 +2272,9 @@ bool lv2_obj::wait_timeout(u64 usec, ppu_thread* cpu, bool scale, bool is_usleep
 			}
 		}
 
-		passed = get_system_time() - start_time;
+		// A paused producer cannot signal us. Count only emulation time so a
+		// long pause does not turn an outstanding guest wait into a timeout.
+		passed = get_active_system_time() - active_start_time;
 	}
 
 	return true;

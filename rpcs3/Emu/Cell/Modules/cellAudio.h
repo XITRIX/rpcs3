@@ -174,7 +174,7 @@ struct audio_port
 	u64 global_counter = 0; // copy of global counter
 	u64 active_counter = 0;
 	u32 size = 0;
-	u64 timestamp = 0; // copy of global timestamp
+	u64 timestamp = 0;
 
 	struct level_set_t
 	{
@@ -471,6 +471,10 @@ public:
 
 	std::vector<key_info> keys{};
 	std::array<audio_port, AUDIO_PORT_COUNT> ports{};
+	// Derived runtime anchors, kept outside the bitwise-serialized audio ports.
+	// Restored ports acquire an anchor after the guest clock has been rebased.
+	std::array<u64, AUDIO_PORT_COUNT> guest_timestamps;
+	u64 get_port_guest_timestamp(u32 port_number);
 
 	u64 m_last_period_end = 0;
 	u64 m_counter = 0;
