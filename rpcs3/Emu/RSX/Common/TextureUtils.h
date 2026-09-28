@@ -303,6 +303,8 @@ namespace rsx
 		u8  bpp;
 		bool swizzled;
 		bool edge_clamped;
+		// Linear cubemaps store a one-texel border around every face/mip.
+		bool cubemap_border = false;
 	};
 
 	struct image_copy_subresource_layers
