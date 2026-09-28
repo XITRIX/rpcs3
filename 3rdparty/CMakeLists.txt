@@ -180,7 +180,10 @@ if(USE_VULKAN)
 		endif()
 
 		set(MOLTENVK_INCLUDE_DIR "${RPCS3_MOLTENVK_ROOT}/MoltenVK/include")
-		if(CMAKE_OSX_SYSROOT MATCHES "[Ii][Pp]hone[Ss]imulator")
+		if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+			set(MOLTENVK_LIBRARY_IDENTIFIER "macos-arm64_x86_64")
+			set(RPCS3_APPLE_PLATFORM_NAME "macOS")
+		elseif(CMAKE_OSX_SYSROOT MATCHES "[Ii][Pp]hone[Ss]imulator")
 			set(MOLTENVK_LIBRARY_IDENTIFIER "ios-arm64_x86_64-simulator")
 			set(RPCS3_APPLE_PLATFORM_NAME "iOS Simulator")
 		elseif(CMAKE_SYSTEM_NAME STREQUAL "visionOS")
@@ -205,8 +208,12 @@ if(USE_VULKAN)
 			"-framework QuartzCore"
 			"-framework CoreGraphics"
 			"-framework IOSurface"
-			"-framework UIKit"
 		)
+		if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+			target_link_libraries(moltenvk_ios INTERFACE "-framework AppKit" "-framework IOKit")
+		else()
+			target_link_libraries(moltenvk_ios INTERFACE "-framework UIKit")
+		endif()
 
 		add_library(3rdparty_vulkan INTERFACE)
 		target_compile_definitions(3rdparty_vulkan INTERFACE -DHAVE_VULKAN)
