@@ -7,7 +7,10 @@ if (NOT USE_SYSTEM_LIBPNG)
 	set(SKIP_INSTALL_ALL ON)
 	# libpng automatically uses this cross-compilation-safe header on iOS, but
 	# CMake does not set the legacy IOS variable for its visionOS system name.
-	if(CMAKE_SYSTEM_NAME STREQUAL "visionOS")
+	if(CMAKE_SYSTEM_NAME STREQUAL "visionOS" OR
+		(RPCS3_FRONTEND STREQUAL "IOS" AND CMAKE_SYSTEM_NAME STREQUAL "Darwin"))
+		# The Apple frontend links bundled zlib. Native macOS configure-time
+		# header generation otherwise probes the SDK zlib with a different version.
 		set(PNG_LIBCONF_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/libpng/scripts/pnglibconf.h.prebuilt"
 			CACHE FILEPATH "C header file containing customized build configuration settings for libpng" FORCE)
 	endif()

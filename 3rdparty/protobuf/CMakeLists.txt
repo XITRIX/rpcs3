@@ -22,6 +22,11 @@ else()
 	option(protobuf_LOCAL_DEPENDENCIES_ONLY "Prevent downloading any dependencies from GitHub. If this option is set, the dependency must be available locally as an installed package." OFF)
 	option(protobuf_BUILD_SHARED_LIBS "Build Shared Libraries" OFF)
 	option(protobuf_MSVC_STATIC_RUNTIME "Link static runtime libraries" OFF)
+	if(RPCS3_FRONTEND STREQUAL "IOS" AND CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+		# The self-contained Mac core must build protobuf's pinned Abseil,
+		# not silently link an installed Homebrew version and its dylibs.
+		set(protobuf_FORCE_FETCH_DEPENDENCIES ON CACHE BOOL "Use pinned dependencies" FORCE)
+	endif()
 
 	add_subdirectory(protobuf EXCLUDE_FROM_ALL)
 	target_include_directories(3rdparty_protobuf SYSTEM INTERFACE protobuf/src)

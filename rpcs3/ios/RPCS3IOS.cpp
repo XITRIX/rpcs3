@@ -1288,7 +1288,11 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
+#ifdef RPCS3_MACOS
+	return "{\"abi\":30,\"frontend\":\"macos\",\"upstream\":\"fdcfded8dfd3060af66bda0a3ac4635458980038\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"coreaudio-default-output\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies-big-picture-savestate-management-selected-boot\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop-big-picture\",\"media_codecs\":true}";
+#else
 	return "{\"abi\":30,\"frontend\":\"ios\",\"upstream\":\"fdcfded8dfd3060af66bda0a3ac4635458980038\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies-big-picture-savestate-management-selected-boot\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop-big-picture\",\"media_codecs\":true}";
+#endif
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
@@ -1422,7 +1426,11 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		g_lifecycle.finish_initialize(true);
 		g_accept_display_surfaces = true;
 		g_accept_pad_state = true;
+#ifdef RPCS3_MACOS
+		emit_log(4, "RPCS3 Emu.Init completed with the native macOS Vulkan/MoltenVK and Core Audio frontend");
+#else
 		emit_log(4, "RPCS3 Emu.Init completed with the iOS Vulkan/MoltenVK and RemoteIO frontend");
+#endif
 		emit_jit_arena_statistics("after core initialization");
 		return RPCS3_IOS_OK;
 	}
@@ -4846,6 +4854,12 @@ extern "C" rpcs3_ios_status rpcs3_ios_shutdown(void) noexcept
 					return RPCS3_IOS_STOP_FAILED;
 				}
 			}
+#ifdef RPCS3_MACOS
+			// AppKit exits through C++ static destruction. Match the desktop
+			// frontend's terminal cleanup after Stop, before releasing JIT state.
+			// Mobile keeps its established process-lifetime object registry.
+			Emu.CleanUp();
+#endif
 			jit_runtime::finalize();
 			g_emu_started = false;
 		}
