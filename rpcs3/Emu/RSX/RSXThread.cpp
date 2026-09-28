@@ -1585,6 +1585,19 @@ namespace rsx
 			{
 				m_graphics_state.set(rsx::rtt_config_contested);
 			}
+
+			if (color_buffer_unused && depth_buffer_unused &&
+				method_registers.registers[NV4097_SET_ZCULL_EN] &&
+				method_registers.registers[NV4097_SET_ZPASS_PIXEL_COUNT_ENABLE])
+			{
+				// Occlusion-only draws still need rasterization. Retain a configured
+				// attachment without enabling writes, otherwise the backend drops
+				// the draw and reports zero visible samples (e.g. NFS Most Wanted).
+				if (layout.target != rsx::surface_target::none)
+					color_buffer_unused = false;
+				else
+					depth_buffer_unused = false;
+			}
 			break;
 		default:
 			fmt::throw_exception("Unknown framebuffer context 0x%x", static_cast<u32>(context));
@@ -3160,6 +3173,11 @@ namespace rsx
 
 	void thread::notify_zcull_info_changed()
 	{
+		// Query counting can require an otherwise unused framebuffer attachment.
+		if (m_graphics_state.test(rsx::rtt_config_contested))
+		{
+			m_graphics_state.set(rsx::rtt_config_dirty);
+		}
 		check_zcull_status(false);
 	}
 
