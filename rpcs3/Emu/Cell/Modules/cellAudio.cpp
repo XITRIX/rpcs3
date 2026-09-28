@@ -806,6 +806,7 @@ void cell_audio_thread::advance(u64 timestamp)
 		port.global_counter = m_counter;
 		port.active_counter++;
 		port.timestamp = timestamp;
+		guest_timestamps[port.number] = get_guest_system_time(timestamp);
 
 		port.cur_pos = port.position(1);
 
@@ -955,6 +956,19 @@ void cell_audio_thread::reset_counters()
 
 cell_audio_thread::cell_audio_thread()
 {
+	guest_timestamps.fill(umax);
+}
+
+u64 cell_audio_thread::get_port_guest_timestamp(u32 port_number)
+{
+	// The caller holds mutex. A restored port's host timestamp belongs to the
+	// previous process; initialize its runtime anchor in the restored guest clock.
+	u64& timestamp = guest_timestamps[port_number];
+	if (timestamp == umax)
+	{
+		timestamp = get_guest_system_time();
+	}
+	return timestamp;
 }
 
 void cell_audio_thread::operator()()
@@ -2070,6 +2084,7 @@ error_code cellAudioPortOpen(ppu_thread& ppu, vm::ptr<CellAudioPortParam> audioP
 		port->global_counter = g_audio.m_counter;
 		port->active_counter = 0;
 		port->timestamp      = get_guest_system_time(g_audio.m_last_period_end);
+		g_audio.guest_timestamps[port->number] = port->timestamp;
 
 		if (attr & CELL_AUDIO_PORTATTR_INITLEVEL)
 		{
@@ -2324,7 +2339,9 @@ error_code cellAudioGetPortTimestamp(u32 portNum, u64 tag, vm::ptr<u64> stamp)
 	const u64 delta_tag_stamp = delta_tag * g_audio.cfg.audio_block_period;
 
 	// Apparently no error is returned if stamp is null
-	*stamp = get_guest_system_time(port.timestamp - delta_tag_stamp);
+	// The timestamp was captured in guest time when this block advanced. Do
+	// not remap an old host timestamp using a later pause/resume clock anchor.
+	*stamp = g_audio.get_port_guest_timestamp(portNum) - delta_tag_stamp * g_cfg.core.clocks_scale / 100;
 
 	return CELL_OK;
 }

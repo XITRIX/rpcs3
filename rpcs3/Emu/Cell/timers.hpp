@@ -8,5 +8,10 @@ u64 get_timebased_time();
 // Returns some relative time in microseconds, don't change this fact
 u64 get_system_time();
 
+// Unscaled emulation time: excludes pauses, but retains the host clock epoch.
+u64 get_active_system_time(u64 time = umax);
+void pause_guest_time();
+void resume_guest_time();
+
 // As get_system_time but obeys Clocks scaling setting. Microseconds.
 u64 get_guest_system_time(u64 time = umax);
