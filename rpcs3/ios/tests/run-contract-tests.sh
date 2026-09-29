@@ -94,6 +94,7 @@ case "$(uname -m)" in
 esac
 
 python3 "${SCRIPT_DIR}/run-silenced-fatal-log-tests.py"
+python3 "${SCRIPT_DIR}/run-shader-mode-migration-tests.py"
 
 "${CXX_COMPILER}" -std=c++20 -pthread -Wall -Wextra -Werror \
     "${SCRIPT_DIR}/IOSGraphicsLifecycleTests.cpp" \
