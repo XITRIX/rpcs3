@@ -5,6 +5,7 @@
 
 #ifdef RPCS3_IOS
 #include "ios/RPCS3IOSGPUDefaults.h"
+#include "ios/RPCS3IOSShaderMode.h"
 #endif
 
 enum CellNetCtlState : s32;
@@ -167,7 +168,11 @@ struct cfg_root : cfg::node
 		cfg::_enum<frame_limit_type> frame_limit{ this, "Frame limit", frame_limit_type::_auto, true };
 		cfg::_float<0, 1000> second_frame_limit{ this, "Second Frame Limit", 0, true }; // 0 disables its effect
 		cfg::_enum<msaa_level> antialiasing_level{ this, "MSAA", msaa_level::_auto };
+#ifdef RPCS3_IOS
+		rpcs3::ios::shader_mode_setting shadermode{ this, "Shader Mode", default_shader_mode };
+#else
 		cfg::_enum<shader_mode> shadermode{ this, "Shader Mode", default_shader_mode };
+#endif
 		cfg::_enum<gpu_preset_level> shader_precision{ this, "Shader Precision", gpu_preset_level::high };
 		cfg::_enum<vsync_mode> vsync{ this, "VSync Mode", vsync_mode::off, true };
 
