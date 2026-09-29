@@ -2,6 +2,7 @@
 
 #include "RSXFragmentProgram.h"
 #include "RSXVertexProgram.h"
+#include "Emu/Cell/timers.hpp"
 
 #include "Utilities/mutex.h"
 #include "util/logs.hpp"
@@ -253,6 +254,7 @@ protected:
 
 		if (recompile)
 		{
+			const guest_time_stall clock_hold("vertex shader compilation");
 			backend_traits::recompile_vertex_program(rsx_vp, *new_shader, m_next_id++);
 		}
 
@@ -291,6 +293,7 @@ protected:
 
 		if (recompile)
 		{
+			const guest_time_stall clock_hold("fragment shader compilation");
 			it->first.clone_data();
 			backend_traits::recompile_fragment_program(rsx_fp, *new_shader, m_next_id++);
 		}

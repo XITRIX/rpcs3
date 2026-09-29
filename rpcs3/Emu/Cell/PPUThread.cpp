@@ -5071,6 +5071,9 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 	const bool is_being_used_in_emulation = vm::base(info.segs[0].addr) == info.segs[0].ptr;
 
 	const cpu_thread* cpu = cpu_thread::get_current();
+	// A guest module/overlay load may synchronously compile and link on this
+	// PPU, including waiting for its host workers. Background checks stay live.
+	const guest_time_stall clock_hold("PPU module compilation/linking", !check_only && is_being_used_in_emulation);
 
 	for (auto& func : info.get_funcs())
 	{

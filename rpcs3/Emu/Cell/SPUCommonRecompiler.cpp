@@ -22,6 +22,7 @@
 #include "SPUThread.h"
 #include "SPUAnalyser.h"
 #include "SPUInterpreter.h"
+#include "timers.hpp"
 #include "SPUDisAsm.h"
 #include <algorithm>
 #include <cstring>
@@ -2420,7 +2421,22 @@ void spu_recompiler_base::dispatch(spu_thread& spu, void*, u8* rip)
 #if defined(__APPLE__)
 	jit_write_protect(false);
 #endif
-	auto program = spu.jit->analyse(spu._ptr<u32>(0), spu.pc);
+	spu_program program;
+	spu_function_t func = nullptr;
+	{
+		// End the scope before the native escape paths below: their assembly
+		// unwinds the JIT stack without running C++ destructors.
+		const guest_time_stall clock_hold("SPU analysis/compilation");
+		program = spu.jit->analyse(spu._ptr<u32>(0), spu.pc);
+#ifdef ARCH_ARM64
+		if (!program.data.empty())
+		{
+			func = compile_spu_llvm_with_retry(spu.jit, program);
+		}
+#else
+		func = spu.jit->compile(std::move(program));
+#endif
+	}
 #ifdef ARCH_ARM64
 	if (program.data.empty())
 	{
@@ -2434,9 +2450,6 @@ void spu_recompiler_base::dispatch(spu_thread& spu, void*, u8* rip)
 		return;
 	}
 
-	const auto func = compile_spu_llvm_with_retry(spu.jit, program);
-#else
-	const auto func = spu.jit->compile(std::move(program));
 #endif
 
 	if (!func)
