@@ -95,7 +95,6 @@ namespace vk
 		g_drv_sanitize_fp_values = false;
 		g_drv_disable_fence_reset = false;
 		g_drv_strict_query_scopes = !!g_cfg.video.strict_rendering_mode;
-		g_drv_emulate_cond_render = (g_cfg.video.relaxed_zcull_sync && !g_render_device->get_conditional_render_support());
 		g_num_processed_frames = 0;
 		g_num_total_frames = 0;
 		g_heap_compatible_buffer_types = 0;
@@ -105,6 +104,12 @@ namespace vk
 
 		g_driver_vendor = gpu.get_driver_vendor();
 		g_chip_class = gpu.get_chip_class();
+
+		// MoltenVK resolves conditional rendering on the CPU (see backend_config).
+		// It never creates the GPU predicate buffer, so shader emulation would
+		// read the zero-filled scratch fallback and discard ordinary draws.
+		g_drv_emulate_cond_render = (g_driver_vendor != driver_vendor::MVK &&
+			g_cfg.video.relaxed_zcull_sync && !g_render_device->get_conditional_render_support());
 
 		switch (g_driver_vendor)
 		{
