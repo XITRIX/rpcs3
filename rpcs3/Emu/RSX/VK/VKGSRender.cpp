@@ -1060,6 +1060,13 @@ bool VKGSRender::on_vram_exhausted(rsx::problem_severity severity)
 				for (auto i = 0ull; i < texture_array.size(); ++i)
 				{
 					const auto& tex = texture_array[i];
+					// Disabled slots may retain offsets into memory the guest has
+					// already unmapped. They are not active eviction exclusions.
+					if (!tex.enabled())
+					{
+						continue;
+					}
+
 					const auto addr = rsx::get_address(tex.offset(), tex.location());
 					exclusion_list.insert(addr);
 				}
