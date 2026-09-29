@@ -511,7 +511,7 @@ public:
 
 	// Under the mutex: reserve a port, and later hand it back (see audio_port_mapping).
 	audio_port* open_port();
-	static bool reuse_port_memory(audio_port_mapping& mapping, u32 alloc_size);
+	static bool reuse_port_memory(ppu_thread& ppu, audio_port_mapping& mapping, u32 alloc_size);
 	audio_port_mapping take_kept_memory(audio_port& port);
 	void close_port(audio_port& port);
 	audio_port_mapping detach_port(audio_port& port);

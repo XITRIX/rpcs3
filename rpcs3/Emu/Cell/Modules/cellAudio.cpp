@@ -1492,7 +1492,7 @@ audio_port_mapping cell_audio_thread::detach_port(audio_port& port)
 	return mapping;
 }
 
-bool cell_audio_thread::reuse_port_memory(audio_port_mapping& mapping, u32 alloc_size)
+bool cell_audio_thread::reuse_port_memory(ppu_thread& ppu, audio_port_mapping& mapping, u32 alloc_size)
 {
 	const auto& memory = mapping.memory;
 	if (!memory || memory->size < alloc_size)
@@ -1503,6 +1503,9 @@ bool cell_audio_thread::reuse_port_memory(audio_port_mapping& mapping, u32 alloc
 	// The guest may have unmapped or replaced the old address while audio kept
 	// the backing alive. Validate its identity outside the audio mutex, and clear
 	// the retained host mapping, never an unchecked guest address.
+	// Both vm::get and block_t::peek acquire vm::writer_lock. Unlike a fresh
+	// allocation, reuse does not enter a sys_mmapper call that sets wait for us.
+	ppu.state += cpu_flag::wait;
 	const auto backing = memory->shm.load();
 	const auto area = vm::get(vm::any, mapping.addr);
 	if (!backing || !area || area->peek(mapping.addr).second != *backing)
@@ -2108,7 +2111,7 @@ error_code cellAudioPortOpen(ppu_thread& ppu, vm::ptr<CellAudioPortParam> audioP
 	}
 
 	error_code result = CELL_OK;
-	if (cell_audio_thread::reuse_port_memory(kept, cell_audio_thread::port_alloc_size(port_size)))
+	if (cell_audio_thread::reuse_port_memory(ppu, kept, cell_audio_thread::port_alloc_size(port_size)))
 	{
 		mapping.memory = std::move(kept.memory);
 		mapping.addr = kept.addr;
