@@ -4,6 +4,7 @@
 #include "vkutils/device.h"
 #include "Utilities/Thread.h"
 #include "Emu/system_config.h"
+#include "Emu/Cell/timers.hpp"
 
 #include "util/sysinfo.hpp"
 
@@ -212,6 +213,7 @@ namespace vk
 	{
 		if (flags & COMPILE_INLINE)
 		{
+			const guest_time_stall clock_hold("Vulkan pipeline compilation");
 			return int_compile_compute_pipe(create_info, cs_inputs, flags);
 		}
 
@@ -227,6 +229,7 @@ namespace vk
 	{
 		// It is very inefficient to defer this as all pointers need to be saved
 		ensure(flags & COMPILE_INLINE, "Asynchronous compilation is not allowed for raw graphics pipeline input");
+		const guest_time_stall clock_hold("Vulkan pipeline compilation");
 		return int_compile_graphics_pipe(create_info, vs_inputs, fs_inputs, flags);
 	}
 
@@ -241,6 +244,7 @@ namespace vk
 		VkShaderModule modules[] = { vs, fs };
 		if (flags & COMPILE_INLINE)
 		{
+			const guest_time_stall clock_hold("Vulkan pipeline compilation");
 			return int_compile_graphics_pipe(create_info, modules, vs_inputs, fs_inputs, flags);
 		}
 
@@ -256,6 +260,7 @@ namespace vk
 	{
 		if (flags & COMPILE_INLINE)
 		{
+			const guest_time_stall clock_hold("Vulkan pipeline compilation");
 			return int_compile_graphics_pipe(get_create_info, vs_inputs, fs_inputs, flags);
 		}
 
