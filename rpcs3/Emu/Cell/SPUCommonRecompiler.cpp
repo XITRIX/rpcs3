@@ -3476,7 +3476,12 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
 
 				if (type == spu_itype::BI && target == pos + 4 && op.d)
 				{
-					// Disable interrupts idiom
+					// Both recompilers recognize this fallthrough through m_targets.
+					// Keep the continuation as a real block so target cleanup retains
+					// the edge; otherwise LLVM exits here while later PHIs still expect
+					// this block to execute the instructions after the BID.
+					m_targets[pos].push_back(target);
+					add_block(target);
 					break;
 				}
 
