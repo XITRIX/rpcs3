@@ -736,6 +736,7 @@ void enumerate_current_settings(
 			std::erase_if(options, [&setting](const std::string& option)
 			{
 				return (setting.key == "advanced.fifo_accuracy" && option == "PS3") ||
+					(setting.key == "gpu.shader_mode" && option == "Legacy Recompiler (single-threaded)") ||
 					(setting.key == "cpu.spu_decoder" && option == "Recompiler (ASMJIT)") ||
 					(setting.key == "network.psn_status" && option == "Simulated") ||
 					(setting.key == "audio.format" && option == "Manual") ||
