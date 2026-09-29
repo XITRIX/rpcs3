@@ -6,6 +6,7 @@
 #include "Emu/Cell/ErrorCodes.h"
 #include "Emu/Cell/timers.hpp"
 #include "Emu/Cell/GuestClock.h"
+#include "Emu/CPU/CPUThread.h"
 #include "util/tsc.hpp"
 
 #include "util/sysinfo.hpp"
@@ -261,12 +262,29 @@ u64 get_active_system_time(u64 time)
 
 void pause_guest_time()
 {
-	s_guest_clock.pause(get_system_time());
+	s_guest_clock.pause(get_system_time);
 }
 
 void resume_guest_time()
 {
-	s_guest_clock.resume(get_system_time());
+	s_guest_clock.resume(get_system_time);
+}
+
+u64 begin_guest_time_stall()
+{
+	// Precompilation and asynchronous compiler workers do not block a guest
+	// producer. Their work must not stop clocks in an otherwise running game.
+	return cpu_thread::get_current() ? s_guest_clock.hold(get_system_time) : 0;
+}
+
+void end_guest_time_stall(u64 generation, u64 started, const char* reason)
+{
+	const u64 now = get_system_time();
+	s_guest_clock.release(generation, get_system_time);
+	if (now >= started && now - started >= 100'000)
+	{
+		sys_time.notice("Guest clock excluded blocking %s: %llu us", reason, now - started);
+	}
 }
 
 // As get_system_time but excludes pauses and obeys Clocks scaling setting.
