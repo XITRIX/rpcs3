@@ -13,8 +13,12 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--source', type=Path, default=ROOT / 'rpcs3/Emu/Cell/SPUCommonRecompiler.cpp')
-parser.add_argument('--guest', type=Path, help='Optional 256 KiB local-store reconstruction of the reported demo block')
+parser.add_argument('--guest', type=Path, help='Optional 256 KiB local-store reconstruction of a reported block')
+parser.add_argument('--guest-case', choices=['gow3-demo', 'dark-souls2'], default='gow3-demo',
+                    help='Expected control flow for --guest (default: gow3-demo)')
 args = parser.parse_args()
+if args.guest_case != 'gow3-demo' and not args.guest:
+    parser.error('--guest-case requires --guest')
 
 with tempfile.TemporaryDirectory(prefix='spu-branch-') as directory:
     out = Path(directory)
@@ -48,4 +52,4 @@ bool {backend}_fallthrough(const Targets& m_targets, u32 m_pos, spu_opcode_t op)
                '-o', out / 'tests']
     command += ['-Wl,-dead_strip'] if platform.system() == 'Darwin' else ['-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections']
     subprocess.run(command, check=True)
-    subprocess.run([out / 'tests', *([args.guest.resolve()] if args.guest else [])], check=True)
+    subprocess.run([out / 'tests', *([args.guest.resolve(), args.guest_case] if args.guest else [])], check=True)
