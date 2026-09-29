@@ -140,6 +140,21 @@ set_source_files_properties("../util/yaml.cpp" PROPERTIES
     SKIP_PRECOMPILE_HEADERS ON
 )
 
+# Blocking compilation owns scoped guest-clock holds. Keep C++ cleanup on
+# compiler/driver failures even when the bundled LLVM flags disable exceptions.
+# These translation units also instantiate the shader-cache hold templates.
+set_source_files_properties(
+    Cell/lv2/sys_time.cpp
+    Cell/PPUThread.cpp
+    Cell/SPUCommonRecompiler.cpp
+    RSX/VK/VKGSRender.cpp
+    RSX/VK/VKPipelineCompiler.cpp
+    RSX/GL/GLGSRender.cpp
+    PROPERTIES
+        COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/EHsc,-fexceptions>"
+        SKIP_PRECOMPILE_HEADERS ON
+)
+
 # Crypto
 target_sources(rpcs3_emu PRIVATE
     ../Crypto/aes.cpp
