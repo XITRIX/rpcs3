@@ -107,6 +107,8 @@ error_code sys_mmapper_free_shared_memory(ppu_thread&,u32 id){unlocked();auto m=
 error_code sys_mmapper_search_and_map(ppu_thread& p,u32,u32 id,u32,u32*out){p.state+=cpu_flag::wait;require_vm_wait();if(mapping_hook)mapping_hook();if(fail())return CELL_ESRCH;auto m=memories.at(id);*out=next_addr;next_addr+=m->size;++m->counter;mappings[*out]=m;return 0;}
 error_code sys_mmapper_get_shared_memory_area(ppu_thread&,u64,u32*out){if(fail())return CELL_ESRCH;*out=1;return 0;}
 error_code sys_mmapper_allocate_shared_memory(ppu_thread&,u64,u32 size,u32,u32*out){if(fail())return CELL_EEXIST;auto m=make_shared<lv2_memory>(size,0,0,0,false,nullptr);*out=m->id=next_id++;memories[*out]=m;++allocations;return 0;}
+// Upstream's suspend-aware lock only differs from lock() under contention; the fixture is single-threaded.
+std::unique_lock<checked_mutex> lock_audio(checked_mutex& mutex){return std::unique_lock(mutex);}
 #define ensure(x) assert(x)
 #include "production.inc"
 void empty(){assert(memories.empty()&&mappings.empty()&&!audio.memory_transition&&!audio.shared_refs);}
