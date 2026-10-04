@@ -43,7 +43,7 @@ struct arena_state
 	u8* data = nullptr;
 	usz capacity = 0;
 	usz data_capacity = 0;
-	u32 preparation_chunks = 0;
+	u32 preparation_requests = 0;
 	rpcs3::ios::jit::arena_allocator code_allocator;
 	rpcs3::ios::jit::arena_allocator data_allocator;
 	usz runtime_code_bytes = 0;
@@ -90,26 +90,12 @@ u8* reserve_arena_layout(usz size, vm_address_t begin = arena_address_begin,
 	begin = (begin + arena_address_step - 1) & ~(arena_address_step - 1);
 	for (vm_address_t candidate = begin; candidate <= end - size; candidate += arena_address_step)
 	{
-		usz reserved = 0;
-		while (reserved < size)
+		vm_address_t address = candidate;
+		if (::vm_map(mach_task_self(), &address, static_cast<vm_size_t>(size), 0,
+			VM_FLAGS_FIXED | jit_vm_tag, MACH_PORT_NULL, 0, false,
+			VM_PROT_NONE, VM_PROT_ALL, VM_INHERIT_DEFAULT) == KERN_SUCCESS)
 		{
-			const usz length = std::min(size - reserved, rpcs3::ios::jit::arena_prepare_chunk_size);
-			vm_address_t address = candidate + reserved;
-			if (::vm_map(mach_task_self(), &address, static_cast<vm_size_t>(length), 0,
-				VM_FLAGS_FIXED | jit_vm_tag, MACH_PORT_NULL, 0, false,
-				VM_PROT_NONE, VM_PROT_ALL, VM_INHERIT_DEFAULT) != KERN_SUCCESS)
-			{
-				break;
-			}
-			reserved += length;
-		}
-		if (reserved == size)
-		{
-			return reinterpret_cast<u8*>(candidate);
-		}
-		if (reserved)
-		{
-			::vm_deallocate(mach_task_self(), candidate, static_cast<vm_size_t>(reserved));
+			return reinterpret_cast<u8*>(address);
 		}
 	}
 	return nullptr;
@@ -167,17 +153,8 @@ u8* reserve_code_data_layout(usz code_capacity, u8*& data, usz& data_capacity) n
 
 bool map_arena_region(u8* address, usz size, int protection) noexcept
 {
-	for (usz offset = 0; offset < size;)
-	{
-		const usz length = std::min(size - offset, rpcs3::ios::jit::arena_prepare_chunk_size);
-		if (::mmap(address + offset, length, protection,
-			MAP_FIXED | MAP_PRIVATE | MAP_ANON, jit_vm_tag, 0) != address + offset)
-		{
-			return false;
-		}
-		offset += length;
-	}
-	return true;
+	return ::mmap(address, size, protection,
+		MAP_FIXED | MAP_PRIVATE | MAP_ANON, jit_vm_tag, 0) == address;
 }
 
 u32 process_expanded_jit_arena_capacity() noexcept
@@ -522,26 +499,19 @@ bool prepare_arena(u32 expanded_capacity_mib) noexcept
 		return false;
 	}
 
-	u32 preparation_chunks = 0;
+	u32 preparation_requests = 0;
 	if (backend == arena_backend::universal_mirrored)
 	{
-		preparation_chunks = arena_prepare_chunk_count(capacity);
-		for (u32 chunk_index = 0; chunk_index < preparation_chunks; ++chunk_index)
+		const u64 response = protocol_call(command_prepare_region, layout, capacity);
+		if (response != reinterpret_cast<uptr>(layout))
 		{
-			const usz offset = static_cast<usz>(chunk_index) * arena_prepare_chunk_size;
-			const usz chunk_length = arena_prepare_chunk_length(capacity, chunk_index);
-			u8* const chunk = layout + offset;
-			const u64 response = chunk_length ? protocol_call(command_prepare_region, chunk, chunk_length) : 0;
-			if (!chunk_length || response != reinterpret_cast<uptr>(chunk))
-			{
-				discard_layout(layout, capacity, data, data_capacity, 0);
-				set_error("The debugger did not prepare Universal JIT arena chunk " +
-					std::to_string(chunk_index + 1) + " of " + std::to_string(preparation_chunks) +
-					" (address=" + std::to_string(reinterpret_cast<uptr>(chunk)) +
-					", length=" + std::to_string(chunk_length) + ", response=" + std::to_string(response) + ")");
-				return false;
-			}
+			discard_layout(layout, capacity, data, data_capacity, 0);
+			set_error("The debugger did not prepare the full Universal JIT arena"
+				" (address=" + std::to_string(reinterpret_cast<uptr>(layout)) +
+				", length=" + std::to_string(capacity) + ", response=" + std::to_string(response) + ")");
+			return false;
 		}
+		preparation_requests = 1;
 	}
 
 	vm_address_t alias = 0;
@@ -594,7 +564,7 @@ bool prepare_arena(u32 expanded_capacity_mib) noexcept
 	g_arena.data = data;
 	g_arena.capacity = capacity;
 	g_arena.data_capacity = data_capacity;
-	g_arena.preparation_chunks = preparation_chunks;
+	g_arena.preparation_requests = preparation_requests;
 	g_arena.backend = backend;
 	g_arena.expanded = expanded;
 	g_arena.prepared = true;
@@ -791,7 +761,7 @@ arena_statistics get_statistics() noexcept
 	arena_statistics result;
 	result.capacity = g_arena.capacity;
 	result.data_capacity = g_arena.data_capacity;
-	result.preparation_chunks = g_arena.preparation_chunks;
+	result.preparation_requests = g_arena.preparation_requests;
 	result.runtime_code_bytes = g_arena.runtime_code_bytes;
 	result.runtime_data_bytes = g_arena.runtime_data_bytes;
 	result.live_code_bytes = g_arena.live_code_bytes;
