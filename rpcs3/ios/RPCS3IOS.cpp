@@ -1401,10 +1401,10 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		else if (jit_stats.backend == rpcs3::ios::jit::arena_backend::universal_mirrored)
 		{
 			emit_log(4, fmt::format(
-				"Prepared and sealed a %u MiB Universal JIT arena using the %s capacity policy in %u bounded command-1 chunks; StikDebug may now disconnect",
+				"Prepared and sealed a %u MiB Universal JIT arena using the %s capacity policy in %u command-1 request; StikDebug may now disconnect",
 				jit_stats.capacity / (1024 * 1024),
 				jit_stats.expanded ? "expanded" : "standard",
-				jit_stats.preparation_chunks));
+				jit_stats.preparation_requests));
 		}
 		else
 		{

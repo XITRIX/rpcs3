@@ -34,7 +34,7 @@ struct arena_statistics
 {
 	usz capacity = 0;
 	usz data_capacity = 0;
-	u32 preparation_chunks = 0;
+	u32 preparation_requests = 0;
 	usz runtime_code_bytes = 0;
 	usz runtime_data_bytes = 0;
 	usz live_code_bytes = 0;

@@ -31,21 +31,13 @@ int main()
 		assert(choose_arena_capacity(0, parse_expanded_arena_capacity(value)) == 0);
 	}
 
-	// Every slider value must prepare the entire code range in bounded chunks,
-	// including the partial final chunk for 100 MiB recovery increments.
+	// Every slider value remains page-aligned for one full-arena request,
+	// including the 100 MiB exhaustion-recovery increments.
 	for (u32 size = 512; size <= 1024; ++size)
 	{
 		const usz capacity = choose_arena_capacity(0, size);
-		usz prepared = 0;
-		for (u32 chunk = 0; chunk < arena_prepare_chunk_count(capacity); ++chunk)
-		{
-			const usz length = arena_prepare_chunk_length(capacity, chunk);
-			assert(length > 0 && length <= 16 * mib);
-			assert(length % (16 * 1024) == 0);
-			prepared += length;
-		}
-		assert(prepared == capacity);
-		assert(arena_prepare_chunk_length(capacity, arena_prepare_chunk_count(capacity)) == 0);
+		assert(capacity == static_cast<usz>(size) * mib);
+		assert(capacity % (16 * 1024) == 0);
 	}
 
 	// Exercise offsets at the new ceiling without mapping physical JIT pages.
