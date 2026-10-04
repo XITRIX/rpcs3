@@ -1,5 +1,6 @@
 #include "RPCS3IOSPlatform.h"
 #include "IOSGraphicsLifecycle.h"
+#include "IOSAudioSession.h"
 #include "util/logs.hpp"
 
 LOG_CHANNEL(ios_graphics_log, "iOS Graphics");
@@ -38,8 +39,32 @@ LOG_CHANNEL(ios_graphics_log, "iOS Graphics");
 }
 @end
 
+@interface RPCS3AudioSessionObserver : NSObject
+- (void)willDeactivate:(NSNotification*)notification;
+- (void)didActivate:(NSNotification*)notification;
+@end
+
+@implementation RPCS3AudioSessionObserver
+- (void)willDeactivate:(NSNotification*)notification
+{
+	(void)notification;
+	rpcs3::ios::audio_session_state().set_active(false);
+}
+- (void)didActivate:(NSNotification*)notification
+{
+	(void)notification;
+	rpcs3::ios::audio_session_state().set_active(true);
+}
+@end
+
 namespace rpcs3::ios
 {
+audio_session_lifecycle& audio_session_state()
+{
+	static audio_session_lifecycle state;
+	return state;
+}
+
 graphics_lifecycle& graphics_lifecycle_state()
 {
 	static graphics_lifecycle state;
@@ -56,6 +81,15 @@ void initialize_graphics_lifecycle()
 	static std::once_flag once;
 	std::call_once(once, []
 	{
+		// Install synchronously during core initialization, before the wrapper
+		// activates its session and before any audio backend can be constructed.
+		// Delivery is synchronous on the posting thread; no UIKit calls here.
+		static RPCS3AudioSessionObserver* audio_observer = [RPCS3AudioSessionObserver new];
+		NSNotificationCenter* center = NSNotificationCenter.defaultCenter;
+		[center addObserver:audio_observer selector:@selector(willDeactivate:)
+			name:@"RPCS3AudioSessionWillDeactivate" object:nil];
+		[center addObserver:audio_observer selector:@selector(didActivate:)
+			name:@"RPCS3AudioSessionDidActivate" object:nil];
 		dispatch_async(dispatch_get_main_queue(), ^
 		{
 			static RPCS3GraphicsLifecycleObserver* observer = [RPCS3GraphicsLifecycleObserver new];
