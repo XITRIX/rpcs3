@@ -18,7 +18,7 @@ int main()
 	assert(stats.backend == jit::arena_backend::disabled);
 	assert(stats.sealed && !stats.expanded);
 	assert(stats.capacity == 0 && stats.data_capacity == 0);
-	assert(stats.preparation_chunks == 0);
+	assert(stats.preparation_requests == 0);
 	assert(jit::runtime_memory(true) == nullptr);
 	assert(jit::runtime_memory(false) == nullptr);
 	assert(jit::arena_capacity() == 0 && jit::arena_capacity(false) == 0);
