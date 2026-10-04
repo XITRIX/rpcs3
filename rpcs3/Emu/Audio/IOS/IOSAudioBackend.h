@@ -55,6 +55,7 @@ private:
 		AudioBufferList* output_data) noexcept;
 
 	void close_unlocked();
+	void set_session_active(bool active);
 	void notify_error();
 	void log_diagnostics(bool force);
 
@@ -69,4 +70,5 @@ private:
 	u64 m_reported_callbacks = 0;
 	u32 m_bytes_per_frame = 0;
 	std::atomic_bool m_operational = false;
+	bool m_session_active = true; // Protected by m_control_mutex; macOS stays active.
 };

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "IOSAudioBackend.h"
 #include "ios/IOSAudioBufferContract.h"
+#include "ios/IOSAudioSession.h"
 #include "Emu/Cell/timers.hpp"
 
 #include <algorithm>
@@ -43,10 +44,19 @@ IOSAudioBackend::IOSAudioBackend()
 	{
 		IOSAudio.error("RemoteIO output component is unavailable");
 	}
+#ifndef RPCS3_MACOS
+	rpcs3::ios::audio_session_state().attach(this, [](void* context, bool active)
+	{
+		static_cast<IOSAudioBackend*>(context)->set_session_active(active);
+	});
+#endif
 }
 
 IOSAudioBackend::~IOSAudioBackend()
 {
+#ifndef RPCS3_MACOS
+	rpcs3::ios::audio_session_state().detach(this);
+#endif
 	Close();
 }
 
@@ -236,6 +246,13 @@ void IOSAudioBackend::Play()
 		m_playing = true;
 	}
 
+	// Preserve playback intent while the wrapper's AVAudioSession is inactive.
+	// Activation will start this unit, including XMB's otherwise idle direct path.
+	if (!m_session_active)
+	{
+		return;
+	}
+
 	if (!check_status(AudioOutputUnitStart(m_unit), "AudioOutputUnitStart"))
 	{
 		{
@@ -267,7 +284,7 @@ void IOSAudioBackend::Pause()
 		}
 	}
 
-	const bool stopped = check_status(AudioOutputUnitStop(m_unit), "AudioOutputUnitStop");
+	const bool stopped = !m_session_active || check_status(AudioOutputUnitStop(m_unit), "AudioOutputUnitStop");
 	{
 		std::lock_guard callback_lock{m_cb_mutex};
 		m_playing = false;
@@ -279,6 +296,33 @@ void IOSAudioBackend::Pause()
 		m_operational.store(false, std::memory_order_release);
 		notify_error();
 	}
+}
+
+void IOSAudioBackend::set_session_active(bool active)
+{
+	std::lock_guard control_lock{m_control_mutex};
+	if (m_session_active == active) return;
+	m_session_active = active;
+	if (!m_unit || !m_operational.load(std::memory_order_acquire)) return;
+	{
+		std::lock_guard callback_lock{m_cb_mutex};
+		if (!m_playing) return;
+		m_diagnostics.reset_timing();
+	}
+
+	// m_playing remains the provider's intent. A native Pause/Close during
+	// suspension clears it, so activation cannot revive stopped playback.
+	m_needs_fade_reset.store(true, std::memory_order_relaxed);
+	const bool succeeded = active
+		? check_status(AudioOutputUnitStart(m_unit), "AudioOutputUnitStart(session resume)")
+		: check_status(AudioOutputUnitStop(m_unit), "AudioOutputUnitStop(session suspend)");
+	if (!succeeded)
+	{
+		m_operational.store(false, std::memory_order_release);
+		notify_error();
+		return;
+	}
+	IOSAudio.notice("RemoteIO audio session %s", active ? "resumed" : "suspended");
 }
 
 void IOSAudioBackend::log_diagnostics(bool force)
