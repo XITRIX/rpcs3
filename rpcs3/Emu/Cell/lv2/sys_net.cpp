@@ -795,6 +795,21 @@ error_code sys_net_bnet_recvfrom(ppu_thread& ppu, s32 s, vm::ptr<void> buf, u32 
 
 	s32 result = 0;
 	sys_net_sockaddr sn_addr{};
+	// Poll callbacks capture this invocation's stack. Stop/reboot and EINTR
+	// can leave the wait before a callback completes; remove it under the
+	// socket lock before any captured local is destroyed, including on throws.
+	struct poll_cleanup
+	{
+		ppu_thread& ppu;
+		bool registered = false;
+		~poll_cleanup()
+		{
+			if (registered)
+			{
+				network_clear_queue(ppu);
+			}
+		}
+	} cleanup{ppu};
 
 	const auto sock = idm::check<lv2_socket>(s, [&, notify = lv2_obj::notify_all_t()](lv2_socket& sock)
 		{
@@ -816,6 +831,7 @@ error_code sys_net_bnet_recvfrom(ppu_thread& ppu, s32 s, vm::ptr<void> buf, u32 
 				return true;
 			}
 
+			cleanup.registered = true;
 			sock.poll_queue(idm::get_unlocked<named_thread<ppu_thread>>(ppu.id), lv2_socket::poll_t::read, [&](bs_t<lv2_socket::poll_t> events) -> bool
 				{
 					if (events & lv2_socket::poll_t::read)
