@@ -948,6 +948,32 @@ bool extract_iso_file(iso_archive& archive, const std::string& source, const std
 	}
 }
 
+// Presentation files belong to the core-owned disc-image installation. Old
+// installations preserve ICON0 only; recover optional XMB media once without
+// changing the source ISO, boot path, ABI, or replacing existing artwork.
+bool preserve_iso_preview(iso_archive& archive, const std::string& directory)
+{
+    for (const auto& [name, maximum] : std::array<std::pair<const char*, u64>, 4>{{
+        {"PIC1.PNG", 16ull * 1024 * 1024}, {"PIC0.PNG", 16ull * 1024 * 1024},
+        {"ICON1.PAM", 64ull * 1024 * 1024}, {"SND0.AT3", 16ull * 1024 * 1024}}})
+    {
+        const std::string source = "PS3_GAME/" + std::string{name};
+        const std::string destination = directory + "/" + name;
+        if (fs::is_file(destination) || !archive.is_file(source)) continue;
+        fs::file input{archive.open(source)};
+        if (!input) return false;
+        if (!input.size() || input.size() > maximum) continue;
+        const std::string temporary = destination + ".xmb-preview-pending";
+        if (!extract_iso_file(archive, source, temporary) || !fs::rename(temporary, destination, false))
+        {
+            fs::remove_file(temporary);
+            return false;
+        }
+    }
+    fs::file marker{directory + "/.xmb-preview-v1", fs::rewrite};
+    return marker && marker.write("1", 1) == 1;
+}
+
 bool has_iso_descriptor_terminator(const std::string& path)
 {
 	fs::file file{path, fs::read};
@@ -1001,6 +1027,13 @@ std::optional<installed_game> installed_iso(const std::string& directory)
 	{
 		version = std::string{psf::get_string(metadata, "VERSION")};
 	}
+	if (!fs::is_file(directory + "/.xmb-preview-v1"))
+    {
+        // Enumeration runs on the serialized library worker. Optional/corrupt
+        // media must never prevent a bootable title from being listed.
+        try { iso_archive archive{iso_path}; preserve_iso_preview(archive, directory); }
+        catch (const std::exception&) { /* Optional preview remains unavailable. */ }
+    }
 	std::string icon_path = directory + "/ICON0.PNG";
 	if (!fs::is_file(icon_path))
 	{
@@ -1351,6 +1384,10 @@ game_iso_install_result install_game_iso(
 	{
 		return iso_installation_failed("Unable to preserve the ISO artwork", title_id, title);
 	}
+
+	// Missing or invalid optional media never invalidates a game installation.
+	try { preserve_iso_preview(archive, temporary.path); }
+	catch (const std::exception&) { /* Optional preview does not block install. */ }
 
 	const std::string final_directory = root + title_id;
 	if (fs::is_dir(final_directory))
