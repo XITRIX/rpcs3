@@ -409,11 +409,10 @@ namespace vk
 		{
 			std::lock_guard lock(m_cached_pool_lock);
 			m_cache_is_exiting = true;
+			m_cached_images.clear();
+			m_cached_memory_size = 0;
 		}
 		baseclass::clear();
-
-		m_cached_images.clear();
-		m_cached_memory_size = 0;
 	}
 
 	void texture_cache::copy_transfer_regions_impl(vk::command_buffer& cmd, vk::image* dst, const rsx::simple_array<copy_region_descriptor>& sections_to_transfer) const
@@ -1577,13 +1576,20 @@ namespace vk
 
 		// Nuke temporary resources. They will still be visible to the GPU.
 		auto gc = vk::get_resource_manager();
-		any_released |= !m_cached_images.empty();
-		for (auto& img : m_cached_images)
+		std::deque<cached_image_t> discarded_images;
+		{
+			// The driver thread returns completed images to this pool. Detach the
+			// batch under its lock so lookup never sees moved-from entries, and
+			// later returns retain their own memory accounting.
+			std::lock_guard pool_lock(m_cached_pool_lock);
+			discarded_images.swap(m_cached_images);
+			m_cached_memory_size = 0;
+		}
+		any_released |= !discarded_images.empty();
+		for (auto& img : discarded_images)
 		{
 			gc->dispose(img.data);
 		}
-		m_cached_images.clear();
-		m_cached_memory_size = 0;
 
 		any_released |= !m_temporary_subresource_cache.empty();
 		for (auto& e : m_temporary_subresource_cache)
@@ -1605,18 +1611,19 @@ namespace vk
 			purge_unreleased_sections();
 		}
 
-		if (m_cached_images.size() > max_cached_image_pool_size ||
-			m_cached_memory_size > 256 * 0x100000)
 		{
 			std::lock_guard lock(m_cached_pool_lock);
-
-			const auto new_size = m_cached_images.size() / 2;
-			for (usz i = new_size; i < m_cached_images.size(); ++i)
+			if (m_cached_images.size() > max_cached_image_pool_size ||
+				m_cached_memory_size > 256 * 0x100000)
 			{
-				m_cached_memory_size -= m_cached_images[i].data->memory->size();
-			}
+				const auto new_size = m_cached_images.size() / 2;
+				for (usz i = new_size; i < m_cached_images.size(); ++i)
+				{
+					m_cached_memory_size -= m_cached_images[i].data->memory->size();
+				}
 
-			m_cached_images.resize(new_size);
+				m_cached_images.resize(new_size);
+			}
 		}
 
 		baseclass::on_frame_end();
@@ -1709,6 +1716,7 @@ namespace vk
 
 	u32 texture_cache::get_unreleased_textures_count() const
 	{
+		reader_lock lock(m_cached_pool_lock);
 		return baseclass::get_unreleased_textures_count() + ::size32(m_cached_images);
 	}
 
