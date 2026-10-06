@@ -463,7 +463,7 @@ namespace vk
 		const u32 max_cached_image_pool_size = 256;
 		std::deque<cached_image_t> m_cached_images;
 		atomic_t<u64> m_cached_memory_size = { 0 };
-		shared_mutex m_cached_pool_lock;
+		mutable shared_mutex m_cached_pool_lock;
 
 		// Blocks some operations when exiting
 		atomic_t<bool> m_cache_is_exiting = false;
