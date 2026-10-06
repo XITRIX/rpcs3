@@ -2560,9 +2560,13 @@ void ppu_thread::cpu_task()
 					for (const u64 wait_start = get_system_time(); !is_stopped() && cpu_flag::suspend - state && get_system_time() - wait_start < 1000;)
 					{
 						const auto caller_state = +caller->state;
+						const auto caller_joiner = caller->joiner.load();
 
 						// Cannot run anyway: nothing to wait for
-						if (caller_state.all_of(cpu_flag::suspend) || ::is_stopped(caller_state))
+						// A joinable caller waiting in _sys_ppu_thread_exit is already off the
+						// scheduler, but has wait set without suspend or exit until it is joined.
+						if (caller_state.all_of(cpu_flag::suspend) || ::is_stopped(caller_state) ||
+							caller_joiner == ppu_join_status::zombie || caller_joiner == ppu_join_status::exited)
 						{
 							break;
 						}
