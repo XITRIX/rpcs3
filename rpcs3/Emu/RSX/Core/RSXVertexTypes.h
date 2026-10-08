@@ -68,6 +68,13 @@ namespace rsx
 
 		// Check if we need to upload a full unoptimized range, i.e [0-max_index]
 		std::pair<u32, u32> calculate_required_range(u32 first, u32 count);
+		// Reuse ranges computed for this layout without an out-of-line call.
+		std::pair<u32, u32> get_required_range(u32 first, u32 count)
+		{
+			if (vertex_range.second)
+				return vertex_range;
+			return calculate_required_range(first, count);
+		}
 	};
 
 	enum attribute_buffer_placement : u8
@@ -125,13 +132,9 @@ namespace rsx
 			if (!volatile_blocks.empty())
 				return true;
 
-			for (u16 ref_mask = attribute_mask, index = 0; ref_mask; ++index, ref_mask >>= 1)
+			for (u32 ref_mask = attribute_mask; ref_mask; ref_mask &= ref_mask - 1)
 			{
-				if (!(ref_mask & 1))
-				{
-					// Disabled
-					continue;
-				}
+				const auto index = static_cast<u16>(std::countr_zero(ref_mask));
 
 				switch (attribute_placement[index])
 				{
