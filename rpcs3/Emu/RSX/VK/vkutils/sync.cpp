@@ -178,14 +178,29 @@ namespace vk
 	void fence::signal_flushed()
 	{
 		flushed.release(true);
+#ifdef RPCS3_IOS
+		flushed.notify_all();
+#endif
 	}
 
 	void fence::wait_flush()
 	{
+#ifdef RPCS3_IOS
+		// Cover short submission handoffs without entering the wait engine.
+		for (u32 spins = 0; spins < 128; ++spins)
+		{
+			if (flushed)
+				return;
+			utils::pause();
+		}
+		while (!flushed)
+			flushed.wait(0);
+#else
 		while (!flushed)
 		{
 			utils::pause();
 		}
+#endif
 	}
 
 	fence::operator bool() const

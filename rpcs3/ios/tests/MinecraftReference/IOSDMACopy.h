@@ -29,9 +29,6 @@ inline void copy_dma_vectors(unsigned char* dst, const unsigned char* src, std::
 	case 128: copy_dma_fixed<Vector, 128>(dst, src); return;
 	default:
 		// Callers supply whole aligned vectors, as required by the old loop.
-#if defined(__clang__) && (defined(__aarch64__) || defined(__arm64__))
-#pragma clang loop unroll_count(8)
-#endif
 		for (std::size_t offset = 0; offset < size; offset += 16)
 		{
 			*reinterpret_cast<Vector*>(dst + offset) = *reinterpret_cast<const Vector*>(src + offset);

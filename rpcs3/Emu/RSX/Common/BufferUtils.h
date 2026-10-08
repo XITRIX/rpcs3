@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../gcm_enums.h"
+#include "Utilities/StrFmt.h"
 
 #include <span>
 
@@ -22,7 +23,15 @@ u32 get_index_count(rsx::primitive_type m_draw_mode, u32 initial_index_count);
 /**
  * Returns index type size in byte
  */
-u32 get_index_type_size(rsx::index_array_type type);
+inline u32 get_index_type_size(rsx::index_array_type type)
+{
+	switch (type)
+	{
+	case rsx::index_array_type::u16: return sizeof(u16);
+	case rsx::index_array_type::u32: return sizeof(u32);
+	}
+	fmt::throw_exception("Wrong index type");
+}
 
 /**
  * Write count indexes using (first, first + count) ranges.
