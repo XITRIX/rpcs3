@@ -65,6 +65,7 @@ case "$(uname -m)" in
     arm64|aarch64)
         CXX="${CXX_COMPILER}" python3 -B "${SCRIPT_DIR}/run-minecraft-optimization-tests.py"
         CXX="${CXX_COMPILER}" python3 -B "${SCRIPT_DIR}/run-minecraft-vertex-tests.py"
+        CXX="${CXX_COMPILER}" python3 -B "${SCRIPT_DIR}/run-wrc4-vertex-range-tests.py"
         if [[ "$(uname -s)" == "Darwin" ]]; then
             CXX="${CXX_COMPILER}" python3 -B "${SCRIPT_DIR}/run-minecraft-fence-tests.py" --native-atomic
         else

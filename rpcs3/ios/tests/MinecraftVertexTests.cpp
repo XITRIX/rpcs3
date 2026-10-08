@@ -390,6 +390,10 @@ int main(int argc, char**)
 		rsx::method_registers = state;
 		ob.fill(0x55555555);
 		nb = ob;
+		// Compare descriptor emission using identical cached ranges. The new
+		// division semantics are checked against a shader oracle by WRC4 tests.
+		for (unsigned i = 0; i < nl.interleaved_blocks.size(); ++i)
+			ol.interleaved_blocks[i]->vertex_range = nl.interleaved_blocks[i]->calculate_required_range(0, 64);
 		op.fill_vertex_layout_state(ol, meta, 0, 64, ob.data(), 256, 8192);
 		np.fill_vertex_layout_state(nl, meta, 0, 64, nb.data(), 256, 8192);
 		assert(ob == nb);
@@ -431,7 +435,9 @@ int main(int argc, char**)
 			candidate::fragment_program_texture_config::masked_transfer(dst2.data() + off, src.data() + off, u16(mask));
 			assert(dst1 == dst2);
 		}
-	// Full range routine, including modulo re-evaluation, cached/single, boundaries and errors.
+	// Immutable differential controls for modulo/unit frequency, cache, boundaries and errors.
+	// Division ranges intentionally differ after the WRC4 correction; their shader
+	// semantics and mixed division/modulo cases run in WRC4VertexRangeTests.cpp.
 	for (unsigned n = 0; n < 100000; ++n)
 	{
 		old::interleaved_range_info o;
@@ -447,6 +453,7 @@ int main(int argc, char**)
 		for (unsigned j = 0, end = rng() % 16; j < end; ++j)
 		{
 			interleaved_attribute_t a{u8(j), bool(rng() % 2), u16(rng() % 16)};
+			a.modulo = a.modulo || a.frequency > 1;
 			o.locations.push_back(a);
 			c.locations.push_back(a);
 		}
@@ -603,4 +610,5 @@ int main(int argc, char**)
 			candidate::fragment_program_texture_config::masked_transfer(dst2.data(), src.data(), u16((1u << (1 + i % 4)) - 1));
 			return dst2[i % 768];
 		});
+	return 0;
 }

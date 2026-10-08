@@ -42,6 +42,8 @@ class GSRender;
 atomic_t<bool> g_user_asked_for_recording = false;
 atomic_t<bool> g_user_asked_for_screenshot = false;
 atomic_t<bool> g_user_asked_for_frame_capture = false;
+atomic_t<u32> g_user_asked_for_frame_capture_count = 0;
+atomic_t<u32> g_frame_capture_remaining = 0;
 atomic_t<bool> g_disable_frame_limit = false;
 rsx::frame_trace_data frame_debug;
 rsx::frame_capture_data frame_capture;
@@ -478,15 +480,15 @@ namespace rsx
 				}
 				else
 				{
-					// Division operator
+					// Division operator: match the shader's integer vertex-ID division.
+					// Rounding up reads an extra instance and can cross local memory.
 					_min_index = std::min(_min_index, first / attrib.frequency);
-					_max_index = std::max<u32>(_max_index, utils::aligned_div(max_index, attrib.frequency));
+					const u32 divided_max = max_index / attrib.frequency;
+					_max_index = std::max(_max_index, divided_max);
+					max_result_by_division = std::max(max_result_by_division, divided_max);
 
 					if (freq_count > 0 && freq_count != umax)
 					{
-						const u32 max = utils::aligned_div(max_index, attrib.frequency);
-						max_result_by_division = std::max<u32>(max_result_by_division, max);
-
 						// Discard lower frequencies because it has been proven that there are indices higher than them
 						const usz discard_cnt = frequencies + freq_count - std::remove_if(frequencies, frequencies + freq_count, [&max_result_by_division](u32 freq)
 						{
@@ -523,7 +525,8 @@ namespace rsx
 				break;
 			}
 
-			_max_index = 0;
+			// Tightening modulo bounds must retain the divided attributes' range.
+			_max_index = max_result_by_division;
 
 			const auto re_evaluate = [&] <typename T> (const std::byte* ptr, T)
 			{
@@ -699,6 +702,10 @@ namespace rsx
 
 	thread::~thread()
 	{
+		g_user_asked_for_frame_capture = false;
+		g_user_asked_for_frame_capture_count = 0;
+		g_frame_capture_remaining = 0;
+		frame_capture.reset();
 		g_access_violation_handler = nullptr;
 	}
 
@@ -794,6 +801,8 @@ namespace rsx
 		m_graphics_state |= pipeline_state::all_dirty;
 
 		g_user_asked_for_frame_capture = false;
+		g_user_asked_for_frame_capture_count = 0;
+		g_frame_capture_remaining = 0;
 
 		// TODO: Proper context management in the driver
 		s_ctx.rsxthr = this;
@@ -3360,54 +3369,71 @@ namespace rsx
 		// MM sync. This is a pre-emptive operation, so we can use a deferred request.
 		rsx::mm_flush_lazy();
 
-		// Marks the end of a frame scope GPU-side
-		if (g_user_asked_for_frame_capture.exchange(false) && !capture_current_frame)
-		{
-			capture_current_frame = true;
-			frame_debug.reset();
-			frame_capture.reset();
-
-			// random number just to jumpstart the size
-			frame_capture.replay_commands.reserve(8000);
-
-			// capture first tile state with nop cmd
-			rsx::frame_capture_data::replay_command replay_cmd;
-			replay_cmd.rsx_command = std::make_pair(NV4097_NO_OPERATION, 0);
-			frame_capture.replay_commands.push_back(std::move(replay_cmd));
-			capture::capture_display_tile_state(this, frame_capture.replay_commands.back());
-		}
-		else if (capture_current_frame)
+		// Consume requests once. Requests arriving during a burst cannot replace it.
+		const u32 requested_frames = g_user_asked_for_frame_capture_count.exchange(0);
+		const bool requested_single = g_user_asked_for_frame_capture.exchange(false);
+		if (capture_current_frame)
 		{
 			capture_current_frame = false;
-
-			const std::string file_path = fs::get_config_dir() + "captures/" + (Emu.GetTitleID().empty() ? Emu.GetTitle() : Emu.GetTitleID()) + "_" + date_time::current_time_narrow() + "_capture.rrc.gz";
-
-			fs::pending_file temp(file_path);
-
-			utils::serial save_manager;
-
-			if (temp.file)
+			const u32 frame_number = capture_frame_count - capture_frames_remaining + 1;
+			const std::string file_path = capture_frame_count > 1
+				? capture_sequence_path + fmt::format("_frame_%03u_of_%03u_capture.rrc.gz", frame_number, capture_frame_count)
+				: capture_sequence_path + "_capture.rrc.gz";
+			bool saved = false;
 			{
-				save_manager.m_file_handler = make_compressed_serialization_file_handler(temp.file);
-				save_manager(frame_capture);
-
-				save_manager.m_file_handler->finalize(save_manager);
-
-				if (temp.commit(false))
+				fs::pending_file temp(file_path);
+				utils::serial save_manager;
+				if (temp.file)
 				{
-					rsx_log.success("Capture successful: %s", file_path);
-					frame_capture.reset();
-					pause_emulator = true;
+					save_manager.m_file_handler = make_compressed_serialization_file_handler(temp.file);
+					save_manager(frame_capture);
+					save_manager.m_file_handler->finalize(save_manager);
+					saved = temp.commit(false);
 				}
-				else
+				if (!saved)
 				{
 					rsx_log.error("Capture failed: %s (%s)", file_path, fs::g_tls_error);
 				}
 			}
+
+			if (saved)
+			{
+				rsx_log.success("Capture successful (%u/%u): %s", frame_number, capture_frame_count, file_path);
+				--capture_frames_remaining;
+			}
 			else
 			{
-				rsx_log.fatal("Capture failed: %s (%s)", file_path, fs::g_tls_error);
+				// Keep already committed files; stop the burst at the first failure.
+				capture_frames_remaining = 0;
 			}
+			frame_capture.reset();
+			g_frame_capture_remaining = capture_frames_remaining;
+			pause_emulator = capture_frames_remaining == 0;
+		}
+		else if (requested_frames || requested_single)
+		{
+			capture_frame_count = std::clamp(requested_frames ? requested_frames : 1u, 1u, 120u);
+			capture_frames_remaining = capture_frame_count;
+			g_frame_capture_remaining = capture_frames_remaining;
+			capture_sequence_path = fs::get_config_dir() + "captures/" + (Emu.GetTitleID().empty() ? Emu.GetTitle() : Emu.GetTitleID()) + "_" + date_time::current_time_narrow();
+			if (capture_frame_count > 1)
+			{
+				// A monotonic identifier avoids second-resolution collisions between bursts.
+				capture_sequence_path += fmt::format("_%llu", get_system_time());
+			}
+		}
+
+		if (capture_frames_remaining)
+		{
+			// Start the next recording at this SAME boundary: no uncaptured gap frame.
+			capture_current_frame = true;
+			frame_debug.reset();
+			frame_capture.reset();
+			frame_capture.replay_commands.reserve(8000);
+			rsx::frame_capture_data::replay_command replay_cmd;
+			replay_cmd.rsx_command = std::make_pair(NV4097_NO_OPERATION, 0);
+			frame_capture.replay_commands.push_back(std::move(replay_cmd));
+			capture::capture_display_tile_state(this, frame_capture.replay_commands.back());
 		}
 
 		if (zcull_ctrl->has_pending())

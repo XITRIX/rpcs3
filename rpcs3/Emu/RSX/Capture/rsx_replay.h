@@ -152,6 +152,9 @@ namespace rsx
 			version = c_fc_version;
 			tile_map.clear();
 			memory_map.clear();
+			memory_data_map.clear();
+			display_buffers_map.clear();
+			memory_indexer = 0x1234;
 			replay_commands.clear();
 			reg_state = method_registers;
 		}
