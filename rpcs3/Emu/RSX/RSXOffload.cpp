@@ -138,7 +138,14 @@ namespace rsx
 	// Vertex utilities
 	void dma_manager::emulate_as_indexed(void *dst, rsx::primitive_type primitive, u32 count)
 	{
-		if (!g_cfg.video.multithreaded_rsx)
+		if (!g_cfg.video.multithreaded_rsx
+#ifdef RPCS3_IOS
+			// At most 3 KiB of precomputed indices. Avoid a heap-allocated
+			// queue packet only when all preceding work has completed.
+			|| (primitive == rsx::primitive_type::quads && count <= 512 &&
+				m_thread->m_enqueued_count.load() <= m_thread->m_processed_count.load())
+#endif
+		)
 		{
 			write_index_array_for_non_indexed_non_native_primitive_to_buffer(
 				static_cast<char*>(dst), primitive, count);

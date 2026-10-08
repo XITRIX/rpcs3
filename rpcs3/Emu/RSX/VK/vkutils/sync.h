@@ -20,7 +20,12 @@ namespace vk
 
 	struct fence
 	{
+#ifdef RPCS3_IOS
+		// The wait engine supports four-byte atomics. Values remain zero or one.
+		atomic_t<u32> flushed = false;
+#else
 		atomic_t<bool> flushed = false;
+#endif
 		VkFence handle         = VK_NULL_HANDLE;
 		VkDevice owner         = VK_NULL_HANDLE;
 

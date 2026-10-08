@@ -63,6 +63,16 @@ python3 "${SCRIPT_DIR}/emit-spu-batch-fixture.py" "${OUTPUT_ROOT}/SPUBatchOptimi
 # These fixtures execute AArch64-only intrinsics from the production lowering.
 case "$(uname -m)" in
     arm64|aarch64)
+        CXX="${CXX_COMPILER}" python3 -B "${SCRIPT_DIR}/run-minecraft-optimization-tests.py"
+        CXX="${CXX_COMPILER}" python3 -B "${SCRIPT_DIR}/run-minecraft-vertex-tests.py"
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+            CXX="${CXX_COMPILER}" python3 -B "${SCRIPT_DIR}/run-minecraft-fence-tests.py" --native-atomic
+        else
+            CXX="${CXX_COMPILER}" python3 -B "${SCRIPT_DIR}/run-minecraft-fence-tests.py"
+        fi
+        CXX="${CXX_COMPILER}" python3 -B "${SCRIPT_DIR}/run-minecraft-descriptor-tests.py"
+        CXX="${CXX_COMPILER}" python3 -B "${SCRIPT_DIR}/run-minecraft-index-tests.py"
+
         python3 -B "${SCRIPT_DIR}/emit-spu-reservation-hash-fixture.py" "${OUTPUT_ROOT}/SPUReservationHashFixture.h"
         "${CXX_COMPILER}" -std=c++20 -O2 -Wall -Wextra -Werror \
             -I "${SOURCE_ROOT}" -I "${SOURCE_ROOT}/rpcs3" \
