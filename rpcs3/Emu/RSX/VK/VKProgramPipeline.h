@@ -141,6 +141,32 @@ namespace vk
 			VkDescriptorBufferViewEx,
 			descriptor_image_array_t>;
 
+		inline bool operator == (const descriptor_slot_t& a, const VkDescriptorImageInfoEx& b)
+		{
+			const auto ptr = std::get_if<VkDescriptorImageInfoEx>(&a);
+			return !!ptr &&
+				ptr->resourceId == b.resourceId &&
+				ptr->imageView == b.imageView &&
+				ptr->sampler == b.sampler &&
+				ptr->imageLayout == b.imageLayout;
+		}
+
+		inline bool operator == (const descriptor_slot_t& a, const VkDescriptorBufferInfoEx& b)
+		{
+			const auto ptr = std::get_if<VkDescriptorBufferInfoEx>(&a);
+			return !!ptr &&
+				ptr->resourceId == b.resourceId &&
+				ptr->buffer == b.buffer &&
+				ptr->offset == b.offset &&
+				ptr->range == b.range;
+		}
+
+		inline bool operator == (const descriptor_slot_t& a, const VkDescriptorBufferViewEx& b)
+		{
+			const auto ptr = std::get_if<VkDescriptorBufferViewEx>(&a);
+			return !!ptr && ptr->resourceId == b.resourceId;
+		}
+
 		struct descriptor_table_t
 		{
 			VkDevice m_device = VK_NULL_HANDLE;
@@ -157,7 +183,7 @@ namespace vk
 			u64 m_descriptor_template_cache_id = umax;
 
 			std::vector<descriptor_slot_t> m_descriptor_slots;
-			std::vector<bool> m_descriptors_dirty;
+			std::vector<u8> m_descriptors_dirty;
 			bool m_any_descriptors_dirty = false;
 
 			void init(VkDevice dev);
@@ -225,9 +251,33 @@ namespace vk
 			bool has_uniform(program_input_type type, std::string_view uniform_name);
 			std::pair<u32, u32> get_uniform_location(::glsl::program_domain domain, program_input_type type, std::string_view uniform_name);
 
-			void bind_uniform(const VkDescriptorImageInfoEx& image_descriptor, u32 set_id, u32 binding_point);
-			void bind_uniform(const VkDescriptorBufferInfoEx& buffer_descriptor, u32 set_id, u32 binding_point);
-			void bind_uniform(const VkDescriptorBufferViewEx& buffer_view, u32 set_id, u32 binding_point);
+			void bind_uniform(const VkDescriptorImageInfoEx& image_descriptor, u32 set_id, u32 binding_point)
+			{
+				if (m_sets[set_id].m_descriptor_slots[binding_point] == image_descriptor)
+				{
+					return;
+				}
+
+				m_sets[set_id].notify_descriptor_slot_updated(binding_point, image_descriptor);
+			}
+			void bind_uniform(const VkDescriptorBufferInfoEx &buffer_descriptor, u32 set_id, u32 binding_point)
+			{
+				if (m_sets[set_id].m_descriptor_slots[binding_point] == buffer_descriptor)
+				{
+					return;
+				}
+
+				m_sets[set_id].notify_descriptor_slot_updated(binding_point, buffer_descriptor);
+			}
+			void bind_uniform(const VkDescriptorBufferViewEx& buffer_view, u32 set_id, u32 binding_point)
+			{
+				if (m_sets[set_id].m_descriptor_slots[binding_point] == buffer_view)
+				{
+					return;
+				}
+
+				m_sets[set_id].notify_descriptor_slot_updated(binding_point, buffer_view);
+			}
 
 			void bind_uniform_array(const std::span<const VkDescriptorImageInfoEx>& image_descriptors,u32 set_id, u32 binding_point);
 

@@ -63,15 +63,10 @@ namespace rsx
 		result.interleaved_blocks.reserve(16);
 		result.referenced_registers.reserve(16);
 
-		for (auto [ref_mask, index] = std::tuple{ input_mask, u8(0) }; ref_mask; ++index, ref_mask >>= 1)
+		for (u32 ref_mask = input_mask; ref_mask; ref_mask &= ref_mask - 1)
 		{
+			const auto index = static_cast<u8>(std::countr_zero(ref_mask));
 			ensure(index < rsx::limits::vertex_count);
-
-			if (!(ref_mask & 1u))
-			{
-				// Nothing to do, uninitialized
-				continue;
-			}
 
 			// Always reset attribute placement by default
 			result.attribute_placement[index] = attribute_buffer_placement::none;
@@ -338,7 +333,7 @@ namespace rsx
 					offset_in_block[attrib.index] = persistent_offset + (local_address - block->base_offset);
 				}
 
-				const auto range = block->calculate_required_range(first_vertex, vertex_count);
+				const auto range = block->get_required_range(first_vertex, vertex_count);
 				persistent_offset += block->attribute_stride * range.second;
 			}
 		}
@@ -363,13 +358,9 @@ namespace rsx
 		const u32 modulo_mask = REGS(m_ctx)->frequency_divider_operation_mask();
 		const auto max_index = (first_vertex + vertex_count) - 1;
 
-		for (u16 ref_mask = vp_metadata.referenced_inputs_mask, index = 0; ref_mask; ++index, ref_mask >>= 1)
+		for (u32 ref_mask = vp_metadata.referenced_inputs_mask; ref_mask; ref_mask &= ref_mask - 1)
 		{
-			if (!(ref_mask & 1u))
-			{
-				// Unused input, ignore this
-				continue;
-			}
+			const auto index = static_cast<u16>(std::countr_zero(ref_mask));
 
 			if (layout.attribute_placement[index] == attribute_buffer_placement::none)
 			{
@@ -549,7 +540,7 @@ namespace rsx
 		{
 			for (interleaved_range_info* block : layout.interleaved_blocks)
 			{
-				auto range = block->calculate_required_range(first_vertex, vertex_count);
+				auto range = block->get_required_range(first_vertex, vertex_count);
 
 				const u32 data_size = range.second * block->attribute_stride;
 				const u32 vertex_base = range.first * block->attribute_stride;
