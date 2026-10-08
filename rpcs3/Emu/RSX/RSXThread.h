@@ -32,6 +32,9 @@
 
 
 extern atomic_t<bool> g_user_asked_for_frame_capture;
+// Debugger burst request (1..120), consumed at the next frame boundary.
+extern atomic_t<u32> g_user_asked_for_frame_capture_count;
+extern atomic_t<u32> g_frame_capture_remaining;
 extern atomic_t<bool> g_disable_frame_limit;
 extern rsx::frame_trace_data frame_debug;
 extern rsx::frame_capture_data frame_capture;
@@ -258,6 +261,9 @@ namespace rsx
 		vm::ptr<void(u32)> vblank_handler = vm::null;
 		vm::ptr<void(u32)> queue_handler = vm::null;
 		bool capture_current_frame = false;
+		u32 capture_frame_count = 0;
+		u32 capture_frames_remaining = 0;
+		std::string capture_sequence_path;
 
 		// lv2 entry point, forwarded to the display engine
 		void post_vblank_event(u64 post_event_time) { m_display.post_vblank_event(post_event_time); }
