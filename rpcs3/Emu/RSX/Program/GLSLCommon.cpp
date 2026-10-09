@@ -323,6 +323,11 @@ namespace glsl
 			enabled_options.push_back("_ENABLE_ALPHA_TO_COVERAGE_TEST");
 		}
 
+		if (props.ROP_alpha_to_one)
+		{
+			enabled_options.push_back("_ENABLE_ALPHA_TO_ONE");
+		}
+
 		if (props.ROP_sRGB_packing || props.require_linear_to_srgb)
 		{
 			enabled_options.push_back("_ENABLE_LINEAR_TO_SRGB");

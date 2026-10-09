@@ -48,6 +48,7 @@ namespace glsl
 		bool ROP_sRGB_packing : 1;
 		bool ROP_alpha_test : 1;
 		bool ROP_alpha_to_coverage_test : 1;
+		bool ROP_alpha_to_one : 1;
 		bool ROP_polygon_stipple_test : 1;
 		bool ROP_discard : 1;
 		bool ROP_channel_remap : 1;

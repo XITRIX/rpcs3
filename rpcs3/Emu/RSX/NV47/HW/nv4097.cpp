@@ -381,7 +381,9 @@ namespace rsx
 			// No A2C hardware support or partial hardware support. Invalidate the current program if A2C state changed.
 			const auto a2c_old = REGS(ctx)->decode<NV4097_SET_ANTI_ALIASING_CONTROL>(latch).msaa_alpha_to_coverage();
 			const auto a2c_new = REGS(ctx)->decode<NV4097_SET_ANTI_ALIASING_CONTROL>(arg).msaa_alpha_to_coverage();
-			if (a2c_old != a2c_new)
+			const auto a2one_old = REGS(ctx)->decode<NV4097_SET_ANTI_ALIASING_CONTROL>(latch).msaa_alpha_to_one();
+			const auto a2one_new = REGS(ctx)->decode<NV4097_SET_ANTI_ALIASING_CONTROL>(arg).msaa_alpha_to_one();
+			if (a2c_old != a2c_new || (a2c_new && a2one_old != a2one_new))
 			{
 				RSX(ctx)->m_graphics_state |= rsx::fragment_program_state_dirty;
 			}

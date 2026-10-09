@@ -2352,6 +2352,11 @@ namespace rsx
 			{
 				// Emulation required
 				current_fragment_program.ctrl |= RSX_SHADER_CONTROL_ALPHA_TO_COVERAGE;
+				if (REGS(m_ctx)->msaa_alpha_to_one_enabled())
+				{
+					// Coverage uses the original alpha; surviving fragments export one.
+					current_fragment_program.ctrl |= RSX_SHADER_CONTROL_ALPHA_TO_ONE;
+				}
 			}
 		}
 
