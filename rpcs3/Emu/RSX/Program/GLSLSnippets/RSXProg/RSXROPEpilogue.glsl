@@ -45,6 +45,11 @@ R"(
 	}
 #endif
 
+// Alpha-to-one follows coverage, so the original alpha still selects samples.
+#ifdef _ENABLE_ALPHA_TO_ONE
+	col0.a = _mrt_color_t(vec4(1.)).a;
+#endif
+
 // ================= Post-output color stages =================
 #if _MRT_BUFFERS_COUNT >= 1
 
