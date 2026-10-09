@@ -18,6 +18,7 @@ parser.add_argument('--pipeline-source', type=Path, default=ROOT / 'rpcs3/Emu/RS
 parser.add_argument('--shader-source', type=Path, default=ROOT / 'rpcs3/Emu/RSX/Program/ProgramStateCache.h')
 parser.add_argument('--spu-source', type=Path, default=ROOT / 'rpcs3/Emu/Cell/SPUCommonRecompiler.cpp')
 parser.add_argument('--ppu-source', type=Path, default=ROOT / 'rpcs3/Emu/Cell/PPUThread.cpp')
+parser.add_argument('--capture-source', type=Path, default=ROOT / 'rpcs3/Emu/RSX/RSXThread.cpp')
 args = parser.parse_args()
 
 
@@ -77,6 +78,8 @@ with tempfile.TemporaryDirectory(prefix='rpcs3-guest-clock-') as directory:
     assert hold and ppu.index(hold[0]) < ppu.index('for (auto& func : info.get_funcs())', ppu.index('const bool is_being_used_in_emulation'))
     assert ppu.index(hold[0]) < ppu.index('threads.join()')
     (out / 'StallPPUHold.inc').write_text(hold[0])
+    capture = method(args.capture_source.read_text(), 'void thread::on_frame_end(')
+    (out / 'StallCaptureCommit.inc').write_text(method(capture, 'if (capture_current_frame)'))
     command = [os.environ.get('CXX', 'clang++'), '-std=c++20', '-O2', '-pthread',
                '-Wall', '-Wextra', '-Werror', '-I', str(out), '-I', str(ROOT / 'rpcs3'), '-I', str(ROOT),
                str(HERE / 'GuestClockTests.cpp'), '-o', str(out / 'test')]
