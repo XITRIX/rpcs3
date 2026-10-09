@@ -129,8 +129,87 @@ static void dispatch_compile()
 	resumed(); // the real dispatcher takes its non-C++ escape after this scope
 }
 
+// Execute the complete production capture-commit branch, including open,
+// serialization, finalization, publication and cleanup, under a slow disk.
+namespace capture_commit
+{
+static bool fail_open = false, fail_commit = false;
+static unsigned completed = 0;
+static u64 deadline = 0;
+struct capture_data
+{
+	void reset() { host_work(); }
+} frame_capture;
+struct log
+{
+	template <typename... T> void error(T...) {}
+	template <typename... T> void success(T...) {}
+} rsx_log;
+namespace fmt
+{
+	template <typename... T> std::string format(const char*, T...) { return "capture"; }
+}
+namespace fs
+{
+static int g_tls_error = 0;
+struct pending_file
+{
+	bool file;
+	explicit pending_file(const std::string&) : file(!fail_open) { host_work(); }
+	~pending_file() { host_work(); }
+	bool commit(bool overwrite) { check(!overwrite); host_work(); return !fail_commit; }
+};
+}
+namespace utils
+{
+struct serial
+{
+	struct handler { void finalize(serial&) { host_work(); } };
+	std::unique_ptr<handler> m_file_handler;
+	void operator()(capture_data&) { host_work(); }
+};
+}
+static auto make_compressed_serialization_file_handler(bool)
+{
+	return std::make_unique<utils::serial::handler>();
+}
+static void commit()
+{
+	bool capture_current_frame = true, pause_emulator = false;
+	u32 capture_frame_count = 3, capture_frames_remaining = 3;
+	u32 g_frame_capture_remaining = 3;
+	std::string capture_sequence_path = "capture";
+#include "StallCaptureCommit.inc"
+	check(!capture_current_frame);
+	check(g_frame_capture_remaining == (fail_open || fail_commit ? 0u : 2u));
+	check(pause_emulator == (fail_open || fail_commit));
+	// Model the captured callback owner's five-second condition deadline.
+	check(get_guest_system_time() < deadline);
+	++completed;
+}
 static void run()
 {
+	for (bool open_failure : {false, true})
+	for (bool commit_failure : {false, true})
+	for (bool exception : {false, true})
+	{
+		reset(); expect_hold = true; fail_compile = exception;
+		fail_open = open_failure; fail_commit = commit_failure;
+		deadline = get_guest_system_time() + 5'000'000;
+		const unsigned before = completed;
+		try { commit(); check(!exception); }
+		catch (int) { check(exception); }
+		check(completed == before + !exception);
+		check(get_guest_system_time() < deadline);
+		resumed();
+	}
+	fail_compile = false;
+}
+}
+
+static void run()
+{
+	capture_commit::run();
 	for (bool background : {false, true})
 	{
 		for (bool failure : {false, true})

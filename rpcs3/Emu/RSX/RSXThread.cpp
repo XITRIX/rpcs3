@@ -3374,6 +3374,9 @@ namespace rsx
 		const bool requested_single = g_user_asked_for_frame_capture.exchange(false);
 		if (capture_current_frame)
 		{
+			// Compression and disk publication block this RSX producer. Do not
+			// consume guest callback deadlines while committing diagnostic data.
+			const guest_time_stall clock_hold("RSX frame capture serialization");
 			capture_current_frame = false;
 			const u32 frame_number = capture_frame_count - capture_frames_remaining + 1;
 			const std::string file_path = capture_frame_count > 1
