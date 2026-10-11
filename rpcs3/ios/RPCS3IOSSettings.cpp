@@ -92,6 +92,7 @@ const std::array catalog{
 
 	// Advanced
 	SETTING("advanced.debug_console_mode", "Advanced", "CPU Compatibility", "Debug console mode", "Emulates additional debug-console behavior required by some software.", kind::RPCS3_IOS_SETTING_BOOLEAN, g_cfg.core.debug_console_mode, 0, 1, 1),
+	SETTING("advanced.accurate_ppu_vector_estimates", "Advanced", "CPU Compatibility", "Accurate PPU Vector Estimates", "Computes PPU vector reciprocal and reciprocal square root estimates exactly as the PS3 does. May improve compatibility at a performance cost. Takes effect on the next boot.", kind::RPCS3_IOS_SETTING_BOOLEAN, g_cfg.core.ppu_set_vest, 0, 1, 1),
 	SETTING("advanced.accurate_spu_dma", "Advanced", "CPU Compatibility", "Accurate SPU DMA", "Uses stricter ordering for SPU DMA operations.", kind::RPCS3_IOS_SETTING_BOOLEAN, g_cfg.core.spu_accurate_dma, 0, 1, 1),
 	SETTING("advanced.accurate_rsx_access", "Advanced", "CPU Compatibility", "Accurate RSX reservation access", "Uses stricter reservation behavior for CPU access shared with RSX.", kind::RPCS3_IOS_SETTING_BOOLEAN, g_cfg.core.rsx_accurate_res_access, 0, 1, 1),
 	SETTING("advanced.ppu_vnan_fixup", "Advanced", "CPU Compatibility", "Approximate PPU Vector NaN Handling", "Enables partial correction of PPU vector NaN behavior.", kind::RPCS3_IOS_SETTING_BOOLEAN, g_cfg.core.ppu_fix_vnan, 0, 1, 1),
@@ -175,6 +176,7 @@ const std::array catalog{
 	SETTING("debug.log_shaders", "Debug", "GPU", "Log Shader Programs", "Writes generated shader programs into RPCS3's sandbox.", kind::RPCS3_IOS_SETTING_BOOLEAN, g_cfg.video.log_programs, 0, 1, 1),
 	SETTING("debug.disable_occlusion", "Debug", "GPU", "Disable ZCull occlusion queries", "Disables host ZCULL occlusion queries.", kind::RPCS3_IOS_SETTING_BOOLEAN, g_cfg.video.disable_zcull_queries, 0, 1, 1),
 	SETTING("debug.disable_video", "Debug", "GPU", "Disable Video Output", "Runs RSX work without presenting game frames.", kind::RPCS3_IOS_SETTING_BOOLEAN, g_cfg.video.disable_video_output, 0, 1, 1),
+	SETTING("debug.emulate_extended_depth_range", "Debug", "GPU", "Emulate Extended Depth Range", "Emulates floating-point depth values outside the host GPU range when native support is unavailable. Takes effect on the next boot.", kind::RPCS3_IOS_SETTING_BOOLEAN, g_cfg.video.emulate_extended_depth_range, 0, 1, 1),
 	SETTING("debug.force_cpu_blit", "Debug", "GPU", "Force CPU blit emulation", "Moves blit processing from the GPU to the CPU.", kind::RPCS3_IOS_SETTING_BOOLEAN, g_cfg.video.force_cpu_blit_processing, 0, 1, 1),
 	SETTING("debug.disable_vma", "Debug", "GPU", "Disable Vulkan Memory Allocator", "Uses RPCS3's fallback Vulkan allocation paths.", kind::RPCS3_IOS_SETTING_BOOLEAN, g_cfg.video.disable_vulkan_mem_allocator, 0, 1, 1),
 	SETTING("debug.disable_fifo_reordering", "Debug", "GPU", "Disable FIFO Reordering", "Disables command FIFO reordering optimizations.", kind::RPCS3_IOS_SETTING_BOOLEAN, g_cfg.video.disable_FIFO_reordering, 0, 1, 1),
