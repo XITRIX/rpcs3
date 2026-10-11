@@ -5,6 +5,8 @@
 
 using u32 = std::uint32_t;
 #include "flags.inc"
+static_assert((RSX_SHADER_CONTROL_ALPHA_TO_ONE & RSX_SHADER_CONTROL_EMULATE_DEPTH_RANGE) == 0);
+static_assert((RSX_SHADER_CONTROL_ALPHA_TO_ONE & RSX_SHADER_CONTROL_META_GCM_FLAGS_MASK) == 0);
 constexpr u32 NV4097_SET_ANTI_ALIASING_CONTROL = 0;
 namespace rsx
 {
