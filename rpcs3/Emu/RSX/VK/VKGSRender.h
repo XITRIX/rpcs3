@@ -107,6 +107,7 @@ private:
 	vk::instance m_instance;
 	vk::render_device *m_device;
 	std::string m_initialization_error;
+	shader_mode m_shader_mode = shader_mode::recompiler;
 
 	//Vulkan internals
 	std::unique_ptr<vk::query_pool_manager> m_occlusion_query_manager;
