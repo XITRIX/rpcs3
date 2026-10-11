@@ -1,6 +1,6 @@
 #include "atomic.hpp"
 
-#if defined(ARCH_ARM64) && (defined(__linux__) || defined(_WIN32)) && !defined(ARM_FEATURE_LSE2)
+#if defined(ARCH_ARM64) && (defined(__linux__) || defined(_WIN32) || (defined(__APPLE__) && defined(RPCS3_IOS_LEGACY_COMPATIBILITY))) && !defined(ARM_FEATURE_LSE2)
 #include "sysinfo.hpp"
 
 const bool utils::g_atomic_lse2 = utils::has_lse2();

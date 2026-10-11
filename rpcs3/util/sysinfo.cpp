@@ -401,6 +401,10 @@ bool utils::has_lse2()
 		return (getauxval(AT_HWCAP) & HWCAP_USCAT) != 0;
 #elif defined(_WIN32)
 		return IsProcessorFeaturePresent(PF_ARM_LSE2_AVAILABLE) != 0;
+#elif defined(__APPLE__) && defined(RPCS3_IOS_LEGACY_COMPATIBILITY)
+		int supported = 0;
+		size_t size = sizeof(supported);
+		return sysctlbyname("hw.optional.arm.FEAT_LSE2", &supported, &size, nullptr, 0) == 0 && supported != 0;
 #else
 		return false;
 #endif
