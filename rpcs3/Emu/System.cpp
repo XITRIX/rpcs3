@@ -64,8 +64,10 @@
 #include "Utilities/JIT.h"
 
 #include "Emu/IPC_socket.h"
+#ifndef RPCS3_IOS
 #include "Emu/Io/SkylanderPortalIPC.h"
 #include "Emu/Io/SkylanderPortalIPC_config.h"
+#endif
 
 #if defined(HAVE_VULKAN)
 #include "Emu/RSX/VK/VulkanAPI.h"
@@ -851,6 +853,7 @@ void Emulator::Init()
 		g_fxo->init<IPC_socket::IPC_server_manager>(true);
 	}
 
+#ifndef RPCS3_IOS
 	// Load Skylanders IPC config and start server if enabled
 	g_cfg_sky_ipc.load();
 	sys_log.notice("Using Skylanders IPC config:\n%s", g_cfg_sky_ipc.to_string());
@@ -859,6 +862,7 @@ void Emulator::Init()
 	{
 		g_fxo->init<SkylanderPortalIPCServerManager>(true);
 	}
+#endif
 }
 
 void Emulator::SetUsr(const std::string& user)
