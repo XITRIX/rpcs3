@@ -626,7 +626,7 @@ VKGSRender::VKGSRender(rsx::context* ctx, rsx::display_output* output) noexcept 
 		}
 	);
 
-	m_shaders_cache = std::make_unique<vk::shader_cache>(*m_prog_buffer, "vulkan", "v1.95");
+	m_shaders_cache = std::make_unique<vk::shader_cache>(*m_prog_buffer, "vulkan", "v1.95-apple-depth-alpha2");
 
 	// Only headless images are owned before acquisition from the presentation engine.
 	if (m_swapchain->is_headless())

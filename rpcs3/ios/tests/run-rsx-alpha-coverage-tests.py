@@ -35,6 +35,11 @@ flags = "\n".join("constexpr u32 " + re.search(
     for name in ("RSX_SHADER_CONTROL_ALPHA_TO_COVERAGE", "RSX_SHADER_CONTROL_ALPHA_TO_ONE",
                  "RSX_SHADER_CONTROL_EMULATE_DEPTH_RANGE", "RSX_SHADER_CONTROL_META_GCM_FLAGS_MASK"))
 
+# Pipeline records persist fp_ctrl verbatim. The previous port used the new
+# upstream depth bit for alpha-to-one, so those records must not be preloaded.
+for renderer in ("GL/GLGSRender.cpp", "VK/VKGSRender.cpp"):
+    assert '"v1.95-apple-depth-alpha2"' in (RSX / renderer).read_text()
+
 # Ensure both frontend consumers connect the program key to the shared epilogue.
 for frontend in ("GL/GLFragmentProgram.cpp", "VK/VKFragmentProgram.cpp"):
     assert "m_shader_props.ROP_alpha_to_one = !!(m_prog.ctrl & RSX_SHADER_CONTROL_ALPHA_TO_ONE);" in (RSX / frontend).read_text()

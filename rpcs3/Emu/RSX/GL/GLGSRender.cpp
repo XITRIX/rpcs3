@@ -38,7 +38,7 @@ GLGSRender::GLGSRender(rsx::context* ctx, rsx::display_output* output) noexcept 
 {
 	on_bind_context(m_ctx);
 
-	m_shaders_cache = std::make_unique<gl::shader_cache>(m_prog_buffer, "opengl", "v1.95");
+	m_shaders_cache = std::make_unique<gl::shader_cache>(m_prog_buffer, "opengl", "v1.95-apple-depth-alpha2");
 
 	m_config.supports_multidraw = true;
 	m_config.supports_normalized_barycentrics = true;
