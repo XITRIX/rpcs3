@@ -413,6 +413,7 @@ namespace vk
 		// Core properties only
 		vkGetPhysicalDeviceMemoryProperties(dev, &memory_properties);
 		vkGetPhysicalDeviceProperties(dev, &props);
+		shader_interpreter_sampler_limit = props.limits.maxPerStageDescriptorSamplers;
 
 		if (!allow_extensions)
 		{
@@ -459,6 +460,15 @@ namespace vk
 
 		vkGetPhysicalDeviceProperties2(dev, &properties2);
 		props = properties2.properties;
+
+		if (get_driver_vendor() == driver_vendor::MVK)
+		{
+			// MoltenVK reports 16 ordinary samplers even on Tier 2 hardware.
+			// Its extended limit reflects the active Metal argument-buffer tier:
+			// Tier 1 remains limited to 16; Tier 2 can hold the interpreter's 64.
+			shader_interpreter_sampler_limit = std::max(props.limits.maxPerStageDescriptorSamplers,
+				descriptor_indexing_props.maxPerStageDescriptorUpdateAfterBindSamplers);
+		}
 
 		if (descriptor_indexing_support)
 		{
