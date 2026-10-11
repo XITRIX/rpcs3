@@ -488,6 +488,16 @@ VKGSRender::VKGSRender(utils::serial* ar) noexcept : GSRender(ar)
 	vk::set_current_renderer(m_swapchain->get_device());
 	vk::init();
 
+	// Keep hardware fallback local to this renderer; never overwrite saved settings.
+	m_shader_mode = g_cfg.video.shadermode.get();
+	if ((m_shader_mode == shader_mode::async_with_interpreter || m_shader_mode == shader_mode::interpreter_only) &&
+		!m_device->gpu().get_shader_interpreter_support())
+	{
+		rsx_log.warning("GPU '%s' cannot support the shader interpreter's 64 fragment samplers/images; using synchronous shader recompilation for this session.",
+			m_device->gpu().get_name());
+		m_shader_mode = shader_mode::recompiler;
+	}
+
 	m_swapchain_dims.width = m_frame->client_width();
 	m_swapchain_dims.height = m_frame->client_height();
 
@@ -550,7 +560,7 @@ VKGSRender::VKGSRender(utils::serial* ar) noexcept : GSRender(ar)
 
 	m_flushable_data_heaps = vk::data_heap_manager::to_list().filter(FN(x->has_shadow()));
 
-	const auto shadermode = g_cfg.video.shadermode.get();
+	const auto shadermode = m_shader_mode;
 
 	if (shadermode == shader_mode::async_with_interpreter || shadermode == shader_mode::interpreter_only)
 	{
@@ -1279,8 +1289,8 @@ void VKGSRender::on_init_thread()
 	GSRender::on_init_thread();
 	zcull_ctrl.reset(static_cast<::rsx::reports::ZCULL_control*>(this));
 
-	if (g_cfg.video.shadermode == shader_mode::async_with_interpreter ||
-		g_cfg.video.shadermode == shader_mode::interpreter_only)
+	if (m_shader_mode == shader_mode::async_with_interpreter ||
+		m_shader_mode == shader_mode::interpreter_only)
 	{
 		std::unique_ptr<rsx::shader_loading_dialog> dlg = m_overlay_manager
 			? std::make_unique<rsx::shader_loading_dialog_native>(this)
@@ -1289,7 +1299,7 @@ void VKGSRender::on_init_thread()
 		dlg->close();
 	}
 
-	if (g_cfg.video.shadermode != shader_mode::interpreter_only)
+	if (m_shader_mode != shader_mode::interpreter_only)
 	{
 		if (!m_overlay_manager)
 		{
@@ -1842,7 +1852,7 @@ void VKGSRender::do_local_task(rsx::FIFO::state state)
 
 bool VKGSRender::load_program()
 {
-	const auto shadermode = g_cfg.video.shadermode.get();
+	const auto shadermode = m_shader_mode;
 
 	// TODO: EXT_dynamic_state should get rid of this sillyness soon (kd)
 	const auto vertex_state = vk::decode_vertex_input_assembly_state();

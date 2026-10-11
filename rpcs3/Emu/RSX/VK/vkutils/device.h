@@ -83,6 +83,7 @@ namespace vk
 		VkPhysicalDeviceDriverPropertiesKHR driver_properties{};
 
 		u32 descriptor_max_draw_calls = DESCRIPTOR_MAX_DRAW_CALLS;
+		u32 shader_interpreter_sampler_limit = 0;
 		descriptor_indexing_features descriptor_indexing_support{};
 
 		custom_border_color_features custom_border_color_support{};
@@ -132,6 +133,11 @@ namespace vk
 		const VkQueueFamilyProperties& get_queue_properties(u32 queue);
 		const VkPhysicalDeviceMemoryProperties& get_memory_properties() const;
 		const VkPhysicalDeviceLimits& get_limits() const;
+		bool get_shader_interpreter_support() const
+		{
+			// The fragment interpreter declares four texture types for all 16 RSX slots.
+			return shader_interpreter_sampler_limit >= 64 && props.limits.maxPerStageDescriptorSampledImages >= 64;
+		}
 
 		operator VkPhysicalDevice() const;
 		operator VkInstance() const;
