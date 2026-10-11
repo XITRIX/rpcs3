@@ -40,7 +40,7 @@ u64 GLGSRender::get_cycles()
 
 GLGSRender::GLGSRender(utils::serial* ar) noexcept : GSRender(ar)
 {
-	m_shaders_cache = std::make_unique<gl::shader_cache>(m_prog_buffer, "opengl", "v1.95");
+	m_shaders_cache = std::make_unique<gl::shader_cache>(m_prog_buffer, "opengl", "v1.95-apple-depth-alpha2");
 
 	if (g_cfg.video.disable_vertex_cache)
 		m_vertex_cache = std::make_unique<gl::null_vertex_cache>();
