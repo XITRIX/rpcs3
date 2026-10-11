@@ -371,7 +371,7 @@ bool legacy_debugger_is_ready() noexcept
 	}
 	if ((static_cast<u32>(status) & cs_debugged) == 0)
 	{
-		set_error("StikDebug has not enabled JIT for this process");
+		set_error("A debugger has not enabled JIT for this process");
 		return false;
 	}
 #endif

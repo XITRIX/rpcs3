@@ -5,6 +5,7 @@
 #include "util/cctype.hpp"
 
 #include <charconv>
+#include "AppleFloatFormatting.h"
 
 LOG_CHANNEL(cfg_log, "CFG");
 
@@ -256,7 +257,7 @@ bool try_to_string(std::string* out, f64 value, std::string_view name)
 {
 	std::array<char, 32> str{};
 
-	if (auto [ptr, ec] = std::to_chars(str.data(), str.data() + str.size(), value, std::chars_format::fixed); ec == std::errc())
+	if (auto [ptr, ec] = utils::float_to_chars_fixed(str.data(), str.data() + str.size(), value); ec == std::errc())
 	{
 		if (out) *out = std::string(str.data(), ptr);
 		return true;
