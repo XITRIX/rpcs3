@@ -32,7 +32,8 @@ invalidation = block((RSX / "NV47/HW/nv4097.cpp").read_text(), "void set_aa_cont
 enums = (RSX / "gcm_enums.h").read_text()
 flags = "\n".join("constexpr u32 " + re.search(
     rf"{name}\s*=\s*0x[0-9a-fA-F]+", enums).group() + ";"
-    for name in ("RSX_SHADER_CONTROL_ALPHA_TO_COVERAGE", "RSX_SHADER_CONTROL_ALPHA_TO_ONE"))
+    for name in ("RSX_SHADER_CONTROL_ALPHA_TO_COVERAGE", "RSX_SHADER_CONTROL_ALPHA_TO_ONE",
+                 "RSX_SHADER_CONTROL_EMULATE_DEPTH_RANGE", "RSX_SHADER_CONTROL_META_GCM_FLAGS_MASK"))
 
 # Ensure both frontend consumers connect the program key to the shared epilogue.
 for frontend in ("GL/GLFragmentProgram.cpp", "VK/VKFragmentProgram.cpp"):
