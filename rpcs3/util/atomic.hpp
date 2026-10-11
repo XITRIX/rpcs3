@@ -8,7 +8,7 @@ namespace utils
 {
 #if defined(ARM_FEATURE_LSE2)
 	inline constexpr bool g_atomic_lse2 = true;
-#elif defined(__linux__) || defined(_WIN32)
+#elif defined(__linux__) || defined(_WIN32) || (defined(__APPLE__) && defined(RPCS3_IOS_LEGACY_COMPATIBILITY))
 	extern const bool g_atomic_lse2;
 #else
 	inline constexpr bool g_atomic_lse2 = false;

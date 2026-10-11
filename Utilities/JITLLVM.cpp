@@ -1257,8 +1257,14 @@ const char * fallback_cpu_detection()
 #else
 	// TODO: Read the data from /proc/cpuinfo. ARM CPU registers are not accessible from usermode.
 	// This will be a pain when supporting snapdragon on windows but we'll cross that bridge when we get there.
-	// Require at least armv8-2a. Older chips are going to be useless anyway.
+#if defined(__APPLE__) && defined(RPCS3_IOS_LEGACY_COMPATIBILITY)
+	// A host CPU name is normally available above. If detection fails, do not
+	// assume newer ARM features on supported A11 devices.
+	return "generic";
+#else
+	// Require at least armv8-2a on the remaining ARM platforms.
 	return "cortex-a78";
+#endif
 #endif
 #endif
 

@@ -69,6 +69,8 @@ option(RUN_RPCS3_TESTS "Run RPCS3 unit tests. Requires BUILD_RPCS3_TESTS" OFF)
 option(USE_GAMEMODE "Choose whether to enable GameMode features or not." ON)
 option(BUNDLE_UDEV_RULES "Include udev rules on Linux/FreeBSD" OFF)
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/buildfiles/cmake/IOSCoreCompatibility.cmake)
+
 if(RPCS3_FRONTEND STREQUAL "IOS")
     if(NOT CMAKE_SYSTEM_NAME MATCHES "^(iOS|visionOS|Darwin)$")
         message(FATAL_ERROR "RPCS3_FRONTEND=IOS requires an Apple CMake toolchain")
