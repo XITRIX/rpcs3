@@ -57,7 +57,10 @@ struct futex_waitv
 #endif
 #else
 
+#include <atomic>
 #include <condition_variable>
+#include <mutex>
+#include <unordered_map>
 
 enum
 {
@@ -78,47 +81,57 @@ inline int futex(volatile void* uaddr, int futex_op, uint val, const timespec* t
 {
 #ifdef __linux__
 	return syscall(SYS_futex, uaddr, futex_op, static_cast<int>(val), timeout, nullptr, static_cast<int>(mask));
-#elif __APPLE__
-	switch (futex_op)
-	{
-	case FUTEX_WAIT_PRIVATE:
-	case FUTEX_WAIT_BITSET_PRIVATE:
-	{
-		if (timeout)
-		{
-			const uint64_t nsec = timeout->tv_nsec + timeout->tv_sec * 1000000000ull;
-			return os_sync_wait_on_address_with_timeout(const_cast<void*>(uaddr), static_cast<uint64_t>(val), sizeof(uint), OS_SYNC_WAIT_ON_ADDRESS_NONE, OS_CLOCK_MACH_ABSOLUTE_TIME, nsec);
-		}
-		else
-		{
-			return os_sync_wait_on_address(const_cast<void*>(uaddr), static_cast<uint64_t>(val), sizeof(uint), OS_SYNC_WAIT_ON_ADDRESS_NONE);
-		}
-	}
-
-	case FUTEX_WAKE_PRIVATE:
-	case FUTEX_WAKE_BITSET_PRIVATE:
-	{
-		for (;;)
-		{
-			int ret = 0;
-			if (val == INT32_MAX)
-			{
-				ret = os_sync_wake_by_address_all(const_cast<void*>(uaddr), sizeof(uint), OS_SYNC_WAKE_BY_ADDRESS_NONE);
-			}
-			else if (val-- >= 0)
-			{
-				ret = os_sync_wake_by_address_any(const_cast<void*>(uaddr), sizeof(uint), OS_SYNC_WAKE_BY_ADDRESS_NONE);
-			}
-			if (val <= 0 || val == INT32_MAX || (ret < 0 && errno == ENOENT))
-			{
-				return ret;
-			}
-		}
-	}
-	}
-	errno = EINVAL;
-	return -1;
 #else
+#ifdef __APPLE__
+#if defined(__IPHONE_OS_VERSION_MIN_REQUIRED) && __IPHONE_OS_VERSION_MIN_REQUIRED < 170400
+	// This OS compatibility path is independent of the core's CPU profile.
+	// Products with a 17.4+ floor compile only the native implementation.
+	if (__builtin_available(iOS 17.4, macOS 14.4, tvOS 17.4, watchOS 10.4, *))
+#endif
+	{
+		switch (futex_op)
+		{
+		case FUTEX_WAIT_PRIVATE:
+		case FUTEX_WAIT_BITSET_PRIVATE:
+		{
+			if (timeout)
+			{
+				const uint64_t nsec = timeout->tv_nsec + timeout->tv_sec * 1000000000ull;
+				return os_sync_wait_on_address_with_timeout(const_cast<void*>(uaddr), static_cast<uint64_t>(val), sizeof(uint), OS_SYNC_WAIT_ON_ADDRESS_NONE, OS_CLOCK_MACH_ABSOLUTE_TIME, nsec);
+			}
+			else
+			{
+				return os_sync_wait_on_address(const_cast<void*>(uaddr), static_cast<uint64_t>(val), sizeof(uint), OS_SYNC_WAIT_ON_ADDRESS_NONE);
+			}
+		}
+
+		case FUTEX_WAKE_PRIVATE:
+		case FUTEX_WAKE_BITSET_PRIVATE:
+		{
+			for (;;)
+			{
+				int ret = 0;
+				if (val == INT32_MAX)
+				{
+					ret = os_sync_wake_by_address_all(const_cast<void*>(uaddr), sizeof(uint), OS_SYNC_WAKE_BY_ADDRESS_NONE);
+				}
+				else if (val-- >= 0)
+				{
+					ret = os_sync_wake_by_address_any(const_cast<void*>(uaddr), sizeof(uint), OS_SYNC_WAKE_BY_ADDRESS_NONE);
+				}
+				if (val <= 0 || val == INT32_MAX || (ret < 0 && errno == ENOENT))
+				{
+					return ret;
+				}
+			}
+		}
+		}
+		errno = EINVAL;
+		return -1;
+	}
+#endif
+
+#if !defined(__APPLE__) || (defined(__IPHONE_OS_VERSION_MIN_REQUIRED) && __IPHONE_OS_VERSION_MIN_REQUIRED < 170400)
 	static struct futex_manager
 	{
 		struct waiter
@@ -154,7 +167,7 @@ inline int futex(volatile void* uaddr, int futex_op, uint val, const timespec* t
 			}
 			case FUTEX_WAIT_BITSET_PRIVATE:
 			{
-				if (*reinterpret_cast<volatile uint*>(uaddr) != val)
+				if (std::atomic_ref(*static_cast<uint*>(const_cast<void*>(uaddr))).load(std::memory_order_acquire) != val)
 				{
 					errno = EAGAIN;
 					return -1;
@@ -249,5 +262,6 @@ inline int futex(volatile void* uaddr, int futex_op, uint val, const timespec* t
 	} g_futex;
 
 	return g_futex(uaddr, futex_op, val, timeout, mask);
+#endif
 #endif
 }

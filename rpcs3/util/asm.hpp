@@ -496,10 +496,13 @@ namespace utils
 	{
 #if defined(ARCH_X64) && !defined(_MSC_VER)
 		__asm__ volatile("lock orl $0, 0(%0)" :: "r" (ptr));
-#elif defined(ARCH_ARM64)
+#elif defined(ARCH_ARM64) && (!defined(RPCS3_IOS_LEGACY_COMPATIBILITY) || defined(__ARM_FEATURE_ATOMICS))
 		u32 value = 0;
 		u32* u32_ptr = static_cast<u32*>(ptr);
 		__asm__ volatile("ldset %w0, %w0, %1" : "+r"(value), "=Q"(*u32_ptr) : "r"(value));
+#elif defined(ARCH_ARM64)
+		// A real read/modify/write still faults on protected pages without LSE.
+		__atomic_fetch_or(static_cast<u32*>(ptr), 0, __ATOMIC_SEQ_CST);
 #else
 		*static_cast<atomic_t<u32> *>(ptr) += 0;
 #endif

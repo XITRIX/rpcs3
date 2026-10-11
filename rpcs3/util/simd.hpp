@@ -1880,8 +1880,14 @@ inline v128 gv_muladdfs(const v128& a, const v128& b, const v128& c)
 // -> ssat((a * b * 2 + (c << 16) + 0x8000) >> 16)
 inline v128 gv_rmuladds_hds16(const v128& a, const v128& b, const v128& c)
 {
-#if defined(ARCH_ARM64)
+#if defined(ARCH_ARM64) && (!defined(RPCS3_IOS_LEGACY_COMPATIBILITY) || defined(__ARM_FEATURE_QRDMX))
 	return vqrdmlahq_s16(c, a, b);
+#elif defined(ARCH_ARM64)
+	// Keep the rounded product wide until after accumulation: -32768 squared
+	// rounds to 32768, which must not saturate before adding a negative c.
+	const auto low = vaddw_s16(vrshrq_n_s32(vmull_s16(vget_low_s16(a), vget_low_s16(b)), 15), vget_low_s16(c));
+	const auto high = vaddw_s16(vrshrq_n_s32(vmull_s16(vget_high_s16(a), vget_high_s16(b)), 15), vget_high_s16(c));
+	return vcombine_s16(vqmovn_s32(low), vqmovn_s32(high));
 #elif defined(ARCH_X64)
 	const auto x80 = _mm_set1_epi16(0x80); // 0x80 * 0x80 = 0x4000, add this to the product
 	const auto al = _mm_unpacklo_epi16(a, x80);

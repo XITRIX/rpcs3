@@ -23,7 +23,9 @@ if(MSVC)
 else()
 	check_cxx_compiler_flag("-march=native" COMPILER_SUPPORTS_MARCH_NATIVE)
 	check_cxx_compiler_flag("-msse -msse2 -mcx16" COMPILER_X86)
-	if (APPLE)
+	if (APPLE AND CMAKE_SYSTEM_NAME STREQUAL "iOS" AND RPCS3_IOS_LEGACY_COMPATIBILITY)
+		check_cxx_compiler_flag("-march=armv8-a" COMPILER_ARM)
+	elseif (APPLE)
 		check_cxx_compiler_flag("-march=armv8.4-a" COMPILER_ARM)
 	else()
 		check_cxx_compiler_flag("-march=armv8.1-a" COMPILER_ARM)
@@ -38,7 +40,11 @@ else()
 	elseif(COMPILER_ARM)
 		# This section needs a review. Apple claims armv8.5-a on M-series but doesn't support SVE.
 		# Note that compared to the rest of the 8.x family, 8.1 is very restrictive and we'll have to bump the requirement in future to get anything meaningful.
-		if (APPLE)
+		if (APPLE AND CMAKE_SYSTEM_NAME STREQUAL "iOS" AND RPCS3_IOS_LEGACY_COMPATIBILITY)
+			# Only the explicitly selected legacy core lowers its CPU baseline.
+			# Modern iOS cores keep the existing ARMv8.4 code generation.
+			add_compile_options(-march=armv8-a)
+		elseif (APPLE)
 			add_compile_options(-march=armv8.4-a)
 		else()
 			add_compile_options(-march=armv8.1-a)
