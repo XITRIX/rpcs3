@@ -106,8 +106,8 @@ struct jit_runtime final : jit_runtime_base
 	// Allocate memory
 	static u8* alloc(usz size, usz align, bool exec = true) noexcept;
 
-	// Return a writable view for an executable allocation. On iOS this is the
-	// shared RW alias; elsewhere the executable pointer is already writable at
+	// Return a writable view for an executable allocation. The Apple frontend
+	// resolves the arena or regular RW alias; elsewhere the pointer is writable at
 	// the call sites that use this helper.
 	static u8* writable(void* executable, usz size) noexcept;
 
