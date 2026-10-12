@@ -13,8 +13,10 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
+#include <new>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <libkern/OSCacheControl.h>
 #include <TargetConditionals.h>
@@ -56,12 +58,37 @@ struct arena_state
 	bool expanded = false;
 	bool prepared = false;
 	bool sealed = false;
+	rpcs3::ios::jit::memory_mode mode = rpcs3::ios::jit::memory_mode::arena;
 };
 
 std::mutex g_protocol_mutex;
 std::mutex g_arena_mutex;
 std::mutex g_error_mutex;
 arena_state g_arena;
+
+struct regular_group
+{
+	u8* code = nullptr;
+	u8* data = nullptr;
+	u8* writable = nullptr;
+	usz code_capacity = 0;
+	usz data_capacity = 0;
+	usz code_position = 0;
+	usz data_position = 0;
+	usz code_committed = 0;
+	usz data_committed = 0;
+	usz standalone_size = 0;
+};
+
+// Protected by g_arena_mutex, including alias lookup and group destruction.
+std::vector<regular_group*>& regular_groups()
+{
+	// Global AsmJit code lives until process exit. Keep its registry available
+	// across constructor/destructor ordering in other translation units.
+	static auto* groups = new std::vector<regular_group*>;
+	return *groups;
+}
+regular_group* g_regular_runtime = nullptr;
 std::string g_last_error;
 struct sigaction g_previous_trap_action{};
 
@@ -377,10 +404,168 @@ bool legacy_debugger_is_ready() noexcept
 #endif
 	return true;
 }
+
+// All regular-group helpers run under g_arena_mutex. Reserve address space
+// without touching it; unlike Universal preparation, this costs no code pages.
+regular_group* create_regular_group(usz code_capacity, usz data_capacity) noexcept
+{
+	vm_address_t base = 0;
+	const usz total = code_capacity + data_capacity;
+	if (!total || ::vm_map(mach_task_self(), &base, total, 0,
+		VM_FLAGS_ANYWHERE | jit_vm_tag, MACH_PORT_NULL, 0, false,
+		VM_PROT_NONE, VM_PROT_ALL, VM_INHERIT_DEFAULT) != KERN_SUCCESS)
+	{
+		set_error("Unable to reserve regular JIT code/data address space");
+		return nullptr;
+	}
+	vm_address_t alias = 0;
+	if (code_capacity && ::vm_map(mach_task_self(), &alias, code_capacity, 0,
+		VM_FLAGS_ANYWHERE | jit_vm_tag, MACH_PORT_NULL, 0, false,
+		VM_PROT_NONE, VM_PROT_ALL, VM_INHERIT_DEFAULT) != KERN_SUCCESS)
+	{
+		::vm_deallocate(mach_task_self(), base, total);
+		set_error("Unable to reserve regular JIT writable address space");
+		return nullptr;
+	}
+	regular_group* group = new (std::nothrow) regular_group;
+	if (!group)
+	{
+		if (alias) ::vm_deallocate(mach_task_self(), alias, code_capacity);
+		::vm_deallocate(mach_task_self(), base, total);
+		set_error("Unable to allocate regular JIT bookkeeping");
+		return nullptr;
+	}
+	group->code = reinterpret_cast<u8*>(base);
+	group->data = group->code + code_capacity;
+	group->writable = reinterpret_cast<u8*>(alias);
+	group->code_capacity = code_capacity;
+	group->data_capacity = data_capacity;
+	regular_groups().push_back(group);
+	return group;
+}
+
+void destroy_regular_group(regular_group* group) noexcept
+{
+	if (!group) return;
+	g_arena.live_code_bytes -= group->code_position;
+	g_arena.live_data_bytes -= group->data_position;
+	if (group->writable)
+	{
+		::vm_deallocate(mach_task_self(), reinterpret_cast<vm_address_t>(group->writable), group->code_capacity);
+	}
+	::vm_deallocate(mach_task_self(), reinterpret_cast<vm_address_t>(group->code), group->code_capacity + group->data_capacity);
+	auto& groups = regular_groups();
+	groups.erase(std::find(groups.begin(), groups.end(), group));
+	delete group;
+}
+
+bool commit_regular_group(regular_group& group, bool executable, usz end) noexcept
+{
+	usz& committed = executable ? group.code_committed : group.data_committed;
+	const usz capacity = executable ? group.code_capacity : group.data_capacity;
+	if (end > capacity) return false;
+	if (end <= committed) return true;
+	// Match desktop's small initial compiler commit, then grow as needed. Alias
+	// space is contiguous even when an LLVM section crosses commit boundaries.
+	constexpr usz unit = 512 * 1024;
+	const usz next = std::min(capacity, (end + unit - 1) & ~(unit - 1));
+	u8* const target = (executable ? group.code : group.data) + committed;
+	const usz size = next - committed;
+	if (!map_arena_region(target, size, PROT_READ | PROT_WRITE))
+	{
+		set_error("Unable to map regular JIT pages: " + std::string{std::strerror(errno)});
+		return false;
+	}
+	if (executable)
+	{
+		const vm_address_t expected_alias = reinterpret_cast<vm_address_t>(group.writable + committed);
+		vm_address_t alias = expected_alias;
+		vm_prot_t current = VM_PROT_NONE;
+		vm_prot_t maximum = VM_PROT_NONE;
+		if (::vm_remap(mach_task_self(), &alias, size, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE,
+			mach_task_self(), reinterpret_cast<vm_address_t>(target), false,
+			&current, &maximum, VM_INHERIT_SHARE) != KERN_SUCCESS ||
+			::vm_protect(mach_task_self(), alias, size, false, VM_PROT_READ | VM_PROT_WRITE) != KERN_SUCCESS ||
+			::mprotect(target, size, PROT_READ | PROT_EXEC) != 0)
+		{
+			map_arena_region(reinterpret_cast<u8*>(expected_alias), size, PROT_NONE);
+			map_arena_region(target, size, PROT_NONE);
+			set_error("Unable to create regular JIT RW/RX mappings");
+			return false;
+		}
+	}
+	committed = next;
+	return true;
+}
+
+void* allocate_regular_group(regular_group& group, bool executable, usz size, usz alignment) noexcept
+{
+	usz& position = executable ? group.code_position : group.data_position;
+	const usz capacity = executable ? group.code_capacity : group.data_capacity;
+	if (!size || !alignment || (alignment & (alignment - 1)) || alignment > capacity || size > capacity)
+	{
+		set_error("Invalid regular JIT size or alignment");
+		return nullptr;
+	}
+	u8* const base = executable ? group.code : group.data;
+	// A VM reservation guarantees page alignment, not every larger LLVM section
+	// alignment. Align the target address, rather than its offset alone.
+	const uptr address = reinterpret_cast<uptr>(base);
+	const usz offset = ((address + position + alignment - 1) & ~(alignment - 1)) - address;
+	if (offset > capacity || size > capacity - offset)
+	{
+		set_error("Regular JIT compiler reservation exhausted");
+		return nullptr;
+	}
+	if (!commit_regular_group(group, executable, offset + size)) return nullptr;
+	update_live_bytes(executable, offset + size - position);
+	position = offset + size;
+	return base + offset;
+}
 }
 
 namespace rpcs3::ios::jit
 {
+memory_mode selected_memory_mode() noexcept
+{
+	static const memory_mode selected = []
+	{
+		const char* value = std::getenv("RPCS3_JIT_MEMORY_MODE");
+		if (!value || std::strcmp(value, "auto") == 0)
+		{
+			return resolve_memory_mode(memory_mode::automatic, current_backend());
+		}
+		if (std::strcmp(value, "arena") == 0) return memory_mode::arena;
+		if (std::strcmp(value, "regular") == 0) return resolve_memory_mode(memory_mode::regular, current_backend());
+		return memory_mode::invalid;
+	}();
+	return selected;
+}
+
+bool uses_regular_memory() noexcept
+{
+	return !is_jitless() && selected_memory_mode() == memory_mode::regular;
+}
+
+regular_allocator::~regular_allocator()
+{
+	std::lock_guard lock(g_arena_mutex);
+	destroy_regular_group(static_cast<regular_group*>(m_group));
+}
+
+void* regular_allocator::allocate(bool executable, usz size, usz alignment) noexcept
+{
+	if (!uses_regular_memory() || !prepare_arena()) return nullptr;
+	std::lock_guard lock(g_arena_mutex);
+	if (!m_group)
+	{
+		// Desktop's per-compiler code/data windows, independent of other engines.
+		m_group = create_regular_group(256 * mib, 256 * mib);
+		if (!m_group) return nullptr;
+	}
+	return allocate_regular_group(*static_cast<regular_group*>(m_group), executable, size, alignment);
+}
+
 bool is_jitless() noexcept
 {
 	static const bool disabled = []
@@ -454,8 +639,8 @@ bool prepare_arena(u32 expanded_capacity_mib) noexcept
 	const bool expanded = expanded_capacity_mib != 0;
 	if (g_arena.prepared)
 	{
-		if (g_arena.expanded != expanded ||
-			(expanded && g_arena.capacity != choose_arena_capacity(0, expanded_capacity_mib)))
+		if (g_arena.mode == memory_mode::arena && (g_arena.expanded != expanded ||
+			(expanded && g_arena.capacity != choose_arena_capacity(0, expanded_capacity_mib))))
 		{
 			set_error("JIT arena capacity policy changed after the arena was prepared; relaunch is required");
 			return false;
@@ -464,9 +649,23 @@ bool prepare_arena(u32 expanded_capacity_mib) noexcept
 	}
 
 	const arena_backend backend = current_backend();
+	const memory_mode mode = selected_memory_mode();
+	if (mode == memory_mode::invalid ||
+		(mode == memory_mode::regular && backend == arena_backend::universal_mirrored))
+	{
+		set_error("Invalid JIT memory mode: iOS/visionOS 26+ requires the prepared arena");
+		return false;
+	}
 	if (backend == arena_backend::legacy_debugger && !legacy_debugger_is_ready())
 	{
 		return false;
+	}
+	if (mode == memory_mode::regular)
+	{
+		g_arena.mode = mode;
+		g_arena.backend = backend;
+		g_arena.prepared = true;
+		return true;
 	}
 
 	const usz capacity = choose_arena_capacity(physical_memory_size(), expanded_capacity_mib);
@@ -615,6 +814,16 @@ void* runtime_memory(bool executable) noexcept
 	}
 
 	std::lock_guard lock(g_arena_mutex);
+	if (g_arena.mode == memory_mode::regular)
+	{
+		if (!g_regular_runtime)
+		{
+			// Upstream's stable 1 GiB code + 1 GiB data runtime. Only allocations
+			// commit pages; compiler-local LLVM sections do not consume this space.
+			g_regular_runtime = create_regular_group(1024 * mib, 1024 * mib);
+		}
+		return g_regular_runtime ? (executable ? g_regular_runtime->code : g_regular_runtime->data) : nullptr;
+	}
 	return executable ? static_cast<void*>(g_arena.code) : static_cast<void*>(g_arena.data);
 }
 
@@ -626,6 +835,7 @@ usz arena_capacity(bool executable) noexcept
 	}
 
 	std::lock_guard lock(g_arena_mutex);
+	if (g_arena.mode == memory_mode::regular) return 1024 * mib;
 	return executable ? g_arena.capacity : g_arena.data_capacity;
 }
 
@@ -641,6 +851,28 @@ bool claim_runtime(bool executable, usz offset, usz size) noexcept
 	}
 
 	std::lock_guard lock(g_arena_mutex);
+	if (g_arena.mode == memory_mode::regular)
+	{
+		if (!g_regular_runtime || offset > 1024 * mib || size > 1024 * mib - offset)
+		{
+			set_error("Invalid regular JIT runtime extension");
+			return false;
+		}
+		usz& position = executable ? g_regular_runtime->code_position : g_regular_runtime->data_position;
+		if (offset > position)
+		{
+			set_error("Non-contiguous regular JIT runtime extension");
+			return false;
+		}
+		if (!commit_regular_group(*g_regular_runtime, executable, offset + size)) return false;
+		if (offset + size > position)
+		{
+			update_live_bytes(executable, offset + size - position);
+			position = offset + size;
+		}
+		(executable ? g_arena.runtime_code_bytes : g_arena.runtime_data_bytes) = position;
+		return true;
+	}
 	arena_allocator& allocator = executable ? g_arena.code_allocator : g_arena.data_allocator;
 	arena_range allocation;
 	if (!allocator.allocate_lowest(size, 1, allocation) || allocation.offset != offset)
@@ -662,6 +894,26 @@ bool claim_runtime(bool executable, usz offset, usz size) noexcept
 void reset_runtime() noexcept
 {
 	std::lock_guard lock(g_arena_mutex);
+	if (g_arena.mode == memory_mode::regular)
+	{
+		if (!g_regular_runtime) return;
+		auto& group = *g_regular_runtime;
+		// Retain stable addresses, release both views of committed code and all
+		// runtime data. Compiler-owned and global mappings remain independent.
+		if ((group.code_committed &&
+			(!map_arena_region(group.writable, group.code_committed, PROT_NONE) ||
+			 !map_arena_region(group.code, group.code_committed, PROT_NONE))) ||
+			(group.data_committed && !map_arena_region(group.data, group.data_committed, PROT_NONE)))
+		{
+			set_error("Unable to reset regular JIT runtime mappings");
+			return;
+		}
+		g_arena.live_code_bytes -= group.code_position;
+		g_arena.live_data_bytes -= group.data_position;
+		group.code_position = group.data_position = group.code_committed = group.data_committed = 0;
+		g_arena.runtime_code_bytes = g_arena.runtime_data_bytes = 0;
+		return;
+	}
 	if (g_arena.runtime_code_bytes)
 	{
 		if (!g_arena.code_allocator.release(0, g_arena.runtime_code_bytes))
@@ -692,6 +944,25 @@ void* allocate(bool executable, usz size, usz alignment) noexcept
 	}
 
 	std::lock_guard lock(g_arena_mutex);
+	if (g_arena.mode == memory_mode::regular)
+	{
+		if (!size || size > 1024 * mib || !alignment || (alignment & (alignment - 1)) || alignment > page_size())
+		{
+			set_error("Invalid standalone regular JIT size or alignment");
+			return nullptr;
+		}
+		const usz capacity = (size + page_size() - 1) & ~(page_size() - 1);
+		auto* group = create_regular_group(executable ? capacity : 0, executable ? 0 : capacity);
+		if (!group) return nullptr;
+		void* target = allocate_regular_group(*group, executable, size, alignment);
+		if (!target)
+		{
+			destroy_regular_group(group);
+			return nullptr;
+		}
+		group->standalone_size = size;
+		return target;
+	}
 	arena_allocator& allocator = executable ? g_arena.code_allocator : g_arena.data_allocator;
 	arena_range allocation;
 	if (!allocator.allocate_highest(size, alignment, allocation))
@@ -715,6 +986,20 @@ void release_allocation(bool executable, void* address, usz size) noexcept
 	}
 
 	std::lock_guard lock(g_arena_mutex);
+	if (g_arena.mode == memory_mode::regular)
+	{
+		for (auto* group : regular_groups())
+		{
+			if (group->standalone_size == size &&
+				(executable ? (group->code_capacity && group->code == address) : (group->data_capacity && group->data == address)))
+			{
+				destroy_regular_group(group);
+				return;
+			}
+		}
+		set_error("Attempted to release an invalid regular JIT allocation");
+		return;
+	}
 	usz offset = 0;
 	u8* const base = executable ? g_arena.code : g_arena.data;
 	if (!contains(base, executable ? g_arena.capacity : g_arena.data_capacity, address, size, offset))
@@ -738,6 +1023,17 @@ void* writable(const void* executable, usz size) noexcept
 {
 	std::lock_guard lock(g_arena_mutex);
 	usz offset = 0;
+	if (g_arena.mode == memory_mode::regular)
+	{
+		for (auto* group : regular_groups())
+		{
+			if (contains(group->code, group->code_committed, executable, size, offset))
+			{
+				return group->writable + offset;
+			}
+		}
+		return nullptr;
+	}
 	return contains(g_arena.code, g_arena.capacity, executable, size, offset)
 		? static_cast<void*>(g_arena.writable_code + offset)
 		: nullptr;
@@ -772,6 +1068,15 @@ arena_statistics get_statistics() noexcept
 	result.largest_free_data_bytes = g_arena.data_allocator.largest_free_bytes();
 	result.peak_code_bytes = g_arena.peak_code_bytes;
 	result.peak_data_bytes = g_arena.peak_data_bytes;
+	result.mode = g_arena.mode;
+	if (g_arena.mode == memory_mode::regular)
+	{
+		for (auto* group : regular_groups())
+		{
+			result.mapped_code_bytes += group->code_committed;
+			result.mapped_data_bytes += group->data_committed;
+		}
+	}
 	result.backend = g_arena.backend;
 	result.expanded = g_arena.expanded;
 	result.sealed = g_arena.sealed;
