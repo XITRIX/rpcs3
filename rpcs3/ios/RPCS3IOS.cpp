@@ -385,6 +385,13 @@ void emit_jit_arena_statistics(std::string_view phase)
 {
 	constexpr usz mib = 1024 * 1024;
 	const auto stats = rpcs3::ios::jit::get_statistics();
+	if (stats.mode == rpcs3::ios::jit::memory_mode::regular)
+	{
+		emit_log(4, fmt::format("Regular JIT %s: mapped=%u MiB code/%u MiB data; live=%u MiB code/%u MiB data; no prepared arena",
+			phase, stats.mapped_code_bytes / mib, stats.mapped_data_bytes / mib,
+			stats.live_code_bytes / mib, stats.live_data_bytes / mib));
+		return;
+	}
 	emit_log(4, fmt::format(
 		"iOS JIT arena %s: code live=%u MiB, free=%u MiB (%llu bytes), largest_free=%u MiB (%llu bytes), "
 		"runtime=%u MiB, peak=%u MiB; data live=%u MiB, free=%u MiB (%llu bytes), "
@@ -1406,6 +1413,10 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 				jit_stats.capacity / (1024 * 1024),
 				jit_stats.expanded ? "expanded" : "standard",
 				jit_stats.preparation_requests));
+		}
+		else if (jit_stats.mode == rpcs3::ios::jit::memory_mode::regular)
+		{
+			emit_log(4, "Regular JIT: compiler-local code/data reservations and on-demand RW/RX mappings; no prepared arena or Universal commands");
 		}
 		else
 		{

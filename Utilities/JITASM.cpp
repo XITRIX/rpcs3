@@ -182,8 +182,16 @@ static u8* add_jit_memory(usz size, usz align)
 	// Simple allocation by incrementing pointer to the next free data
 	const u64 pos = Ctr.atomic_op([&](u64& ctr) -> u64
 	{
+#ifdef RPCS3_IOS
+		// Regular reservations guarantee page alignment only. LLVM may request
+		// larger section alignment, so account for the actual target base.
+		const u64 base = reinterpret_cast<uptr>(pointer);
+		const u64 _pos = utils::align(base + (ctr & 0xffff'ffff), align) - base;
+		const u64 _new = utils::align(base + _pos + size, align) - base;
+#else
 		const u64 _pos = utils::align(ctr & 0xffff'ffff, align);
 		const u64 _new = utils::align(_pos + size, align);
+#endif
 
 		if (_new > capacity) [[unlikely]]
 		{
@@ -443,7 +451,7 @@ jit_runtime_base& asmjit::get_global_runtime()
 
 			// Make memory writable + executable
 #ifdef RPCS3_IOS
-			// The complete code arena was prepared before StikDebug detached.
+			// The selected allocator has supplied an RX target and RW alias.
 #else
 			utils::memory_commit(m_pos, size, utils::protection::wx);
 #endif
