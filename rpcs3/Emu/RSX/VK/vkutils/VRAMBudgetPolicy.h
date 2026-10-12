@@ -7,6 +7,23 @@ namespace vk
 {
 	inline constexpr std::uint64_t vram_budget_mib = 0x100000ull;
 
+	constexpr std::uint64_t get_preferred_vram_block_size(std::uint64_t reported_heap_bytes)
+	{
+#if defined(RPCS3_IOS) && !defined(RPCS3_MACOS)
+		// VMA's desktop default is 256 MiB per memory type. On small unified
+		// heaps, unused space in those blocks still consumes the iOS process
+		// allowance and cannot be reclaimed by evicting individual textures.
+		// Large requests remain supported through VMA's dedicated allocations.
+		if (reported_heap_bytes && reported_heap_bytes <= 4096 * vram_budget_mib)
+		{
+			return 32 * vram_budget_mib;
+		}
+#else
+		(void)reported_heap_bytes;
+#endif
+		return 0; // Preserve VMA's default on larger devices and desktop backends.
+	}
+
 #ifdef RPCS3_IOS
 	// MoltenVK exposes unified system memory as device-local memory. Leaving the
 	// desktop VRAM limit in charge lets RSX consume most of the process's jetsam
