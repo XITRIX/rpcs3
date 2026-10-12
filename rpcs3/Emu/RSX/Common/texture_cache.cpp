@@ -10,6 +10,7 @@
 #include "texture_cache_blit_helpers.h"
 #ifdef RPCS3_IOS
 #include "ios/IOSTextureHash.h"
+#include "ios/IOSTextureCache.h"
 #include "ios/RPCS3IOSExperimentalPolicy.h"
 #define XXH_INLINE_ALL
 #pragma clang diagnostic push
@@ -56,7 +57,11 @@ namespace rsx
 		locked_range.invalidate();
 
 		protection = utils::protection::rw;
+#ifdef RPCS3_IOS
+		protection_strat = default_texture_protection_strategy(memory_range.length(), rpcs3::ios::texture_write_tracking_enabled());
+#else
 		protection_strat = default_texture_protection_strategy(memory_range.length());
+#endif
 		locked = false;
 
 		init_lockable_range(cpu_range);
@@ -183,34 +188,41 @@ namespace rsx
 		}
 	}
 
-	u64 buffered_section::fast_hash_internal() const
+	u64 buffered_section::fast_hash_internal([[maybe_unused]] bool validation) const
 	{
 		const auto hash_range = confirmed_range.valid() ? confirmed_range : cpu_range;
 		const auto hash_length = hash_range.length();
 		auto src = get_ptr<const char>(hash_range.start);
 
 #ifdef RPCS3_IOS
-		// iOS cannot safely use page-protection invalidation alongside the sealed
-		// Universal JIT arena. The cached seeded secret preserves byte-for-byte
-		// XXH3_withSeed results while avoiding per-call secret regeneration for
-		// texture ranges above 240 bytes.
-		if (hash_length <= XXH3_MIDSIZE_MAX)
+		const auto started = rpcs3::ios::begin_texture_hash();
+		const auto calculate = [&]() -> u64
 		{
-			return static_cast<u64>(XXH3_64bits_withSeed(src, hash_length, rpcs3::fnv_seed));
-		}
+			// iOS cannot safely use page-protection invalidation alongside the sealed
+			// Universal JIT arena. The cached seeded secret preserves byte-for-byte
+			// XXH3_withSeed results while avoiding per-call secret regeneration for
+			// texture ranges above 240 bytes.
+			if (hash_length <= XXH3_MIDSIZE_MAX)
+			{
+				return static_cast<u64>(XXH3_64bits_withSeed(src, hash_length, rpcs3::fnv_seed));
+			}
 
-		if (hash_length >= 4096 && rpcs3::ios::get_experimental_policy().texture_hash_hybrid)
-		{
-			return rpcs3::ios::texture_hash_hybrid(src, hash_length,
-				g_ios_xxh3_seeded_secret.bytes, sizeof(g_ios_xxh3_seeded_secret.bytes), rpcs3::fnv_seed);
-		}
+			if (hash_length >= 4096 && rpcs3::ios::get_experimental_policy().texture_hash_hybrid)
+			{
+				return rpcs3::ios::texture_hash_hybrid(src, hash_length,
+					g_ios_xxh3_seeded_secret.bytes, sizeof(g_ios_xxh3_seeded_secret.bytes), rpcs3::fnv_seed);
+			}
 
-		return static_cast<u64>(XXH3_64bits_withSecretandSeed(
-			src,
-			hash_length,
-			g_ios_xxh3_seeded_secret.bytes,
-			sizeof(g_ios_xxh3_seeded_secret.bytes),
-			rpcs3::fnv_seed));
+			return static_cast<u64>(XXH3_64bits_withSecretandSeed(
+				src,
+				hash_length,
+				g_ios_xxh3_seeded_secret.bytes,
+				sizeof(g_ios_xxh3_seeded_secret.bytes),
+				rpcs3::fnv_seed));
+		};
+		const auto result = calculate();
+		if (started) rpcs3::ios::end_texture_hash(started, hash_range.start, hash_length, validation, result != mem_hash);
+		return result;
 #else
 		const auto cycles = hash_length / 8;
 		auto rem = hash_length % 8;
@@ -266,10 +278,13 @@ namespace rsx
 	{
 		if (protection_strat == section_protection_strategy::lock || !locked)
 		{
+#ifdef RPCS3_IOS
+			if (locked) rpcs3::ios::texture_validation_metrics().increment(rpcs3::ios::texture_cache_metrics::locked_checks);
+#endif
 			return true;
 		}
 
-		return (fast_hash_internal() == mem_hash);
+		return (fast_hash_internal(true) == mem_hash);
 	}
 
 	namespace blit_engine_helpers

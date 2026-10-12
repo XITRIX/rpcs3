@@ -32,12 +32,13 @@ struct texture
     int id = 0;
     u32 context = rsx::texture_upload_context::shader_read;
     u32 address = 1, format = 1, pitch = 16;
-    u16 width = 4, height = 4, depth = 1;
+    u16 width = 4, height = 4, depth = 1, mipmaps = 1;
     bool dirty = false, swizzled = false;
     int validations = 0;
     std::array<unsigned char, 512> source{}, uploaded{};
     bool is_dirty() const { return dirty; }
     u32 get_context() const { return context; }
+    u16 get_mipmaps() const { return mipmaps; }
     bool matches(u32 a, u32 f, u16 w, u16 h, u16 d, u16) const
     {
         return address == a && format == f && width == w && height == h && depth == d;
@@ -59,7 +60,7 @@ struct texture
 struct attributes
 {
     u32 address = 1, gcm_format = 1, pitch = 16;
-    u16 width = 4, height = 4, depth = 1;
+    u16 width = 4, height = 4, depth = 1, mipmaps = 1;
     bool swizzled = false;
 };
 struct search_options { u32 lookup_mask = 7; };
@@ -145,6 +146,21 @@ int main()
     c.m_storage.textures = {make(1), make(2)};
     c.m_storage.textures[0].source[256] = 1;
     assert(c.lookup().view == 2);
+#ifdef RPCS3_IOS
+    // A one-level CPU upload cannot hide a complete chain or satisfy a mipmapped sampler.
+    c.m_storage.textures = {make(1), make(2)};
+    c.m_storage.textures[1].mipmaps = 5;
+    attributes mipmapped;
+    mipmapped.mipmaps = 5;
+    assert(c.lookup(mipmapped).view == 2);
+    c.m_storage.textures[1].dirty = true;
+    assert(c.lookup(mipmapped).view == 0);
+    c.m_storage.textures[0].context = blit_engine_src;
+    assert(c.lookup(mipmapped).view == 0);
+    // A framebuffer represents one level and remains usable by the mip builder.
+    c.m_storage.textures[0].context = blit_engine_dst;
+    assert(c.lookup(mipmapped).view == 1);
+#endif
     // Existing public range lookups must still eagerly validate all entries.
     c.m_storage.textures = {make(1), make(2, blit_engine_dst)};
     c.m_storage.textures[0].source[300] = 1;

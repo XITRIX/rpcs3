@@ -12,15 +12,26 @@ namespace rsx
 
 	constexpr std::size_t min_lockable_texture_data_size = 4096;
 
+	// Both legacy and Universal JIT may opt in after preparation and detach.
+	// Unknown debugger state and JIT-less execution retain full hashing.
+	constexpr bool allow_texture_write_tracking(bool requested,
+		bool jit_ready, bool debugger_known_detached) noexcept
+	{
+		return requested && jit_ready && debugger_known_detached;
+	}
+
 	constexpr section_protection_strategy default_texture_protection_strategy(
-		std::size_t memory_length) noexcept
+		std::size_t memory_length, [[maybe_unused]] bool write_tracking = false) noexcept
 	{
 #ifdef RPCS3_IOS
 		// Mach exceptions reach an attached debugger before RPCS3's signal
-		// handler. Detached page-locking also produced instruction-execute faults
-		// in the sealed Universal JIT arena on physical iOS. Hashing retains cache
-		// validation without changing native page protection.
-		(void)memory_length;
+		// handler. Universal page-locking previously produced native execute faults;
+		// it remains experimental and requires the explicit opt-in above. Hashing
+		// is the default without changing native page protection.
+		if (write_tracking && memory_length >= min_lockable_texture_data_size)
+		{
+			return section_protection_strategy::lock;
+		}
 		return section_protection_strategy::hash;
 #else
 		return memory_length < min_lockable_texture_data_size

@@ -15,6 +15,7 @@ ROOT = HERE.parents[2]
 parser = argparse.ArgumentParser()
 parser.add_argument('--source', type=Path, default=ROOT / 'rpcs3/Emu/RSX/Common/texture_cache.h')
 parser.add_argument('--sanitize', action='store_true')
+parser.add_argument('--ios', action='store_true')
 args = parser.parse_args()
 source = args.source.read_text()
 start = source.rindex('\n\t\ttemplate <', 0, source.index('find_texture_from_range(const'))
@@ -30,6 +31,8 @@ with tempfile.TemporaryDirectory(prefix='rpcs3-texture-lookup-tests-') as direct
     executable = temp / 'TextureLookupTests'
     command = [os.environ.get('CXX', 'clang++'), '-std=c++20', '-O2', '-Wall', '-Wextra', '-Werror',
                '-I', str(temp), str(HERE / 'TextureLookupTests.cpp'), '-o', str(executable)]
+    if args.ios:
+        command[1:1] = ['-DRPCS3_IOS=1']
     if args.sanitize:
         command[1:1] = ['-fsanitize=address,undefined', '-fno-omit-frame-pointer']
     subprocess.run(command, check=True)
