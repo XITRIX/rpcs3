@@ -175,6 +175,20 @@ namespace vk
 
 		VkPhysicalDeviceMemoryProperties memory_properties;
 		vkGetPhysicalDeviceMemoryProperties(pdev, &memory_properties);
+		VkDeviceSize largest_device_heap = 0;
+		for (u32 i = 0; i < memory_properties.memoryHeapCount; ++i)
+		{
+			if (memory_properties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+			{
+				largest_device_heap = std::max(largest_device_heap, memory_properties.memoryHeaps[i].size);
+			}
+		}
+		allocatorInfo.preferredLargeHeapBlockSize = get_preferred_vram_block_size(largest_device_heap);
+		if (allocatorInfo.preferredLargeHeapBlockSize)
+		{
+			rsx_log.notice("Using %llu MiB Vulkan allocation blocks for a %llu MiB unified-memory heap",
+				allocatorInfo.preferredLargeHeapBlockSize / vram_budget_mib, largest_device_heap / vram_budget_mib);
+		}
 
 		std::vector<VkDeviceSize> heap_limits;
 		const auto configured_vram_allocation_limit = g_cfg.video.vk.vram_allocation_limit * 0x100000ull;
