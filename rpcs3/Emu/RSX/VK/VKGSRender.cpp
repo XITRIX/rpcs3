@@ -958,6 +958,12 @@ bool VKGSRender::on_access_violation(u32 address, bool is_writing)
 		result = m_texture_cache.invalidate_address(*m_secondary_cb_list.get(), address, cause);
 	}
 
+#ifdef RPCS3_IOS
+	using metrics = rpcs3::ios::texture_cache_metrics;
+	rpcs3::ios::texture_validation_metrics().increment(is_writing ? metrics::write_faults : metrics::read_faults);
+	if (!result.violation_handled) rpcs3::ios::texture_validation_metrics().increment(metrics::unhandled_faults);
+#endif
+
 	if (result.invalidate_samplers)
 	{
 		std::lock_guard lock(m_sampler_mutex);
