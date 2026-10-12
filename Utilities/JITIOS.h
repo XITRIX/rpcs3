@@ -21,6 +21,45 @@ enum class arena_backend : u8
 	universal_mirrored,
 };
 
+enum class memory_mode : u8
+{
+	automatic,
+	arena,
+	regular,
+	invalid,
+};
+
+constexpr memory_mode resolve_memory_mode(memory_mode requested, arena_backend backend) noexcept
+{
+	if (requested == memory_mode::automatic)
+	{
+		return backend == arena_backend::universal_mirrored ? memory_mode::arena : memory_mode::regular;
+	}
+	return requested == memory_mode::regular && backend == arena_backend::universal_mirrored
+		? memory_mode::invalid : requested;
+}
+
+// Selected before dlopen, since global constructors can emit executable code.
+// Automatic uses regular allocations on Mac/Simulator/pre-26 iOS and the
+// prepared arena on Universal JIT. A process cannot change modes after loading.
+memory_mode selected_memory_mode() noexcept;
+bool uses_regular_memory() noexcept;
+
+// A desktop-style compiler-local code/data reservation. Pages and their RW
+// aliases are mapped on demand; adjacent targets preserve ARM64 ADRP reach.
+// Destruction releases the compiler's mappings, independently of other groups.
+class regular_allocator
+{
+	void* m_group = nullptr;
+
+public:
+	regular_allocator() = default;
+	~regular_allocator();
+	regular_allocator(const regular_allocator&) = delete;
+	regular_allocator& operator=(const regular_allocator&) = delete;
+	void* allocate(bool executable, usz size, usz alignment) noexcept;
+};
+
 inline constexpr u32 universal_backend_ios_major = 26;
 
 constexpr arena_backend backend_for_ios_major(u32 major_version) noexcept
@@ -45,6 +84,9 @@ struct arena_statistics
 	usz largest_free_data_bytes = 0;
 	usz peak_code_bytes = 0;
 	usz peak_data_bytes = 0;
+	usz mapped_code_bytes = 0;
+	usz mapped_data_bytes = 0;
+	memory_mode mode = memory_mode::arena;
 	arena_backend backend = arena_backend::legacy_debugger;
 	bool expanded = false;
 	bool sealed = false;

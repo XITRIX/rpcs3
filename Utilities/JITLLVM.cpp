@@ -74,6 +74,7 @@ namespace
 	void maybe_log_ios_jit_arena_pressure(bool executable)
 	{
 		const auto stats = rpcs3::ios::jit::get_statistics();
+		if (stats.mode == rpcs3::ios::jit::memory_mode::regular) return;
 		const usz capacity = executable ? stats.capacity : stats.data_capacity;
 		const usz free = executable ? stats.free_code_bytes : stats.free_data_bytes;
 		const usz largest_free = executable ? stats.largest_free_code_bytes : stats.largest_free_data_bytes;
@@ -334,6 +335,7 @@ struct MemoryManager1 : llvm::RTDyldMemoryManager
 	std::vector<code_mapping> m_pending_code;
 	std::vector<code_mapping> m_code;
 	std::vector<arena_allocation> m_data;
+	rpcs3::ios::jit::regular_allocator m_regular;
 #endif
 
 	// First fallback for non-existing symbols
@@ -365,13 +367,16 @@ struct MemoryManager1 : llvm::RTDyldMemoryManager
 		// utils::memory_decommit(m_data_ro_mems, how_much(data_ro_ptr));
 		// utils::memory_decommit(m_data_rw_mems, how_much(data_rw_ptr));
 #ifdef RPCS3_IOS
-		for (const code_mapping& item : m_code)
+		if (!rpcs3::ios::jit::uses_regular_memory())
 		{
-			rpcs3::ios::jit::release_allocation(true, item.target, item.size);
-		}
-		for (const arena_allocation& item : m_data)
-		{
-			rpcs3::ios::jit::release_allocation(false, item.target, item.size);
+			for (const code_mapping& item : m_code)
+			{
+				rpcs3::ios::jit::release_allocation(true, item.target, item.size);
+			}
+			for (const arena_allocation& item : m_data)
+			{
+				rpcs3::ios::jit::release_allocation(false, item.target, item.size);
+			}
 		}
 #else
 		utils::memory_decommit(m_code_mems, c_max_size * 3, true);
@@ -465,7 +470,8 @@ struct MemoryManager1 : llvm::RTDyldMemoryManager
 	{
 #ifdef RPCS3_IOS
 		align = align ? align : 16;
-		u8* const target = static_cast<u8*>(rpcs3::ios::jit::allocate(true, size, align));
+		u8* const target = static_cast<u8*>(rpcs3::ios::jit::uses_regular_memory()
+			? m_regular.allocate(true, size, align) : rpcs3::ios::jit::allocate(true, size, align));
 		if (!target)
 		{
 			jit_log.fatal("Unable to allocate iOS LLVM code (size=0x%x, align=0x%x): %s",
@@ -500,7 +506,8 @@ struct MemoryManager1 : llvm::RTDyldMemoryManager
 #ifdef RPCS3_IOS
 		(void)is_ro;
 		align = align ? align : 16;
-		u8* const target = static_cast<u8*>(rpcs3::ios::jit::allocate(false, size, align));
+		u8* const target = static_cast<u8*>(rpcs3::ios::jit::uses_regular_memory()
+			? m_regular.allocate(false, size, align) : rpcs3::ios::jit::allocate(false, size, align));
 		if (!target)
 		{
 			jit_log.fatal("Unable to allocate iOS LLVM data (size=0x%x, align=0x%x): %s",
