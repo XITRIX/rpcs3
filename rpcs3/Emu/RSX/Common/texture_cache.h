@@ -8,6 +8,9 @@
 #include "texture_cache_predictor.h"
 #include "texture_cache_helpers.h"
 #include "texture_cache_blit_helpers.h"
+#ifdef RPCS3_IOS
+#include "ios/IOSTextureCache.h"
+#endif
 
 #include <unordered_map>
 
@@ -153,6 +156,37 @@ namespace rsx
 			utils::address_range32 cache_range;
 			bool do_not_cache = false;
 			bool force_bg_load = false;
+			// Mixed mip chains are reusable only while every source version agrees.
+			rsx::simple_array<u64> mixed_mipmap_source_tags;
+
+			bool same_mipmap_sources(const deferred_subresource& other) const
+			{
+				if (mixed_mipmap_source_tags.size() != other.mixed_mipmap_source_tags.size() ||
+					!std::equal(mixed_mipmap_source_tags.begin(), mixed_mipmap_source_tags.end(), other.mixed_mipmap_source_tags.begin()))
+				{
+					return false;
+				}
+				if (mixed_mipmap_source_tags.empty())
+				{
+					return true; // Existing non-mixed cache policy.
+				}
+				if (sections_to_copy.size() != other.sections_to_copy.size())
+				{
+					return false;
+				}
+				for (usz i = 0; i < sections_to_copy.size(); ++i)
+				{
+					const auto& a = sections_to_copy[i];
+					const auto& b = other.sections_to_copy[i];
+					if (a.src != b.src || a.xform != b.xform || a.base_addr != b.base_addr || a.level != b.level ||
+						a.src_x != b.src_x || a.src_y != b.src_y || a.dst_x != b.dst_x || a.dst_y != b.dst_y ||
+						a.dst_z != b.dst_z || a.src_w != b.src_w || a.src_h != b.src_h || a.dst_w != b.dst_w || a.dst_h != b.dst_h)
+					{
+						return false;
+					}
+				}
+				return true;
+			}
 
 			using section_array_type = rsx::simple_array<copy_region_descriptor>;
 
@@ -402,6 +436,8 @@ namespace rsx
 			image_view_type image_handle = 0;
 			deferred_subresource external_subresource_desc = {};
 			bool flag = false;
+			// Mixed CPU/GPU mip chains have independently changing sources.
+			bool revalidate_mipmaps = false;
 
 			sampled_image_descriptor() = default;
 
@@ -582,6 +618,11 @@ namespace rsx
 			template <typename surface_store_type, typename surface_type = typename surface_store_type::surface_type>
 			std::pair<bool, surface_type> is_expired(surface_store_type& surface_cache)
 			{
+				if (revalidate_mipmaps)
+				{
+					return { true, nullptr };
+				}
+
 				if (upload_context != rsx::texture_upload_context::framebuffer_storage)
 				{
 					return {};
@@ -1146,6 +1187,14 @@ namespace rsx
 
 			AUDIT(cause.valid());
 			AUDIT(fault_range_in.valid());
+#ifdef RPCS3_IOS
+			using metrics = rpcs3::ios::texture_cache_metrics;
+			rpcs3::ios::texture_validation_metrics().increment(
+				cause == invalidation_cause::unmap ? metrics::invalidate_unmap :
+				cause == invalidation_cause::reprotect ? metrics::invalidate_reprotect :
+				(cause == invalidation_cause::superseded_by_fbo || cause == invalidation_cause::committed_as_fbo) ? metrics::invalidate_fbo :
+				cause.is_read() ? metrics::invalidate_read : metrics::invalidate_write);
+#endif
 			address_range32 fault_range = fault_range_in.to_page_range();
 
 			intersecting_set trampled_set = get_intersecting_set(fault_range);
@@ -1845,10 +1894,16 @@ namespace rsx
 		texture_cache() : m_storage(this), m_predictor(this)
 		{
 #ifdef RPCS3_IOS
-			rsx_log.notice("iOS texture cache validation: inline XXH3 hashing");
+			rpcs3::ios::initialize_texture_cache_validation(g_cfg.ios_experimental.texture_write_tracking.get(),
+				g_cfg.ios_experimental.texture_validation_diagnostics.get());
 #endif
 		}
-		~texture_cache() = default;
+		~texture_cache()
+		{
+#ifdef RPCS3_IOS
+			rpcs3::ios::finish_texture_cache_validation();
+#endif
+		}
 
 		void clear()
 		{
@@ -2393,7 +2448,8 @@ namespace rsx
 				const auto found = m_temporary_subresource_cache.equal_range(desc.address);
 				for (auto It = found.first; It != found.second; ++It)
 				{
-					if (It->second.first.encoded_properties() != desc_key)
+					if (It->second.first.encoded_properties() != desc_key ||
+						!It->second.first.same_mipmap_sources(desc))
 						continue;
 
 					if (desc.op == deferred_request_command::copy_image_dynamic)
@@ -2476,6 +2532,23 @@ namespace rsx
 			{
 				if (!desc.do_not_cache) [[likely]]
 				{
+					if (!desc.mixed_mipmap_source_tags.empty())
+					{
+						const auto key = desc.encoded_properties();
+						const auto range = m_temporary_subresource_cache.equal_range(desc.address);
+						for (auto it = range.first; it != range.second;)
+						{
+							if (it->second.first.encoded_properties() == key)
+							{
+								release_temporary_subresource(it->second.second);
+								it = m_temporary_subresource_cache.erase(it);
+							}
+							else
+							{
+								++it;
+							}
+						}
+					}
 					m_temporary_subresource_cache.insert({ desc.address,{ desc, result } });
 				}
 				else
@@ -2627,6 +2700,12 @@ namespace rsx
 			for (auto& cached_texture : overlapping_locals)
 			{
 				if (cached_texture->matches(attr.address, attr.gcm_format, attr.width, attr.height, attr.depth, 0) &&
+#ifdef RPCS3_IOS
+					// A separately cached base level cannot satisfy a whole mip chain.
+					((cached_texture->get_context() != rsx::texture_upload_context::shader_read &&
+					  cached_texture->get_context() != rsx::texture_upload_context::blit_engine_src) ||
+					 cached_texture->get_mipmaps() >= attr.mipmaps) &&
+#endif
 					cached_texture->sync_protection())
 				{
 #ifdef TEXTURE_CACHE_DEBUG
@@ -3086,6 +3165,109 @@ namespace rsx
 			desc.cache_range = utils::address_range32::start_length(attributes.address, mipchain_length);
 		}
 
+#ifdef RPCS3_IOS
+		// Minecraft keeps the base atlas in CPU memory and renders the smaller
+		// levels into separate framebuffers. A miss for level zero must not force
+		// those already rendered levels through guest memory and back again.
+		template <typename RsxTextureType, typename surface_store_type>
+		sampled_image_descriptor gather_mipmaps_with_cpu_base(commandbuffer_type& cmd,
+			const RsxTextureType& tex, const image_section_attributes_t& attr,
+			const size3f& scale, texture_dimension_extended dimension,
+			surface_store_type& surfaces, reader_lock& lock)
+		{
+			// Start with the captured linear color layout. Other layouts retain
+			// the existing synchronized fallback until their copy rules are covered.
+			if (dimension != texture_dimension_extended::texture_dimension_2d ||
+				attr.swizzled || attr.gcm_format != CELL_GCM_TEXTURE_A8R8G8B8 ||
+				attr.mipmaps < 2 || attr.mipmaps > 13 || !attr.pitch)
+			{
+				return {};
+			}
+
+			// Keep collected source pointers stable and serialize section cache tags.
+			// A failed nonblocking upgrade leaves the existing fallback in control.
+			if (!lock.try_upgrade())
+			{
+				return {};
+			}
+			const auto base_range = address_range32::start_length(attr.address, attr.pitch * attr.height);
+			// The CPU base must not alias any GPU-owned section, including shared
+			// protection pages. Otherwise retain the normal coherent readback.
+			if (get_intersecting_set(base_range.to_page_range()).has_flushables ||
+				rsx::get_current_renderer()->get_tiled_memory_region(base_range))
+			{
+				return {};
+			}
+
+			rsx::simple_array<copy_region_descriptor> sections;
+			sections.reserve(attr.mipmaps);
+			sections.push_back({}); // Filled with the CPU base only after all levels resolve.
+			auto level_attr = attr;
+			level_attr.mipmaps = 1;
+			texture_cache_search_options options{};
+			options.prefer_surface_cache = true;
+			options.skip_texture_barriers = true;
+			options.skip_texture_merge = true;
+			auto as_surface = [](const copy_region_descriptor& region) -> typename surface_store_type::surface_type
+			{
+				return static_cast<typename surface_store_type::surface_type>(region.src);
+			};
+
+			for (u8 level = 1; level < attr.mipmaps; ++level)
+			{
+				level_attr.address += level_attr.pitch * level_attr.height;
+				level_attr.width = std::max<u16>(level_attr.width / 2, 1);
+				level_attr.height = std::max<u16>(level_attr.height / 2, 1);
+				level_attr.slice_h = level_attr.height;
+				const auto range = address_range32::start_length(level_attr.address, level_attr.pitch * level_attr.height);
+				auto image = fast_texture_search(cmd, level_attr, scale, tex.decoded_remap(),
+					options, range, dimension, surfaces);
+				if (!image.validate() || image.upload_context != texture_upload_context::framebuffer_storage ||
+					!helpers::append_mipmap_level(as_surface, sections, image, level_attr, level, false, attr))
+				{
+					return {};
+				}
+			}
+
+			auto base_attr = attr;
+			base_attr.mipmaps = 1;
+			auto base = fast_texture_search(cmd, base_attr, scale, tex.decoded_remap(),
+				options, base_range, dimension, surfaces);
+			if (!base.validate())
+			{
+				invalidate_range_impl_base(cmd, base_range, invalidation_cause::read);
+				auto layout = get_subresources_layout(tex);
+				layout.resize(1);
+				auto uploaded = upload_image_from_cpu(cmd, base_range, attr.width, attr.height, 1, 1,
+					attr.pitch, attr.gcm_format, texture_upload_context::blit_engine_src, layout, dimension, false);
+				base = { uploaded->get_view(tex.decoded_remap()), texture_upload_context::blit_engine_src,
+					classify_format(attr.gcm_format), scale, dimension, attr.address };
+			}
+
+			if (!helpers::append_mipmap_level(as_surface, sections, base, base_attr, 0, false, attr))
+			{
+				return {};
+			}
+			sections.front() = sections.back();
+			sections.pop_back();
+			auto desc = deferred_subresource::create_mipmap_gather(attr, std::move(sections), tex.decoded_remap());
+			desc.cache_range = address_range32::start_end(attr.address,
+				level_attr.address + level_attr.pitch * level_attr.height);
+			// Revalidate on each bind, but reuse the composite while its sources
+			// are unchanged. Allocating/copying every bind causes unbounded in-flight
+			// image pressure on Minecraft's repeated atlas draws.
+			desc.mixed_mipmap_source_tags.push_back(m_cache_update_tag.load());
+			for (usz i = 1; i < desc.sections_to_copy.size(); ++i)
+			{
+				desc.mixed_mipmap_source_tags.push_back(as_surface(desc.sections_to_copy[i])->last_use_tag);
+			}
+			sampled_image_descriptor result{ std::move(desc), texture_upload_context::shader_read,
+				classify_format(attr.gcm_format), scale, dimension, attr.address };
+			result.revalidate_mipmaps = true;
+			return result;
+		}
+#endif
+
 		template <typename RsxTextureType, typename surface_store_type, typename ...Args>
 		sampled_image_descriptor upload_texture(commandbuffer_type& cmd, const RsxTextureType& tex, surface_store_type& m_rtts, Args&&... extras)
 		{
@@ -3332,6 +3514,14 @@ namespace rsx
 					return result;
 				}
 			}
+
+#ifdef RPCS3_IOS
+			if (auto mixed = gather_mipmaps_with_cpu_base(cmd, tex, attributes, scale, extended_dimension, m_rtts, lock);
+				mixed.validate())
+			{
+				return mixed;
+			}
+#endif
 
 			// Do direct upload from CPU as the last resort
 			m_texture_upload_misses_this_frame++;

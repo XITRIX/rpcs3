@@ -167,8 +167,14 @@ void VKGSRender::present(vk::frame_context_t *ctx)
 		switch (VkResult error = m_swapchain->present(ctx->present_wait_semaphore, ctx->present_image))
 		{
 		case VK_SUCCESS:
+#ifdef RPCS3_IOS
+			rpcs3::ios::texture_validation_presented();
+#endif
 			break;
 		case VK_SUBOPTIMAL_KHR:
+#ifdef RPCS3_IOS
+			rpcs3::ios::texture_validation_presented();
+#endif
 #ifndef ANDROID
 			should_reinitialize_swapchain = true;
 #endif

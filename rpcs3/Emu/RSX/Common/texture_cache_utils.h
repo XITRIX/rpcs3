@@ -886,7 +886,7 @@ namespace rsx
 
 		bool locked = false;
 		void init_lockable_range(const address_range32& range);
-		u64  fast_hash_internal() const;
+		u64  fast_hash_internal(bool validation = false) const;
 
 	public:
 
