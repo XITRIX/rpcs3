@@ -1961,8 +1961,11 @@ bool VKGSRender::load_program()
 		}
 
 		// Load current program from cache
-		// The shader interpreter does not emulate the depth range; compile those programs synchronously instead
+		// A color passthrough can initialize an aliased render target. Dropping that draw
+		// leaves the previous format's bits for later blending/sampling (GTA V RGBA8 -> RGBA16F).
+		// The shader interpreter does not emulate the depth range; compile those programs synchronously instead.
 		const bool allow_async = shadermode != shader_mode::recompiler &&
+			(shadermode != shader_mode::async_recompiler || !fragment_program.is_color_passthrough()) &&
 			!(fragment_program.ctrl & RSX_SHADER_CONTROL_EMULATE_DEPTH_RANGE);
 
 		std::tie(m_program, m_vertex_prog, m_fragment_prog) = m_prog_buffer->get_graphics_pipeline(

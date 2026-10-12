@@ -303,6 +303,21 @@ struct RSXFragmentProgram
 		return data.data_ptr;
 	}
 
+	bool is_color_passthrough() const
+	{
+		if (ucode_length != 16 || !data.data_ptr)
+			return false;
+
+		const auto* words = static_cast<const u32*>(get_data());
+		const OPDEST dest = OPDEST::from_be32(words[0]);
+		const SRC0 source{.HEX = OPDEST::from_be32(words[1]).HEX};
+		const SRC1 modifier{.HEX = OPDEST::from_be32(words[2]).HEX};
+		return dest.end && dest.opcode == RSX_FP_OPCODE_MOV && !modifier.opcode_hi &&
+			!dest.no_dest && dest.dest_reg == 0 && dest.fp16 && dest.write_mask == 15 &&
+			dest.src_attr_reg_num == 1 && source.reg_type == RSX_FP_REGISTER_TYPE_INPUT &&
+			source.exec_if_lt && source.exec_if_eq && source.exec_if_gr;
+	}
+
 	void clone_data() const
 	{
 		ensure(ucode_length);
