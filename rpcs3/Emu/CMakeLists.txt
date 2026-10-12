@@ -112,6 +112,9 @@ if(RPCS3_FRONTEND STREQUAL "IOS")
 		../ios/RPCS3IOSExperimentalPolicy.h
 		../ios/IOSTextureHash.cpp
 		../ios/IOSTextureHash.h
+		../ios/IOSTextureCache.cpp
+		../ios/IOSTextureCache.h
+		../ios/IOSTextureCacheMetrics.h
 		../ios/IOSDMACopy.h
         ../ios/UPnPStubs.cpp
         ../ios/USBStubs.c

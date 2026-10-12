@@ -39,6 +39,7 @@ python3 "${SCRIPT_DIR}/run-rsx-cache-batch-tests.py"
 python3 "${SCRIPT_DIR}/run-vk-view-cache-tests.py"
 python3 "${SCRIPT_DIR}/run-vk-sampler-reuse-tests.py"
 python3 "${SCRIPT_DIR}/run-gpu-deswizzle-tests.py"
+python3 "${SCRIPT_DIR}/run-texture-section-tests.py"
 
 "${CXX_COMPILER}" -std=c++20 -O2 -Wall -Wextra -Werror \
     "${SCRIPT_DIR}/IOSGPUEventWaitTests.cpp" \
@@ -242,6 +243,12 @@ bash "${SCRIPT_DIR}/run-audio-tempo-tests.sh"
     -o "${OUTPUT_ROOT}/TextureCacheProtectionPolicyIOSTests"
 "${OUTPUT_ROOT}/TextureCacheProtectionPolicyIOSTests"
 
+"${CXX_COMPILER}" -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
+    -I "${SOURCE_ROOT}/rpcs3" \
+    "${SCRIPT_DIR}/TextureCacheMetricsTests.cpp" \
+    -o "${OUTPUT_ROOT}/TextureCacheMetricsTests"
+"${OUTPUT_ROOT}/TextureCacheMetricsTests"
+
 "${CXX_COMPILER}" -std=c++20 -Wall -Wextra -Werror \
     -I "${SOURCE_ROOT}" \
     "${SCRIPT_DIR}/TextureCacheHashTests.cpp" \
@@ -338,5 +345,7 @@ python3 "${SCRIPT_DIR}/run-self-decryption-tests.py"
 python3 "${SCRIPT_DIR}/run-arm64-memory-decoder-tests.py"
 
 python3 "${SCRIPT_DIR}/run-texture-lookup-tests.py"
+python3 "${SCRIPT_DIR}/run-texture-lookup-tests.py" --ios
+python3 "${SCRIPT_DIR}/run-mixed-mipmap-tests.py"
 python3 "${SCRIPT_DIR}/run-framebuffer-source-tests.py"
 python3 "${SCRIPT_DIR}/run-cubemap-border-tests.py"
