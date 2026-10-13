@@ -38,7 +38,7 @@ namespace rsx
 						rsx::mm_flush();
 
 						// If the backend handled the request, this call will basically be a NOP
-						g_fxo->get<rsx::dma_manager>().sync();
+						g_fxo->get<rsx::dma_manager>().sync(true);
 					}
 
 					if constexpr (FlushPipe)
