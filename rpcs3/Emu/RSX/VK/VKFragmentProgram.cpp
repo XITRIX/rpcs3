@@ -5,6 +5,7 @@
 #include "vkutils/device.h"
 #include "Emu/system_config.h"
 #include "../Program/GLSLCommon.h"
+#include "../Program/ProgramStateCache.h"
 
 std::string VKFragmentDecompilerThread::getFloatTypeName(usz elementCount)
 {
@@ -629,6 +630,13 @@ void VKFragmentProgram::Decompile(const RSXFragmentProgram& prog)
 	VKFragmentDecompilerThread decompiler(source, parr, prog, size, *this);
 
 	const auto pdev = vk::get_current_renderer();
+	// GTA V's captured FXAA program: precision accommodation for its DP2 /
+	// DIVSQ normalization only, not a change to RSX half arithmetic generally.
+	// The existing ucode hash excludes inline constants (resolution changes).
+	decompiler.device_props.preserve_fxaa_direction_length =
+		vk::get_driver_vendor() == vk::driver_vendor::MVK &&
+		prog.ucode_length == 912 &&
+		program_hash_util::fragment_program_utils::get_fragment_program_ucode_hash(prog) == 0x71da55b758e5d9c6ull;
 	if (g_cfg.video.shader_precision == gpu_preset_level::low)
 	{
 		decompiler.device_props.has_native_half_support = pdev->get_shader_types_support().allow_float16;

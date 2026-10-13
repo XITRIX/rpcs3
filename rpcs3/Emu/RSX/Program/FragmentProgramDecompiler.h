@@ -196,6 +196,7 @@ public:
 		bool emulate_depth_compare = false;
 		bool has_low_precision_rounding = false;
 		bool emulated_depth_storage = false;
+		bool preserve_fxaa_direction_length = false;
 	}
 	device_props;
 
