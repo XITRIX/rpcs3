@@ -33,6 +33,9 @@
 #include "ios/IOSDMACopy.h"
 #ifdef ARCH_ARM64
 #include "Emu/CPU/Backends/AArch64/SPUReservationScan.h"
+#if defined(__APPLE__) && defined(__aarch64__) && defined(__clang__) && defined(__ARM_FEATURE_ATOMICS)
+#include "Emu/CPU/Backends/AArch64/SPUReservationAtomic.h"
+#endif
 #include "Emu/CPU/Backends/AArch64/SPUReservationHash.h"
 #endif
 #endif
@@ -2527,7 +2530,7 @@ void spu_thread::do_dma_transfer(spu_thread* _this, const spu_mfc_cmd& args, u8*
 				auto& res = vm::reservation_acquire(eal);
 
 				// Lock each bit corresponding to a byte being written, using some free space in reservation memory
-				auto* bits = utils::bless<atomic_t<u128>>(vm::g_reservations + ((eal & 0xff80) / 2 + 16));
+				auto* bits = utils::bless<atomic_t<u128>>(vm::g_reservations + vm::reservation_offset(eal) + 16);
 
 				// Get writing mask
 				const u128 wmask = (~u128{} << (eal & 127)) & (~u128{} >> (127 - ((eal + size0 - 1) & 127)));
@@ -3601,6 +3604,15 @@ bool spu_thread::do_list_transfer(spu_mfc_cmd& args)
 	return true;
 }
 
+static FORCE_INLINE bool commit_rdata_reservation(atomic_t<u64>& res, u64 expected)
+{
+#if defined(RPCS3_IOS) && defined(__APPLE__) && defined(__aarch64__) && defined(__clang__) && defined(__ARM_FEATURE_ATOMICS)
+	return rpcs3::spu::reservation_compare_exchange(res.raw(), expected, expected + 128);
+#else
+	return res.compare_and_swap_test(expected, expected + 128);
+#endif
+}
+
 bool spu_thread::do_putllc(const spu_mfc_cmd& args)
 {
 	perf_meter<"PUTLLC-"_u64> perf0(nullptr);
@@ -3645,7 +3657,7 @@ bool spu_thread::do_putllc(const spu_mfc_cmd& args)
 		{
 			// Writeback of unchanged data. Only check memory change
 			// For the comparison, load twice for atomicity
-			if (cmp_rdata(rdata, vm::_ref<spu_rdata_t>(addr)) && rdata_fence() && res == rtime && cmp_rdata(rdata, vm::_ref<spu_rdata_t>(addr)) && res.compare_and_swap_test(rtime, rtime + 128))
+			if (cmp_rdata(rdata, vm::_ref<spu_rdata_t>(addr)) && rdata_fence() && res == rtime && cmp_rdata(rdata, vm::_ref<spu_rdata_t>(addr)) && commit_rdata_reservation(res, rtime))
 			{
 				raddr = 0; // Disable notification
 				return true;
@@ -3800,7 +3812,7 @@ void do_cell_atomic_128_store(u32 addr, const void* to_write)
 
 	{
 		auto& sdata = *vm::get_super_ptr<spu_rdata_t>(addr);
-		auto& res = *utils::bless<atomic_t<u128>>(vm::g_reservations + (addr & 0xff80) / 2);
+		auto& res = *utils::bless<atomic_t<u128>>(vm::g_reservations + vm::reservation_offset(addr));
 
 		if (std::memcmp(static_cast<const u8*>(to_write), &sdata, 16) == 0 && std::memcmp(static_cast<const u8*>(to_write) + 64, &sdata[64], 16) == 0)
 		{
@@ -3931,7 +3943,7 @@ void do_cell_atomic_128_store(u32 addr, const void* to_write)
 
 void spu_thread::do_putlluc(const spu_mfc_cmd& args)
 {
-	perf_meter<"PUTLLUC"_u64> perf0;
+	perf_meter<"PUTLLUC"_u64> perf0(nullptr);
 
 	const u32 addr = args.eal & -128;
 
