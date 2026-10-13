@@ -73,7 +73,7 @@ namespace vm
 	u8* const g_free_addr = g_stat_addr + layout::guest_address_space_size;
 
 	// Reservation stats
-	alignas(4096) u8 g_reservations[65536 / 128 * 64]{0};
+	alignas(4096) u8 g_reservations[reservation_table_size]{0};
 
 	// Pointers to shared memory mirror or zeros for "normal" memory
 	alignas(4096) atomic_t<u64> g_shmem[65536]{0};
@@ -539,7 +539,7 @@ namespace vm
 
 		if (range_lock)
 		{
-			perf_meter<"SUSPEND"_u64> perf0;
+			perf_meter<"SUSPEND"_u64> perf0(nullptr);
 
 			for (auto lock = g_locks.cbegin(), end = lock + g_cfg.core.ppu_threads; lock != end; lock++)
 			{

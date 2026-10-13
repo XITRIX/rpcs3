@@ -8,6 +8,7 @@
 #include "util/auto_typemap.hpp"
 
 #include "util/to_endian.hpp"
+#include "vm_reservation_layout.h"
 
 class ppu_thread;
 
@@ -35,7 +36,7 @@ namespace vm
 	extern u8* const g_exec_addr;
 	extern u8* const g_stat_addr;
 	extern u8* const g_free_addr;
-	extern u8 g_reservations[65536 / 128 * 64];
+	extern u8 g_reservations[reservation_table_size];
 
 	static constexpr u64 g_exec_addr_seg_offset = 0x2'0000'0000ULL;
 

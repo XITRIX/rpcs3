@@ -27,7 +27,7 @@ namespace vm
 	inline atomic_t<u64>& reservation_acquire(u32 addr)
 	{
 		// Access reservation info: stamp and the lock bit
-		return *reinterpret_cast<atomic_t<u64>*>(g_reservations + (addr & 0xff80) / 2);
+		return *reinterpret_cast<atomic_t<u64>*>(g_reservations + reservation_offset(addr));
 	}
 
 	// Update reservation status

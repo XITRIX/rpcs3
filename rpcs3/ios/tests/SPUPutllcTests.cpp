@@ -21,6 +21,12 @@ struct reservation
     bool compare_and_swap_test(u64 a,u64 b){if(fail||value!=a)return false;value=b;return true;}
     template<typename F> auto fetch_op(F f){u64 old=value,n=value;bool ok=!fail&&f(n);if(ok)value=n;return std::pair{old,ok};}
 };
+// The transaction fixture models the same strong CAS; the production lowering
+// is exercised separately by SPUReservationAtomicTests.cpp under contention.
+bool commit_rdata_reservation(reservation& res, u64 expected)
+{
+    return res.compare_and_swap_test(expected, expected + 128);
+}
 int locks=0,scans=0,faults=0,writer_locks=0;bool cas_fail=false;u64 change_on_lock=0;
 struct range_lock_t {void release(int){}};
 namespace vm

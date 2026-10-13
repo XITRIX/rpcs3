@@ -129,7 +129,7 @@ struct cfg_root : cfg::node
 		cfg::_enum<ios_experimental_mode> dma_copy_specialization{ this, "DMA Copy Specialization", ios_experimental_mode::automatic };
 		cfg::_enum<ios_experimental_mode> texture_hash_hybrid{ this, "Hybrid Texture Hash", ios_experimental_mode::automatic };
 		// Retain the original persisted key for existing title settings and presets.
-		cfg::_bool texture_write_tracking{ this, "Legacy Texture Write Tracking", false };
+		cfg::_bool texture_write_tracking{ this, "Legacy Texture Write Tracking", true };
 		cfg::_bool texture_validation_diagnostics{ this, "Texture Validation Diagnostics", false };
 
 		cfg::_enum<ios_experimental_mode> neon_byte_swap{ this, "ARM64 Byte-Swap Uploads", ios_experimental_mode::automatic };
