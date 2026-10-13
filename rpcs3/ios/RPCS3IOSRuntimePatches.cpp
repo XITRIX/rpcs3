@@ -1,4 +1,5 @@
 #include "RPCS3IOSRuntimePatches.h"
+#include "RPCS3IOSBundledPatches.h"
 
 #include "Crypto/utils.h"
 #include "Utilities/File.h"
@@ -22,6 +23,13 @@ bool has_suffix(std::string_view value, std::string_view suffix)
 
 bool load_all_patch_files(patch_engine::patch_map& patches, std::string& detail)
 {
+	std::stringstream bundled_messages;
+	if (!patch_engine::load(patches, "Bundled Apple patches", std::string{bundled_patches}, false, &bundled_messages))
+	{
+		detail = bundled_messages.str();
+		return false;
+	}
+
 	const std::string directory = patch_engine::get_patches_path();
 	std::vector<std::string> names{"patch.yml", "imported_patch.yml"};
 

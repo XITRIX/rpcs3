@@ -16,18 +16,21 @@ fixture=r'''
 #include <cstdint>
 #include <cstdio>
 #include <memory>
+#include <vector>
 using u32=uint32_t;using u64=uint64_t;
 enum class thread_state{created,aborting};struct atomic_wait_timeout{u64 value;};
-struct counter{u64 value=0;static inline unsigned waits=0;u64 load()const{return value;}void wait(u64,atomic_wait_timeout t){assert(t.value>0);++waits;value+=2000;}};
-struct worker{void* current_thread_=nullptr;counter m_enqueued_count,m_processed_count;thread_state state=thread_state::created;
+struct counter{u64 value=0;static inline unsigned waits=0;u64 load()const{return value;}void release(u64 x){value=x;}operator u64()const{return value;}void wait(u64,atomic_wait_timeout t){assert(t.value>0);++waits;value+=2000;}};
+struct claim{bool compare_and_swap_test(u32,u32){return false;}void release(u32){}};
+struct queue{std::vector<int> pop_all(){return {};}};
+struct worker{claim m_exec_claim;bool m_rsx_running_jobs=false;queue m_work_queue;void* current_thread_=nullptr;counter m_enqueued_count,m_processed_count;thread_state state=thread_state::created;
  operator thread_state()const{return state;}worker& operator=(thread_state x){state=x;return *this;}};
 worker* active=nullptr;unsigned pauses=0;
 namespace utils{void pause(){++pauses;if(pauses==1000 && active)active->m_processed_count.value=active->m_enqueued_count.value;}}
 namespace thread_ctrl{void* current=nullptr;void* get_current(){return current;}}
 struct renderer{bool current=true;unsigned callbacks=0;bool is_current_thread(){return current;}void on_semaphore_acquire_wait(){++callbacks;}} gpu;
 renderer* get_current_renderer(){return &gpu;}
-struct dma_manager{std::unique_ptr<worker>m_thread;bool m_mem_fault_flag=false,m_wait_parking=true;
- bool is_current_thread()const;bool sync()const;void join();};
+struct dma_manager{struct offload_thread{struct execution_guard{worker& owner;bool runner;~execution_guard(){}};static void execute(int){}};std::unique_ptr<worker>m_thread;bool m_mem_fault_flag=false,m_wait_parking=true;
+ bool is_current_thread()const;bool sync(bool=false)const;void join();};
 #include "production.inc"
 int main(){
  dma_manager d;thread_ctrl::current=&gpu;assert(!d.is_current_thread());assert(d.sync());d.join();d.join();

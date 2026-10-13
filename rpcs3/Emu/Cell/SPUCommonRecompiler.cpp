@@ -1029,6 +1029,16 @@ void spu_cache::initialize(bool build_existing_cache)
 	{
 		return;
 	}
+	else if (!g_cfg.core.spu_cache && !is_debug)
+	{
+		// ARMSX3 835252339985 (jpolo1224): disabling SPU Cache must also
+		// skip an existing saved list. Leave the list on disk for later use.
+		if (!func_list.empty())
+		{
+			spu_log.notice("SPU Cache is off: %u saved SPU functions in %s are not built", func_list.size(), loc);
+		}
+		return;
+	}
 	else
 	{
 		total_precompile = 0;

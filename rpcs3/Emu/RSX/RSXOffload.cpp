@@ -22,8 +22,52 @@ namespace rsx
 		atomic_t<u64> m_enqueued_count = 0;
 		atomic_t<u64> m_processed_count = 0;
 		transport_packet* m_current_job = nullptr;
+		// Adapted from ARMSX3 0bf3db3c02fc (jpolo1224). Serialize whole FIFO
+		// batches so the RSX thread can drain work before an idle worker wakes.
+		atomic_t<u32> m_exec_claim = 0;
+		bool m_rsx_running_jobs = false; // Read/written only by the RSX thread.
 
 		thread_base* current_thread_ = nullptr;
+
+		struct execution_guard
+		{
+			offload_thread& owner;
+			bool rsx_runner;
+
+			~execution_guard()
+			{
+				if (rsx_runner)
+					owner.m_rsx_running_jobs = false;
+				else
+					owner.m_current_job = nullptr;
+				owner.m_exec_claim.release(0);
+				owner.m_processed_count.notify_all();
+			}
+		};
+
+		static void execute(transport_packet& job)
+		{
+			switch (job.type)
+			{
+			case raw_copy:
+			{
+				const u32 vm_addr = vm::try_get_addr(job.src).first;
+				rsx::reservation_lock<true, 1> rsx_lock(vm_addr, job.length, g_cfg.video.strict_rendering_mode && vm_addr);
+				std::memcpy(job.dst, job.src, job.length);
+				break;
+			}
+			case vector_copy:
+				std::memcpy(job.dst, job.opt_storage.data(), job.length);
+				break;
+			case index_emulate:
+				write_index_array_for_non_indexed_non_native_primitive_to_buffer(static_cast<char*>(job.dst), static_cast<rsx::primitive_type>(job.aux_param0), job.length);
+				break;
+			case callback:
+				rsx::get_current_renderer()->renderctl(job.aux_param0, job.src);
+				break;
+			default: fmt::throw_exception("Unreachable");
+			}
+		}
 
 		void operator ()()
 		{
@@ -43,41 +87,21 @@ namespace rsx
 
 			while (thread_ctrl::state() != thread_state::aborting)
 			{
-				for (auto&& job : m_work_queue.pop_all())
+				if (!m_exec_claim.compare_and_swap_test(0, 1))
 				{
-					m_current_job = &job;
-
-					switch (job.type)
-					{
-					case raw_copy:
-					{
-						const u32 vm_addr = vm::try_get_addr(job.src).first;
-						rsx::reservation_lock<true, 1> rsx_lock(vm_addr, job.length, g_cfg.video.strict_rendering_mode && vm_addr);
-						std::memcpy(job.dst, job.src, job.length);
-						break;
-					}
-					case vector_copy:
-					{
-						std::memcpy(job.dst, job.opt_storage.data(), job.length);
-						break;
-					}
-					case index_emulate:
-					{
-						write_index_array_for_non_indexed_non_native_primitive_to_buffer(static_cast<char*>(job.dst), static_cast<rsx::primitive_type>(job.aux_param0), job.length);
-						break;
-					}
-					case callback:
-					{
-						rsx::get_current_renderer()->renderctl(job.aux_param0, job.src);
-						break;
-					}
-					default: fmt::throw_exception("Unreachable");
-					}
-
-					m_processed_count.release(m_processed_count + 1);
+					std::this_thread::yield();
+					continue;
 				}
 
-				m_current_job = nullptr;
+				{
+					execution_guard guard{*this, false};
+					for (auto&& job : m_work_queue.pop_all())
+					{
+						m_current_job = &job;
+						execute(job);
+						m_processed_count.release(m_processed_count + 1);
+					}
+				}
 
 				if (m_enqueued_count.load() == m_processed_count.load())
 				{
@@ -177,7 +201,7 @@ namespace rsx
 		return false;
 	}
 
-	bool dma_manager::sync() const
+	bool dma_manager::sync(bool run_here) const
 	{
 		// Stop can destroy a renderer before its offloader starts. No worker
 		// means no queued work to drain.
@@ -202,6 +226,13 @@ namespace rsx
 				return false;
 			}
 
+			if (_thr.m_rsx_running_jobs)
+			{
+				// A fault in an inline job can re-enter via command submission.
+				// The unfinished job cannot make progress until that flush returns.
+				return false;
+			}
+
 			u32 spins = 0;
 
 			while (true)
@@ -211,6 +242,23 @@ namespace rsx
 				if (_thr.m_enqueued_count.load() <= processed)
 				{
 					break;
+				}
+
+				if (run_here && _thr.m_exec_claim.compare_and_swap_test(0, 1))
+				{
+					bool ran = false;
+					{
+						offload_thread::execution_guard guard{_thr, true};
+						_thr.m_rsx_running_jobs = true;
+						for (auto&& job : _thr.m_work_queue.pop_all())
+						{
+							offload_thread::execute(job);
+							_thr.m_processed_count.release(_thr.m_processed_count + 1);
+							ran = true;
+						}
+					}
+					if (ran)
+						continue;
 				}
 
 				rsxthr->on_semaphore_acquire_wait();

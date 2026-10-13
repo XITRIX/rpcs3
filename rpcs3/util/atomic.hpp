@@ -1066,6 +1066,11 @@ struct atomic_storage<T, 16> : atomic_storage<T, 0>
 		}
 		else
 		{
+#if defined(__ARM_FEATURE_ATOMICS)
+			// ARMSX3 1f384274f9d4 (jpolo1224): CASP avoids a polling
+			// load repeatedly disrupting another core's exclusive pair.
+			return std::bit_cast<T>(__atomic_load_n(reinterpret_cast<const u128*>(&dest), __ATOMIC_SEQ_CST));
+#else
 			u32 tmp;
 			u64 data[2];
 			__asm__ volatile("1:\n"
@@ -1079,6 +1084,7 @@ struct atomic_storage<T, 16> : atomic_storage<T, 0>
 			T result;
 			std::memcpy(&result, data, 16);
 			return result;
+#endif
 		}
 	}
 
@@ -1090,6 +1096,18 @@ struct atomic_storage<T, 16> : atomic_storage<T, 0>
 
 	static inline bool compare_exchange(T& dest, T& comp, T exch)
 	{
+#if defined(__ARM_FEATURE_ATOMICS)
+		// A single CASPAL on LSE targets. Legacy ARMv8-A keeps the
+		// exclusive-pair implementation below and never requires LSE.
+		u128 expected = std::bit_cast<u128>(comp);
+		if (__atomic_compare_exchange_n(reinterpret_cast<u128*>(&dest), &expected,
+			std::bit_cast<u128>(exch), false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+		{
+			return true;
+		}
+		comp = std::bit_cast<T>(expected);
+		return false;
+#else
 		bool result;
 		u64 cmp[2];
 		std::memcpy(cmp, &comp, 16);
@@ -1117,10 +1135,15 @@ struct atomic_storage<T, 16> : atomic_storage<T, 0>
 
 		std::memcpy(&comp, prev, 16);
 		return false;
+#endif
 	}
 
 	static inline T exchange(T& dest, T value)
 	{
+#if defined(__ARM_FEATURE_ATOMICS)
+		return std::bit_cast<T>(__atomic_exchange_n(reinterpret_cast<u128*>(&dest),
+			std::bit_cast<u128>(value), __ATOMIC_SEQ_CST));
+#else
 		u32 tmp;
 		u64 src[2];
 		u64 data[2];
@@ -1136,6 +1159,7 @@ struct atomic_storage<T, 16> : atomic_storage<T, 0>
 		T result;
 		std::memcpy(&result, data, 16);
 		return result;
+#endif
 	}
 
 	static inline void store(T& dest, T value)
