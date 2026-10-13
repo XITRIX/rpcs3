@@ -89,8 +89,12 @@ int main(int argc,char** argv)
     {
         vendor=driver;reset();delay_model=true;ticks=0;completion=10000;
         assert(q.get_query_result(0)==0);
-        assert(flags_seen.size()==(waiting&&driver==driver_vendor::MVK?2u:10000u));
+        assert(flags_seen.size()==10000u); // A partial zero cannot finish early.
         std::printf("%s driver=%s delayed probes=%zu\n",mode.c_str(),driver==driver_vendor::MVK?"MVK":"other",flags_seen.size());
+        reset();q.result_flags=0;delay_model=true;ticks=0;completion=10000;
+        assert(q.get_query_result(0)==0);
+        assert(flags_seen.size()==(waiting&&driver==driver_vendor::MVK?2u:10000u));
+        q.result_flags=VK_QUERY_RESULT_PARTIAL_BIT;
     }
     delay_model=false;vendor=driver_vendor::MVK;
     std::array<query_pool,4> pools;std::vector<u32> ids;
