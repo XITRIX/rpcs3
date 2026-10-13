@@ -1029,7 +1029,10 @@ void spu_cache::initialize(bool build_existing_cache)
 		{
 			spu_log.notice("SPU Cache is off: %u saved SPU functions in %s are not built", func_list.size(), loc);
 		}
-		return;
+		// The runtime interpreter bootstrap below is independent of persistence.
+		func_list.clear();
+		total_precompile = 0;
+		data_list = {};
 	}
 	else
 	{
@@ -1059,6 +1062,11 @@ void spu_cache::initialize(bool build_existing_cache)
 				spu_log.fatal("SPU Runtime: Failed to build the interpreter.");
 			}
 		}
+	}
+
+	if (!g_cfg.core.spu_cache && !is_debug)
+	{
+		return;
 	}
 
 	u32 worker_count = 0;

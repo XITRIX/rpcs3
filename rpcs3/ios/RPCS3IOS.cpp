@@ -3,6 +3,7 @@
 #include "RPCS3IOSBootProgress.h"
 #include "RPCS3IOSCapabilities.h"
 #include "RPCS3IOSConfigDatabase.h"
+#include "RPCS3IOSRecommendations.h"
 #include "RPCS3IOSContract.h"
 #include "RPCS3IOSDisplay.h"
 #include "RPCS3IOSLocalization.h"
@@ -459,12 +460,14 @@ private:
 	std::string m_name;
 };
 
+bool apply_database_settings_for_api(std::string_view title_id);
+
 bool load_settings_for_api(std::string_view title_id, bool& has_custom_config)
 {
 	const auto result = rpcs3::ios::load_effective_settings(title_id, has_custom_config);
 	if (result == rpcs3::ios::settings_load_error::none)
 	{
-		return true;
+		return has_custom_config || title_id.empty() || apply_database_settings_for_api(title_id);
 	}
 
 	set_error(std::string{rpcs3::ios::settings_load_error_detail(result)});
@@ -473,8 +476,9 @@ bool load_settings_for_api(std::string_view title_id, bool& has_custom_config)
 
 bool apply_database_settings_for_api(std::string_view title_id)
 {
+	const auto game = rpcs3::ios::find_installed_game(title_id);
 	const std::string database_config =
-		rpcs3::ios::shared_config_database().config_for(title_id);
+		rpcs3::ios::recommendations_for_title(title_id, game ? game->version : "").config;
 	if (database_config.empty())
 	{
 		return true;
@@ -633,10 +637,11 @@ std::string zcull_accuracy_value(bool use_default)
 
 bool collect_database_recommendations(
 	std::string_view title_id,
+	std::string_view installed_version,
 	setting_recommendations& recommendations)
 {
-	const std::string database_config =
-		rpcs3::ios::shared_config_database().config_for(title_id);
+	const auto title_config = rpcs3::ios::recommendations_for_title(title_id, installed_version);
+	const std::string& database_config = title_config.config;
 	if (database_config.empty())
 	{
 		return true;
@@ -663,7 +668,8 @@ bool collect_database_recommendations(
 		const std::string default_value = is_zcull_accuracy
 			? zcull_accuracy_value(true)
 			: setting.entry->def_to_string();
-		if (value != default_value)
+		if (value != default_value ||
+			std::ranges::find(title_config.port_keys, setting.key) != title_config.port_keys.end())
 		{
 			recommendations.emplace(std::string{setting.key}, std::move(value));
 		}
@@ -1079,7 +1085,7 @@ emu_callbacks make_callbacks()
 	callbacks.enable_gamemode = [](bool) {};
 	callbacks.get_database_config = [](const std::string& title_id)
 	{
-		return rpcs3::ios::shared_config_database().config_for(title_id);
+		return rpcs3::ios::recommendations_for_title(title_id, Emu.GetAppVersion()).config;
 	};
 	return callbacks;
 }
@@ -3205,7 +3211,7 @@ extern "C" rpcs3_ios_status rpcs3_ios_enumerate_game_settings(
 	{
 		settings_state_guard state_guard;
 		setting_recommendations recommendations;
-		if (!collect_database_recommendations(title_id, recommendations))
+		if (!collect_database_recommendations(title_id, game.version, recommendations))
 		{
 			set_error(fmt::format(
 				"Unable to load title configuration database recommendations for %s",
