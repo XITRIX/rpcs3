@@ -138,6 +138,10 @@ namespace vk
 		// Update heap information and reset the allocator
 		rsx::data_heap::init(aligned_new_size, m_name, m_min_guard_size);
 
+		// ARMSX3 05efc85699bd (jpolo1224): retiring a grown ring returns
+		// its backing instead of leaving a hole inside a retained VMA block.
+		constexpr VkFlags grown_heap_flags = VK_BUFFER_CREATE_DEDICATED_MEMORY_RPCS3;
+
 		// Discard old heap and create a new one. Old heap will be garbage collected when no longer needed
 		auto gc = get_resource_manager();
 		if (shadow)
@@ -146,7 +150,7 @@ namespace vk
 			rsx_log.warning("Buffer usage %u is not heap-compatible using this driver, explicit staging buffer in use", usage);
 
 			gc->dispose(shadow);
-			shadow = std::make_unique<buffer>(*g_render_device, aligned_new_size, memory_index, memory_flags, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 0, VMM_ALLOCATION_POOL_SYSTEM);
+			shadow = std::make_unique<buffer>(*g_render_device, aligned_new_size, memory_index, memory_flags, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, grown_heap_flags, VMM_ALLOCATION_POOL_SYSTEM);
 			usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 			memory_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 			memory_index = memory_map.device_local;
@@ -154,7 +158,7 @@ namespace vk
 
 		gc->dispose(heap);
 
-		VkFlags create_flags = 0;
+		VkFlags create_flags = grown_heap_flags;
 		if (m_prefer_writethrough)
 		{
 			create_flags |= (VK_BUFFER_CREATE_ALLOW_NULL_RPCS3 | VK_BUFFER_CREATE_IGNORE_VMEM_PRESSURE_RPCS3);
@@ -170,7 +174,7 @@ namespace vk
 			// We failed to place the buffer in rebar memory. Try again in host-visible.
 			m_prefer_writethrough = false;
 			gc->dispose(heap);
-			heap = std::make_unique<buffer>(*g_render_device, aligned_new_size, memory_map.host_visible_coherent, memory_flags, usage, 0, VMM_ALLOCATION_POOL_SYSTEM);
+			heap = std::make_unique<buffer>(*g_render_device, aligned_new_size, memory_map.host_visible_coherent, memory_flags, usage, grown_heap_flags, VMM_ALLOCATION_POOL_SYSTEM);
 		}
 
 		if (notify_on_grow)
