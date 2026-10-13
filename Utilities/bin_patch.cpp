@@ -9,6 +9,10 @@
 #include "Emu/System.h"
 #include "Emu/VFS.h"
 
+#ifdef RPCS3_IOS
+#include "ios/RPCS3IOSBundledPatches.h"
+#endif
+
 #include "util/types.hpp"
 #include "util/asm.hpp"
 #include "util/cctype.hpp"
@@ -890,6 +894,10 @@ bool patch_engine::read_patch_node(patch_info& info, YAML::Node node, const YAML
 
 void patch_engine::append_global_patches()
 {
+#ifdef RPCS3_IOS
+	// Core-owned optional patches share the normal persisted enable state.
+	load(m_map, "Bundled Apple patches", std::string{rpcs3::ios::bundled_patches});
+#endif
 	// Regular patch.yml
 	load(m_map, get_patches_path() + "patch.yml");
 

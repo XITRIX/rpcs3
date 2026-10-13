@@ -1066,6 +1066,11 @@ struct atomic_storage<T, 16> : atomic_storage<T, 0>
 		}
 		else
 		{
+#if defined(__ARM_FEATURE_ATOMICS)
+			// ARMSX3 1f384274f9d4 (jpolo1224): CASP avoids a polling
+			// load repeatedly disrupting another core's exclusive pair.
+			return std::bit_cast<T>(__atomic_load_n(reinterpret_cast<const u128*>(&dest), __ATOMIC_SEQ_CST));
+#else
 			u32 tmp;
 			u64 data[2];
 			__asm__ volatile("1:\n"
@@ -1079,6 +1084,7 @@ struct atomic_storage<T, 16> : atomic_storage<T, 0>
 			T result;
 			std::memcpy(&result, data, 16);
 			return result;
+#endif
 		}
 	}
 

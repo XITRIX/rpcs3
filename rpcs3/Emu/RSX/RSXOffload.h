@@ -78,7 +78,9 @@ namespace rsx
 
 		// Synchronization
 		bool is_current_thread() const;
-		bool sync() const;
+		// Only FIFO callers outside command submission may execute queued jobs here.
+		// A job can fault and flush the command queue, re-entering submission's sync.
+		bool sync(bool run_here = false) const;
 		void join();
 		void set_mem_fault_flag();
 		void clear_mem_fault_flag();

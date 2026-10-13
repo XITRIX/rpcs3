@@ -1665,7 +1665,9 @@ void camera_context::operator()()
 
 		if (!init || !fps || Emu.IsPausedOrReady() || g_cfg.io.camera == camera_handler::null)
 		{
-			thread_ctrl::wait_for(1000); // hack
+			// ARMSX3 90a50f75ca72 (jpolo1224): the null backend cannot
+			// produce frames. Avoid waking it a thousand times per second.
+			thread_ctrl::wait_for(g_cfg.io.camera == camera_handler::null ? 100'000 : 1000);
 			continue;
 		}
 
