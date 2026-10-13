@@ -63,6 +63,8 @@ const extern spu_decoder<spu_iflag> g_spu_iflag;
 
 #ifdef ARCH_ARM64
 #include "SPUARM64Lowering.h"
+#include "SPUARM64FloatConvert.h"
+#include "SPUARM64ConstantTable.h"
 #include "SPUARM64CompareLowering.h"
 #include "Emu/CPU/Backends/AArch64/AArch64JIT.h"
 #include "Emu/CPU/Backends/AArch64/SPUChecksum.h"
@@ -1723,7 +1725,7 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 		// Touch memory (on the opposite side of the page)
 		m_ir->CreateAtomicRMW(llvm::AtomicRMWInst::Or, _ptr(m_memptr, m_ir->CreateXor(_eal, 4096 / 2)), m_ir->getInt8(0), llvm::MaybeAlign{16}, llvm::AtomicOrdering::SequentiallyConsistent);
 
-		const auto rptr = _ptr(m_ir->CreateLoad(get_type<u8*>(), spu_ptr(&spu_thread::reserv_base_addr)), ((eal_val & 0xff80) >> 1).eval(m_ir));
+		const auto rptr = _ptr(m_ir->CreateLoad(get_type<u8*>(), spu_ptr(&spu_thread::reserv_base_addr)), ((eal_val & 0xff80) >> vm::reservation_stride_shift).eval(m_ir));
 		const auto rtime = m_ir->CreateLoad(get_type<u64>(), spu_ptr(&spu_thread::rtime));
 
 		m_ir->CreateBr(_repeat_lock);
@@ -1774,7 +1776,7 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 
 		// Perform unlocked vm::reservation_update if no physical memory changes needed
 		m_ir->SetInsertPoint(_inc_res);
-		const auto rptr2 = _ptr(m_ir->CreateLoad(get_type<u8*>(), spu_ptr(&spu_thread::reserv_base_addr)), ((eal_val & 0xff80) >> 1).eval(m_ir));
+		const auto rptr2 = _ptr(m_ir->CreateLoad(get_type<u8*>(), spu_ptr(&spu_thread::reserv_base_addr)), ((eal_val & 0xff80) >> vm::reservation_stride_shift).eval(m_ir));
 
 		llvm::Value* old_val{};
 
@@ -1884,7 +1886,7 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 		value_t<u32> eal_val;
 		eal_val.value = _eal;
 
-		const auto rptr = _ptr(m_ir->CreateLoad(get_type<u8*>(), spu_ptr(&spu_thread::reserv_base_addr)), ((eal_val & 0xff80) >> 1).eval(m_ir));
+		const auto rptr = _ptr(m_ir->CreateLoad(get_type<u8*>(), spu_ptr(&spu_thread::reserv_base_addr)), ((eal_val & 0xff80) >> vm::reservation_stride_shift).eval(m_ir));
 		const auto rval = m_ir->CreateLoad(get_type<u64>(), spu_ptr(&spu_thread::rtime));
 		m_ir->CreateCondBr(
 			m_ir->CreateExtractValue(m_ir->CreateAtomicCmpXchg(rptr, rval, m_ir->CreateAdd(rval, m_ir->getInt64(128)), llvm::MaybeAlign{16}, llvm::AtomicOrdering::SequentiallyConsistent, llvm::AtomicOrdering::SequentiallyConsistent), 1)
@@ -4218,6 +4220,7 @@ public:
 			lower_spu_variable_insertions(f);
 			spu_llvm::arm64::fold_byte_reversals(f);
 			spu_llvm::arm64::fold_single_source_tables(f);
+			spu_llvm::arm64::fold_constant_tables(f);
 			spu_llvm::arm64::fold_wide_comparison_reversals(f);
 #endif
 		}
@@ -9857,11 +9860,11 @@ public:
 				a = eval(a * s);
 
 			value_t<s32[4]> r;
-			r.value = m_ir->CreateFPToSI(a.value, get_type<s32[4]>());
 #if defined(ARCH_ARM64)
-			const auto sat_hi = bitcast<s32[4]>(a) > splat<s32[4]>(((31 + 127) << 23) - 1);
-			set_vr(op.rt, select(sat_hi, splat<s32[4]>(0x7fffffff), select(fcmp_uno(a != a), splat<s32[4]>(0x80000000), r)));
+			r.value = spu_llvm::arm64::convert_scaled_float(*m_ir, a.value, true);
+			set_vr(op.rt, r);
 #else
+			r.value = m_ir->CreateFPToSI(a.value, get_type<s32[4]>());
 			set_vr(op.rt, r ^ sext<s32[4]>(bitcast<s32[4]>(a) > splat<s32[4]>(((31 + 127) << 23) - 1)));
 #endif
 		}
@@ -9947,8 +9950,13 @@ public:
 			}
 #endif
 
+#if defined(ARCH_ARM64)
+			r.value = spu_llvm::arm64::convert_scaled_float(*m_ir, a.value, false);
+			set_vr(op.rt, r);
+#else
 			r.value = m_ir->CreateFPToUI(a.value, get_type<s32[4]>());
 			set_vr(op.rt, select(bitcast<s32[4]>(a) > splat<s32[4]>(((32 + 127) << 23) - 1), splat<s32[4]>(-1), r & ~(bitcast<s32[4]>(a) >> 31)));
+#endif
 		}
 	}
 
