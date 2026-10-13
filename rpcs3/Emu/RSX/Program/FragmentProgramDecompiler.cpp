@@ -1087,10 +1087,27 @@ bool FragmentProgramDecompiler::handle_sct_scb(u32 opcode)
 	case RSX_FP_OPCODE_ADD: SetDst("($0 + $1)"); return true;
 	case RSX_FP_OPCODE_DIV: SetDst("_builtin_div($0, $1.x)"); return true;
 	case RSX_FP_OPCODE_DIVSQ:
-		SetDst("_builtin_divsq($0, $1.x)");
+		if (device_props.preserve_fxaa_direction_length && m_instruction->addr == 0x130)
+		{
+			SetDst("_builtin_divsq($0, _fxaa_direction_length)");
+		}
+		else
+		{
+			SetDst("_builtin_divsq($0, $1.x)");
+		}
 		properties.has_divsq = true;
 		return true;
-	case RSX_FP_OPCODE_DP2: SetDst(getFunction(FUNCTION::DP2), OPFLAGS::op_extern); return true;
+	case RSX_FP_OPCODE_DP2:
+		if (device_props.preserve_fxaa_direction_length && m_instruction->addr == 0x120)
+		{
+			// This exact FXAA program squares a tiny but nonzero direction into
+			// H0.x, then divides by its square root. Half rounding can erase the
+			// length and send infinite coordinates to the texture sampler.
+			// Retain the normal register write and only widen that denominator.
+			AddCode("float _fxaa_direction_length = dot($float2($0.xy), $float2($1.xy));");
+		}
+		SetDst(getFunction(FUNCTION::DP2), OPFLAGS::op_extern);
+		return true;
 	case RSX_FP_OPCODE_DP3:
 		SetDst(getFunction(dst.prec == RSX_FP_PRECISION_REAL && g_cfg.video.shader_precision == gpu_preset_level::ultra ? FUNCTION::DP3_PRECISE : FUNCTION::DP3), OPFLAGS::op_extern);
 		return true;
