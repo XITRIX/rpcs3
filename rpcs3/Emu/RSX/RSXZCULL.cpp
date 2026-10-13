@@ -933,7 +933,9 @@ namespace rsx
 						{
 							// R/W to active block
 							need_disable_optimizations = true;    // Defer actual operation
-							m_pages_accessed[location] = true;
+							// Keep faults routable until disable_optimizations unlocks the pages.
+							// Another CPU can be waiting for the FIFO pause below while RSX
+							// itself faults on a semaphore sharing this protected report page.
 						}
 						else
 						{
