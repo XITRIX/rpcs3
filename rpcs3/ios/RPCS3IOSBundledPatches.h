@@ -7,13 +7,15 @@ namespace rpcs3::ios
 // Adapted from ARMSX3 39023e231226 / cff5ef467641, jpolo1224, GPL-2.0-only.
 // Parsed by RPCS3's native patch engine for both boot and the patch manager.
 // Optional: enabling this never changes the user's SPU accuracy setting.
-// BLES01128 and the standalone EFLC executable are not verified by the source.
+// BLES01128 01.02 matches the exact collision hash in the physical iPad log.
+// The standalone EFLC executable remains unverified.
 inline constexpr std::string_view bundled_patches = R"patch(Version: 1.2
 SPU-d0a1508208613e2184fbd64906d34d5f07890033:
   "ARMSX3 Approximate collision fix":
     Games:
       "Grand Theft Auto IV":
         BLUS30682: [ "01.02" ]
+        BLES01128: [ "01.02" ]
         BLUS30127: [ "01.08" ]
         NPUB30702: [ "01.08" ]
     Author: "jpolo1224"
@@ -22,8 +24,9 @@ SPU-d0a1508208613e2184fbd64906d34d5f07890033:
       the world. Changes fourteen collision-search initializers from SPU max
       to FLT_MAX; requires the exact collision executable hash. Verified by
       ARMSX3 for US Complete Edition 01.02 (including its episodes) and US GTA IV
-      01.08. European Complete Edition and standalone Episodes from Liberty City
-      are unverified. Enable this patch before selecting Approximate and cold
+      01.08. European Complete Edition BLES01128 01.02 has the same collision
+      executable hash in the iPad session log. Standalone Episodes from Liberty
+      City remains unverified. Enable this patch before selecting Approximate and cold
       boot the game; keep Accurate if the executable does not match. Apple
       gameplay and collision behavior remain unvalidated.
     Patch Version: 1.0
