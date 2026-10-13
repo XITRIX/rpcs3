@@ -2,6 +2,19 @@
 
 namespace iso
 {
+	TEST_F(iso_test, DirectoryPreservesDistinctSelfAndParentEntries)
+	{
+		iso_archive archive(m_path);
+		ASSERT_TRUE(archive.is_valid());
+		const auto& children = archive.root().children;
+		ASSERT_EQ(children.size(), 3);
+		EXPECT_EQ(children[0]->metadata.name, ".");
+		EXPECT_EQ(children[1]->metadata.name, "..");
+		EXPECT_EQ(children[2]->metadata.name, "TEST.BIN");
+		EXPECT_TRUE(children[0]->metadata.is_directory);
+		EXPECT_TRUE(children[1]->metadata.is_directory);
+	}
+
 	TEST_F(iso_test, MissingMemberReturnsEmptyHandle)
 	{
 		iso_archive archive(m_path);

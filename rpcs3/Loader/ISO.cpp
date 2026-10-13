@@ -1143,7 +1143,10 @@ static std::optional<iso_fs_metadata> iso_read_directory_entry(fs::file& entry, 
 		file_name.erase(file_name.end() - 2, file_name.end());
 	}
 
-	if (file_name.size() > 1 && file_name.ends_with("."))
+	// The parent record was decoded from the one-byte identifier above. It is
+	// not a regular filename with an empty extension: trimming it produces a
+	// second "." entry that games can recurse into during directory scans.
+	if (file_name.size() > 1 && file_name != ".." && file_name.ends_with("."))
 	{
 		file_name.pop_back();
 	}
