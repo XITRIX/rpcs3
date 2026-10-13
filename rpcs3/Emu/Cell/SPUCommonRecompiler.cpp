@@ -1506,8 +1506,8 @@ spu_runtime::spu_runtime()
 #ifdef RPCS3_IOS
 	if (rpcs3::ios::get_experimental_policy().persistent_spu_object_cache)
 	{
-		// v5 makes compiled decrementer reads use the pause-aware guest clock.
-		constexpr u32 cache_version = 5;
+		// v6 includes the host reservation stride baked into generated addresses.
+		constexpr u32 cache_version = 6;
 		constexpr usz max_files = 12'000;
 		sha1_context ctx;
 		u8 key[20];
@@ -1519,6 +1519,7 @@ spu_runtime::spu_runtime()
 		};
 
 		fold(cache_version);
+		fold(vm::reservation_stride);
 		const u32 xfloat = static_cast<u32>(g_cfg.core.spu_xfloat_accuracy.get());
 		const u32 block_size = static_cast<u32>(g_cfg.core.spu_block_size.get());
 		const u32 clocks_scale = static_cast<u32>(g_cfg.core.clocks_scale.get());
