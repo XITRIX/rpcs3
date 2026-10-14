@@ -454,11 +454,13 @@ void VKGSRender::load_texture_env()
 		}
 		else
 		{
-			// Not all GPUs support linear filtering of depth formats
+			// Depth comparison filtering is supported independently of raw depth filtering.
+			// FILTER_LINEAR only gates non-comparison sampling of depth formats.
 			const auto vk_format = sampler_state->image_handle ? sampler_state->image_handle->image()->format() :
 				vk::get_compatible_sampler_format(m_device->get_formats_support(), sampler_state->external_subresource_desc.gcm_format);
 
-			can_sample_linear = m_device->get_format_properties(vk_format).optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+			can_sample_linear = compare_enabled ||
+				(m_device->get_format_properties(vk_format).optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
 		}
 
 		const auto mipmap_count = tex.get_exact_mipmap_count();
