@@ -202,6 +202,9 @@ if(USE_VULKAN)
 		add_library(moltenvk_ios STATIC IMPORTED GLOBAL)
 		set_target_properties(moltenvk_ios PROPERTIES IMPORTED_LOCATION "${MOLTENVK_LIBRARY}")
 		target_include_directories(moltenvk_ios SYSTEM INTERFACE "${MOLTENVK_INCLUDE_DIR}")
+		# Source-built static MoltenVK keeps selector-only category objects in
+		# separate archive members. Retain its display/descriptor helpers.
+		target_link_options(moltenvk_ios INTERFACE "-Wl,-ObjC")
 		target_link_libraries(moltenvk_ios INTERFACE
 			"-framework Metal"
 			"-framework Foundation"
