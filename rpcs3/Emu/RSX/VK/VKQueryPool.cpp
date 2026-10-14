@@ -176,12 +176,10 @@ namespace vk
 		{
 			poke_query(query_info, index, result_flags);
 
-			// WAIT requires full availability even when PARTIAL is set. Keep
-			// probing partial queries so a later positive visibility result can
-			// be used before the entire submission completes. Zero still needs
-			// availability; queries requiring final counts retain the native wait.
-			const auto wait_flags = vk::get_driver_vendor() == vk::driver_vendor::MVK &&
-				!(result_flags & VK_QUERY_RESULT_PARTIAL_BIT)
+			// Keep the initial partial-result probe, then use MoltenVK's native
+			// completion wait. Unbounded partial polling consumed substantial
+			// CPU time in GTA IV without an established frame-rate benefit.
+			const auto wait_flags = vk::get_driver_vendor() == vk::driver_vendor::MVK
 				? result_flags | VK_QUERY_RESULT_WAIT_BIT : result_flags;
 			while (!query_info.ready)
 			{
