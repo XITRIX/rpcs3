@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check production query completion against an independent driver timing model."""
+"""Check production query results and bounded MoltenVK probes against a driver model."""
 import argparse
 import os
 from pathlib import Path
@@ -26,7 +26,7 @@ def method(marker):
 poke = method('inline bool query_pool_manager::poke_query(')
 complete = method('u32 query_pool_manager::get_query_result(')
 if args.negative_control:
-    complete = complete.replace(' &&\n\t\t\t\t!(result_flags & VK_QUERY_RESULT_PARTIAL_BIT)', '')
+    complete = complete.replace('== vk::driver_vendor::MVK\n', '== vk::driver_vendor::MVK &&\n\t\t\t\t!(result_flags & VK_QUERY_RESULT_PARTIAL_BIT)\n', 1)
 fixture = r'''
 #include <array>
 #include <cassert>
@@ -81,15 +81,18 @@ int main() {
         if (cached) {q.query_slot_status[0].ready=true;q.query_slot_status[0].data=7;}
         const auto value=q.get_query_result(0);
         assert(value==(cached || positive<=100 ? 7u : 0u));
-        const int expected=cached ? 0 : precise || positive>100 ? 100 : positive;
+        const int expected=cached ? 0 : !precise && positive<=100 && (other || positive==1) ? positive : 100;
         if (tick!=expected) {
-            std::fprintf(stderr,"Partial visibility waited for full completion: positive=%d actual=%d expected=%d\n",positive,tick,expected);
+            std::fprintf(stderr,"Query completion bypassed the native wait: positive=%d actual=%d expected=%d\n",positive,tick,expected);
             return 86;
         }
-        if (!cached && precise && !other) assert(probes==2);
+        if (!other && !cached && probes!=(!precise && positive==1 ? 1 : 2)) {
+            std::fprintf(stderr,"MoltenVK completion used %d CPU probes instead of native waiting\n",probes);
+            return 86;
+        }
         ++cases;
     }
-    std::printf("%u production-query cases: early/later partial, final zero, accurate counts, cached and non-MVK results passed. Timing is modeled.\n",cases);
+    std::printf("%u production-query cases: immediate partial, native wait, final zero, accurate counts, cached and non-MVK results passed. Timing is modeled.\n",cases);
 }
 '''.replace('@METHODS@', poke + '\n' + complete)
 with tempfile.TemporaryDirectory(prefix='vk-query-partial-') as directory:
@@ -102,7 +105,7 @@ with tempfile.TemporaryDirectory(prefix='vk-query-partial-') as directory:
     subprocess.run(command + [str(cpp), '-o', str(exe)], check=True)
     result = subprocess.run([str(exe)], timeout=10)
     if args.negative_control:
-        assert result.returncode == 86, f'Expected late partial-result stall, got {result.returncode}'
-        print('Original WAIT control rejected: a later partial result is delayed until full availability.')
+        assert result.returncode == 86, f'Expected unbounded polling rejection, got {result.returncode}'
+        print('Unbounded polling control rejected: MoltenVK completion must retain the native wait.')
     else:
         result.check_returncode()
