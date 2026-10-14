@@ -2865,7 +2865,7 @@ namespace
 
 			ensure(pthread_attr_init(&attrs) == 0);
 			ensure(pthread_attr_setstacksize(&attrs, 0x800000) == 0);
-			ensure(pthread_attr_set_qos_class_np(&attrs, QOS_CLASS_USER_INTERACTIVE, 0) == 0);
+			ensure(pthread_attr_set_qos_class_np(&attrs, QOS_CLASS_USER_INITIATED, 0) == 0);
 
 			const int create_error = pthread_create(&thread_id, &attrs, &ios_thread_worker::run, worker);
 			ensure(pthread_attr_destroy(&attrs) == 0);
@@ -2912,6 +2912,9 @@ void* ios_thread_worker::run(void* opaque) noexcept
 			worker->job.wait(nullptr);
 		}
 
+		// A reused native worker starts with the same priority as a new one.
+		// Individual jobs may raise rendering/audio or lower compilation priority.
+		thread_ctrl::set_native_priority(0);
 		job_context context{worker, thread};
 		pthread_cleanup_push(&ios_thread_worker::abandon, &context);
 		thread->entry_point(thread);
@@ -4108,7 +4111,8 @@ void thread_ctrl::set_native_priority(int priority)
 	// SCHED_RR policy or query POSIX scheduling state: Metal performs the same
 	// query while compiling shaders, and physical iOS 27 incidents faulted in
 	// that path after RPCS3 created real-time-priority pthreads.
-	const qos_class_t qos = priority < 0 ? QOS_CLASS_UTILITY : QOS_CLASS_USER_INTERACTIVE;
+	const qos_class_t qos = priority > 0 ? QOS_CLASS_USER_INTERACTIVE
+		: priority < 0 ? QOS_CLASS_UTILITY : QOS_CLASS_USER_INITIATED;
 
 	if (const int err = pthread_set_qos_class_self_np(qos, 0))
 	{

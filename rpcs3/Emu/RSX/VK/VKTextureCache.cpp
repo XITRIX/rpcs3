@@ -957,6 +957,26 @@ namespace vk
 		VkImageAspectFlags dst_aspect = vk::get_aspect_flags(result->info.format);
 		VkImageSubresourceRange dst_range = { dst_aspect, 0, mipmaps, 0, 1 };
 		vk::change_image_layout(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, dst_range);
+		const bool fully_overwritten = [&]()
+		{
+			if (dst_aspect != VK_IMAGE_ASPECT_COLOR_BIT || !mipmaps || mipmaps >= 32)
+				return false;
+
+			u32 covered_levels = 0;
+			for (const auto& section : sections_to_copy)
+			{
+				if (!section.src || section.src->aspect() != VK_IMAGE_ASPECT_COLOR_BIT ||
+					!section.src_w || !section.src_h || section.level >= mipmaps ||
+					section.dst_x || section.dst_y || section.dst_z ||
+					section.dst_w != std::max(1u, u32{image->width()} >> section.level) ||
+					section.dst_h != std::max(1u, u32{image->height()} >> section.level))
+				{
+					return false;
+				}
+				covered_levels |= 1u << section.level;
+			}
+			return covered_levels == (1u << mipmaps) - 1;
+		}();
 
 		if (desc.force_bg_load)
 		{
@@ -965,8 +985,13 @@ namespace vk
 		}
 		else if (!(dst_aspect & VK_IMAGE_ASPECT_DEPTH_BIT))
 		{
-			VkClearColorValue clear = {};
-			vkCmdClearColorImage(cmd, image->value, image->current_layout, &clear, 1, &dst_range);
+			// A full copy of every mip replaces all pooled-image contents. Avoid
+			// clearing those levels, which costs a separate render pass per mip on Metal.
+			if (!fully_overwritten)
+			{
+				VkClearColorValue clear = {};
+				vkCmdClearColorImage(cmd, image->value, image->current_layout, &clear, 1, &dst_range);
+			}
 		}
 		else
 		{
