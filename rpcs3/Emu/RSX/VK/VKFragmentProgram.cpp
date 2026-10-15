@@ -141,6 +141,7 @@ void VKFragmentDecompilerThread::insertHeader(std::stringstream & OS)
 
 	OS << "#extension GL_ARB_separate_shader_objects: enable\n\n";
 
+	OS << "#define _ENABLE_VK_COLOR_BORDER\n";
 	glsl::insert_subheader_block(OS);
 }
 

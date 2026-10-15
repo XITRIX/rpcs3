@@ -380,6 +380,9 @@ vec4 _texture(in vec4 coord, float bias)
 	case RSX_SAMPLE_TEXTURE_2D:
 		coord.xy = _texcoord_xform(coord.xy, texture_parameters[ur0 + texture_base_index]);
 		vr0 = texture(SAMPLER2D(ur0), coord.xy, bias);
+#ifdef _ENABLE_VK_COLOR_BORDER
+		vr0 = _apply_color_border(vr0, coord.xy, vec2(textureSize(SAMPLER2D(ur0), 0)), texture_parameters[ur0 + texture_base_index]);
+#endif
 		break;
 	case RSX_SAMPLE_TEXTURE_CUBE:
 		coord.xyz = _texcoord_xform(coord.xyz, texture_parameters[ur0 + texture_base_index]);
@@ -419,6 +422,9 @@ vec4 _textureLod(in vec4 coord, float lod)
 	case RSX_SAMPLE_TEXTURE_2D:
 		coord.xy = _texcoord_xform(coord.xy, texture_parameters[ur0 + texture_base_index]);
 		vr0 = textureLod(SAMPLER2D(ur0), coord.xy, lod);
+#ifdef _ENABLE_VK_COLOR_BORDER
+		vr0 = _apply_color_border(vr0, coord.xy, vec2(textureSize(SAMPLER2D(ur0), 0)), texture_parameters[ur0 + texture_base_index]);
+#endif
 		break;
 	case RSX_SAMPLE_TEXTURE_CUBE:
 		coord.xyz = _texcoord_xform(coord.xyz, texture_parameters[ur0 + texture_base_index]);
