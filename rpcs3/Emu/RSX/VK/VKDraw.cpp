@@ -5,6 +5,7 @@
 
 #include "VKAsyncScheduler.h"
 #include "VKGSRender.h"
+#include "VKTextureBorder.h"
 #include "vkutils/buffer_object.h"
 #include "vkutils/chip_class.h"
 #include <vulkan/vulkan_core.h>
@@ -407,8 +408,8 @@ void VKGSRender::load_texture_env()
 		}
 
 		const f32 af_level = vk::max_aniso(tex.max_aniso());
-		const auto wrap_s = vk::vk_wrap_mode(tex.wrap_s());
-		const auto wrap_t = vk::vk_wrap_mode(tex.wrap_t());
+		auto wrap_s = vk::vk_wrap_mode(tex.wrap_s());
+		auto wrap_t = vk::vk_wrap_mode(tex.wrap_t());
 		const auto wrap_r = vk::vk_wrap_mode(tex.wrap_r());
 
 		// NOTE: In vulkan, the border color can bypass the sample swizzle stage.
@@ -515,6 +516,10 @@ void VKGSRender::load_texture_env()
 				min_filter.mipmap_mode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
 			}
 		}
+
+		const auto emulated_border = vk::get_color_border_state(*m_device, tex, *sampler_state, min_filter.filter, mag_filter);
+		if (emulated_border.control & vk::color_border_s) wrap_s = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		if (emulated_border.control & vk::color_border_t) wrap_t = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 
 		if (fs_sampler_handles[i] &&
 			fs_sampler_handles[i]->matches(wrap_s, wrap_t, wrap_r, false, lod_bias, af_level, min_lod, max_lod,

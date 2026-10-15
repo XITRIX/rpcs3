@@ -89,12 +89,18 @@ vec4 _decode_depth_texel(const in vec4 texel, const in uint flags, const in uint
 #define TEX1D_PROJ(index, coord4) _process_texel(_DEPTH_DECODE(index, texture(TEX_NAME(index), COORD_PROJ1(index, coord4.xw))), TEX_FLAGS(index))
 #endif
 
+#ifdef _ENABLE_VK_COLOR_BORDER
+#define _COLOR_BORDER2(index, texel, coord) _apply_color_border(texel, coord, vec2(textureSize(TEX_NAME(index), 0)), TEX_PARAM(index))
+#else
+#define _COLOR_BORDER2(index, texel, coord) texel
+#endif
+
 #ifdef _ENABLE_TEX2D
-#define TEX2D(index, coord2) _process_texel(_DEPTH_DECODE(index, texture(TEX_NAME(index), COORD_SCALE2(index, coord2))), TEX_FLAGS(index))
-#define TEX2D_BIAS(index, coord2, bias) _process_texel(_DEPTH_DECODE(index, texture(TEX_NAME(index), COORD_SCALE2(index, coord2), bias)), TEX_FLAGS(index))
-#define TEX2D_LOD(index, coord2, lod) _process_texel(_DEPTH_DECODE(index, textureLod(TEX_NAME(index), COORD_SCALE2(index, coord2), lod)), TEX_FLAGS(index))
-#define TEX2D_GRAD(index, coord2, dpdx, dpdy) _process_texel(_DEPTH_DECODE(index, textureGrad(TEX_NAME(index), COORD_SCALE2(index, coord2), dpdx, dpdy)), TEX_FLAGS(index))
-#define TEX2D_PROJ(index, coord4) _process_texel(_DEPTH_DECODE(index, texture(TEX_NAME(index), COORD_PROJ2(index, coord4.xyw))), TEX_FLAGS(index))
+#define TEX2D(index, coord2) _process_texel(_DEPTH_DECODE(index, _COLOR_BORDER2(index, texture(TEX_NAME(index), COORD_SCALE2(index, coord2)), COORD_SCALE2(index, coord2))), TEX_FLAGS(index))
+#define TEX2D_BIAS(index, coord2, bias) _process_texel(_DEPTH_DECODE(index, _COLOR_BORDER2(index, texture(TEX_NAME(index), COORD_SCALE2(index, coord2), bias), COORD_SCALE2(index, coord2))), TEX_FLAGS(index))
+#define TEX2D_LOD(index, coord2, lod) _process_texel(_DEPTH_DECODE(index, _COLOR_BORDER2(index, textureLod(TEX_NAME(index), COORD_SCALE2(index, coord2), lod), COORD_SCALE2(index, coord2))), TEX_FLAGS(index))
+#define TEX2D_GRAD(index, coord2, dpdx, dpdy) _process_texel(_DEPTH_DECODE(index, _COLOR_BORDER2(index, textureGrad(TEX_NAME(index), COORD_SCALE2(index, coord2), dpdx, dpdy), COORD_SCALE2(index, coord2))), TEX_FLAGS(index))
+#define TEX2D_PROJ(index, coord4) _process_texel(_DEPTH_DECODE(index, _COLOR_BORDER2(index, texture(TEX_NAME(index), COORD_PROJ2(index, coord4.xyw)), COORD_PROJ2(index, coord4.xyw))), TEX_FLAGS(index))
 #endif
 
 #ifdef _ENABLE_SHADOW
