@@ -11,6 +11,7 @@
 #include "VKCommonPipelineLayout.h"
 #include "VKCompute.h"
 #include "VKGSRender.h"
+#include "VKTextureBorder.h"
 #include "VKHelpers.h"
 #include "VKRenderPass.h"
 #include "VKResourceManager.h"
@@ -642,7 +643,7 @@ VKGSRender::VKGSRender(utils::serial* ar) noexcept : GSRender(ar)
 	else
 		m_vertex_cache = std::make_unique<vk::weak_vertex_cache>();
 
-	m_shaders_cache = std::make_unique<vk::shader_cache>(*m_prog_buffer, "vulkan", "v1.95-apple-depth-alpha2-fxaa1-position1");
+	m_shaders_cache = std::make_unique<vk::shader_cache>(*m_prog_buffer, "vulkan", "v1.95-apple-depth-alpha2-fxaa1-position1-border1");
 
 	// Only headless images are owned before acquisition from the presentation engine.
 	if (m_swapchain->is_headless())
@@ -2164,13 +2165,32 @@ void VKGSRender::load_program_env()
 
 	if (update_fragment_texture_env)
 	{
-		m_texture_parameters_dynamic_offset = m_fragment_texture_params_ring_info.static_alloc<256, 768>();
-		auto buf = m_fragment_texture_params_ring_info.map(m_texture_parameters_dynamic_offset, 768);
+		m_texture_parameters_dynamic_offset = m_fragment_texture_params_ring_info.static_alloc<256, 1024>();
+		auto buf = m_fragment_texture_params_ring_info.map(m_texture_parameters_dynamic_offset, 1024);
 
-		current_fragment_program.texture_params.write_to(buf, current_fp_metadata.referenced_textures_mask);
+		struct texture_record
+		{
+			rsx::fragment_program_texture_config::TIU_slot params;
+			color4f border_color;
+		};
+		static_assert(sizeof(texture_record) == vk::fragment_texture_record_size);
+		auto records = static_cast<texture_record*>(buf);
+		for (u32 mask = current_fp_metadata.referenced_textures_mask; mask; mask &= mask - 1)
+		{
+			const u32 i = std::countr_zero(mask);
+			records[i] = {current_fragment_program.texture_params[i], color4f{0.f}};
+			if (fs_sampler_handles[i] && fs_sampler_state[i])
+			{
+				const auto& sampler = fs_sampler_handles[i]->info;
+				const auto border = vk::get_color_border_state(*m_device, rsx::method_registers.fragment_textures[i],
+					*fs_sampler_state[i], sampler.minFilter, sampler.magFilter);
+				records[i].params.control |= border.control;
+				records[i].border_color = border.color;
+			}
+		}
 		m_fragment_texture_params_ring_info.unmap();
 
-		m_fragment_texture_params_buffer_info = m_fragment_texture_params_ring_info.window<768>(m_texture_parameters_dynamic_offset, 768, gpu_limits.maxUniformBufferRange);
+		m_fragment_texture_params_buffer_info = m_fragment_texture_params_ring_info.window<1024>(m_texture_parameters_dynamic_offset, 1024, gpu_limits.maxUniformBufferRange);
 		m_texture_parameters_dynamic_offset -= m_fragment_texture_params_buffer_info.offset;
 	}
 
@@ -2344,7 +2364,7 @@ void VKGSRender::update_vertex_env(u32 id, const vk::vertex_upload_info& vertex_
 	const u32 vertex_layout_offset = static_cast<u32>(m_vertex_layout_dynamic_offset) / 168u;
 	const u32 fs_constant_id_offset = static_cast<u32>(m_fragment_constants_dynamic_offset) / 16u;
 	const u32 fs_context_offset = static_cast<u32>(m_fragment_env_dynamic_offset) / 32u;
-	const u32 fs_texture_base_index = static_cast<u32>(m_texture_parameters_dynamic_offset) / 48u;
+	const u32 fs_texture_base_index = static_cast<u32>(m_texture_parameters_dynamic_offset) / vk::fragment_texture_record_size;
 	const u32 fs_stipple_pattern_offset = static_cast<u32>(m_stipple_array_dynamic_offset) / 16u;
 
 	auto buf = m_vertex_layout_ring_info.map(m_vertex_layout_dynamic_offset + (168u * id), 168u);
