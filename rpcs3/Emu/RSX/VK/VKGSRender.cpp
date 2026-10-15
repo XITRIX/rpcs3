@@ -643,7 +643,7 @@ VKGSRender::VKGSRender(utils::serial* ar) noexcept : GSRender(ar)
 	else
 		m_vertex_cache = std::make_unique<vk::weak_vertex_cache>();
 
-	m_shaders_cache = std::make_unique<vk::shader_cache>(*m_prog_buffer, "vulkan", "v1.95-apple-depth-alpha2-fxaa1-position1-border1");
+	m_shaders_cache = std::make_unique<vk::shader_cache>(*m_prog_buffer, "vulkan", "v1.95-apple-depth-alpha2-fxaa1-position1-border1-fpnop1");
 
 	// Only headless images are owned before acquisition from the presentation engine.
 	if (m_swapchain->is_headless())
