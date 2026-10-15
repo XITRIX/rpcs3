@@ -633,12 +633,14 @@ fragment_program_utils::fragment_program_metadata fragment_program_utils::analys
 		if ((inst._u32[0] >> 8) & 0x1)
 		{
 			result.program_start_offset = index * 16;
-			result.program_ucode_length = 16;
+			result.program_ucode_length = is_any_src_constant(inst) ? 32 : 16;
 			result.is_nop_shader = true;
 			return result;
 		}
 
-		index++;
+		// A NOP can consume a literal slot too. Match the CFG decoder's walk
+		// so literal bits are never mistaken for the first instruction.
+		index += is_any_src_constant(inst) ? 2 : 1;
 	}
 
 	while (true)
