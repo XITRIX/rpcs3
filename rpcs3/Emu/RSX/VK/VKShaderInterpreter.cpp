@@ -310,6 +310,7 @@ namespace vk
 		"#extension GL_EXT_uniform_buffer_unsized_array : require\n"
 		"#extension GL_ARB_separate_shader_objects : enable\n\n";
 
+		builder << "#define _ENABLE_VK_COLOR_BORDER\n";
 		::glsl::insert_subheader_block(builder);
 		comp.insertConstants(builder);
 
