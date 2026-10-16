@@ -594,7 +594,11 @@ namespace vm
 			{
 				if (auto ptr = +*lock)
 				{
-					for (u64 wait_iteration = 0; !(ptr->state & cpu_flag::wait); wait_iteration++)
+					// A PPU can unregister while we wait, then clear its wait flag
+					// without re-entering this slot. It no longer participates in
+					// this handshake. New registrants see our published range lock
+					// and cannot access guest memory until it has been released.
+					for (u64 wait_iteration = 0; *lock == ptr && !(ptr->state & cpu_flag::wait); wait_iteration++)
 					{
 						reservation_lock_wait(wait_iteration);
 					}

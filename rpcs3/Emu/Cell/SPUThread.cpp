@@ -3539,7 +3539,7 @@ static bool wait_for_reservation_release(u32 addr, u64 expected)
 
 	// A long-running writer needs CPU time to finish its PPU/RSX handshake.
 	// Register before rechecking the lock so a successful store cannot lose
-	// its wakeup. Failed stores need not notify, hence the bounded timeout.
+	// its wakeup. Keep the bounded timeout for other unnotified releases.
 	if (auto [wait_var, flag] = vm::reservation_notifier_begin_wait(addr, expected & ~u64{127}); wait_var)
 	{
 		if (vm::reservation_acquire(addr) == expected)
@@ -3682,6 +3682,14 @@ bool spu_thread::do_putllc(const spu_mfc_cmd& args)
 		}();
 
 		res += success ? 64 : 0 - 64;
+#ifdef RPCS3_IOS
+		// A failed conditional store also releases the unique lock. Parked
+		// readers must retry even though the reservation version is unchanged.
+		if (!success && vm::reservation_notifier_count(addr, rtime))
+		{
+			vm::reservation_notifier_notify(addr, rtime);
+		}
+#endif
 		return success;
 	}())
 	{
