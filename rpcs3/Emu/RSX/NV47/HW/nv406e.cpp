@@ -56,6 +56,9 @@ namespace rsx
 
 			u64 start = get_system_time();
 			u64 last_check_val = start;
+#ifdef RPCS3_IOS
+			u32 wait_spins = 0;
+#endif
 
 			while (sema != arg)
 			{
@@ -96,8 +99,24 @@ namespace rsx
 
 				RSX(ctx)->on_semaphore_acquire_wait();
 
+#ifdef RPCS3_IOS
+				// ARM event waits keep the host thread runnable. After a short
+				// spin, let the guest producer use the core. Service work and
+				// stop checks still run on every bounded retry; ordinary guest
+				// semaphore stores need not issue an emulator notification.
+				if (wait_spins < 32)
+				{
+					++wait_spins;
+					utils::spin_on_cacheline_once(atomic_sema, sema, 100);
+				}
+				else if (atomic_sema.load() != arg)
+				{
+					thread_ctrl::wait_for(50);
+				}
+#else
 				// Wait until the value changes or until 100us pass.
 				utils::spin_on_cacheline_once(atomic_sema, sema, 100);
+#endif
 			}
 
 			RSX(ctx)->fifo_wake_delay();

@@ -538,7 +538,11 @@ namespace rsx
 					else
 					{
 						data.reg = FIFO_EMPTY;
-						m_command_reg = m_cmd & 0xfffc;
+						// read_unsafe advances both position and register before
+						// reading. Retry the first argument, not the following word.
+						m_fifo_pos -= 4;
+						m_command_inc = ((m_cmd & RSX_METHOD_NON_INCREMENT_CMD_MASK) == RSX_METHOD_NON_INCREMENT_CMD) ? 0 : 4;
+						m_command_reg = (m_cmd & 0xfffc) - m_command_inc;
 						m_remaining_commands++;
 					}
 

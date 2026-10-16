@@ -490,6 +490,8 @@ namespace np
 	np_handler::np_handler(utils::serial& ar)
 		: np_handler()
 	{
+		const bool runtime_connected = is_connected;
+		const bool runtime_psn_active = is_psn_active;
 		ar(is_netctl_init, is_NP_init);
 
 		if (!is_NP_init)
@@ -498,6 +500,12 @@ namespace np
 		}
 
 		ar(is_NP_Lookup_init, is_NP_Score_init, is_NP2_init, is_NP2_Match2_init, is_NP_Auth_init, manager_cb, manager_cb_arg, std::as_bytes(std::span(&basic_handler, 1)), is_connected, is_psn_active, hostname, ether_address, local_ip_addr, public_ip_addr, dns_ip);
+
+		// A saved online session cannot provide a connection or RPCN client
+		// disabled/unavailable in this process. Keep guest initialization state,
+		// but expose the current runtime's offline state to PSN callers.
+		is_connected = is_connected && runtime_connected;
+		is_psn_active = is_psn_active && runtime_psn_active && is_connected;
 
 		// Call init func if needed (np_memory is unaffected when an empty pool is provided)
 		init_NP(0, vm::null);

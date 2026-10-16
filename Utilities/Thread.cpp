@@ -1548,6 +1548,44 @@ u64 get_a64_reg_value(ucontext_t* context, u32 reg_index, u32 reg_size)
 namespace rsx
 {
 	extern std::function<bool(u32 addr, bool is_writing)> g_access_violation_handler;
+	extern std::function<bool(u32 addr, u32 size, u64& value)> g_read_fault_handler;
+}
+
+// Called only after the existing decoder accepts a scalar load. Verify its
+// effective address: a cross-page fault may report a byte after the load start.
+// Keep FP/LR/SP out of the context general-register array (x0-x28 on Darwin).
+template <typename ReadRegister>
+static bool a64_load_matches_fault(u32 instruction, u32 size, u64 fault, ReadRegister read)
+{
+	const u32 base = (instruction >> 5) & 31;
+	if (base >= 29 || !size || fault % size) return false;
+	u64 offset = 0;
+	if ((instruction & 0x3B000000u) == 0x39000000u)
+	{
+		offset = u64((instruction >> 10) & 4095) * size;
+	}
+	else if ((instruction & 0x3B204C00u) == 0x38204800u)
+	{
+		const u32 index = (instruction >> 16) & 31;
+		if (index >= 29 && index != 31) return false;
+		offset = index == 31 ? 0 : read(index);
+		switch ((instruction >> 13) & 7)
+		{
+		case 2: offset = u32(offset); break;
+		case 3: break;
+		case 6: offset = static_cast<u64>(static_cast<s64>(static_cast<s32>(offset))); break;
+		case 7: break;
+		default: return false;
+		}
+		if (instruction & (1u << 12)) offset *= size;
+	}
+	else if ((instruction & 0x3B200C00u) == 0x38000000u)
+	{
+		const s32 immediate = (instruction >> 12) & 511;
+		offset = static_cast<u64>(static_cast<s64>(immediate >= 256 ? immediate - 512 : immediate));
+	}
+	else return false;
+	return read(base) + offset == fault;
 }
 
 bool handle_access_violation(u32 addr, bool is_writing, bool is_exec, ucontext_t* context) noexcept
@@ -1595,7 +1633,30 @@ bool handle_access_violation(u32 addr, bool is_writing, bool is_exec, ucontext_t
 			state_changed = vm::temporary_unlock(*cpu);
 		}
 
-		bool handled = rsx::g_access_violation_handler(addr, is_writing);
+		bool handled = false;
+#if defined(ARCH_ARM64)
+		// Only emulate a scalar, naturally aligned PPU load with no base-register
+		// writeback. Preserve page protection; real overlaps retain normal flush.
+		if (!is_writing && cpu && cpu->get_class() == thread_class::ppu && rsx::g_read_fault_handler)
+		{
+			const u32 instruction = read_from_ptr_unsafe<u32>(reinterpret_cast<const u8*>(RIP(context)));
+			const auto info = decode_a64_mem_inst(instruction);
+			if (info.op == A64_LOAD && info.mem_size && info.reg_num < 29 &&
+				addr % info.mem_size == 0 && 0x1'0000'0000ull - addr >= info.mem_size &&
+				a64_load_matches_fault(instruction, info.mem_size, reinterpret_cast<u64>(vm::base(addr)),
+					[&](u32 reg) { return get_a64_reg_value(context, reg, 8); }))
+			{
+				u64 value = 0;
+				if (rsx::g_read_fault_handler(addr, info.mem_size, value))
+				{
+					put_a64_reg_value(context, info.reg_num, info.reg_size, info.reg_signed, info.mem_size, value);
+					RIP(context) += 4;
+					handled = true;
+				}
+			}
+		}
+#endif
+		if (!handled) handled = rsx::g_access_violation_handler(addr, is_writing);
 
 		if (state_changed && (cpu->state += cpu_flag::temp, cpu->test_stopped()))
 		{

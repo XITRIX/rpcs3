@@ -3674,6 +3674,14 @@ static bool ppu_store_reservation(ppu_thread& ppu, u32 addr, u64 reg_value)
 
 	if ([&]()
 	{
+		// Resolve protected-memory write faults before owning the reservation.
+		// A fault may wait for RSX readback while SPUs need this same line.
+		// The lock acquisition and data comparison below revalidate any changes.
+		if (ppu.use_full_rdata || new_data != old_data)
+		{
+			utils::trigger_write_page_fault(vm::base(addr));
+		}
+
 		if (ppu.use_full_rdata) [[unlikely]]
 		{
 			auto [_oldd, _ok] = res.fetch_op([&](u64& r)
@@ -3699,7 +3707,6 @@ static bool ppu_store_reservation(ppu_thread& ppu, u32 addr, u64 reg_value)
 			// Cache line data
 			//auto& cline_data = vm::_ref<spu_rdata_t>(addr);
 
-			data += 0;
 			auto range_lock = vm::alloc_range_lock();
 			bool success = false;
 			{

@@ -2222,6 +2222,40 @@ namespace rsx
 			return invalidate_range_impl_base(cmd, range, cause, on_data_transfer_completed, std::forward<Args>(extras)...);
 		}
 
+		bool read_page_false_positive(u32 address, u32 size, u64& value)
+		{
+			if ((size != 1 && size != 2 && size != 4 && size != 8) || address % size ||
+				0x1'0000'0000ull - address < size) return false;
+			std::lock_guard lock(m_cache_mutex);
+			const auto range = address_range32::start_length(address, size);
+			// Main-memory tiling may scatter GPU writes beyond linear bounds.
+			if (rsx::get_current_renderer()->get_tiled_memory_region(range)) return false;
+			const auto pages = range.to_page_range();
+			bool protected_neighbour = false;
+			for (auto it = m_storage.range_begin(pages, full_range, false); it != m_storage.range_end(); ++it)
+			{
+				const auto& section = *it;
+				// An unlocked section already permits ordinary CPU reads.
+				if (!section.is_locked()) continue;
+				// Reject even synchronized/flushed overlaps conservatively: a
+				// render target may have acquired more GPU writes since then.
+				if (section.overlaps(range, full_range)) return false;
+				protected_neighbour |= section.is_flushable();
+			}
+			if (!protected_neighbour || !vm::check_addr(address, vm::page_readable, size)) return false;
+			// Host-native bytes, matching the faulting ARM load before any guest
+			// endian conversion. Keep the cache lock through this snapshot.
+			const auto source = vm::get_super_ptr<u8>(address);
+			switch (size)
+			{
+			case 1: value = reinterpret_cast<const atomic_t<u8>*>(source)->load(); break;
+			case 2: value = reinterpret_cast<const atomic_t<u16>*>(source)->load(); break;
+			case 4: value = reinterpret_cast<const atomic_t<u32>*>(source)->load(); break;
+			case 8: value = reinterpret_cast<const atomic_t<u64>*>(source)->load(); break;
+			}
+			return true;
+		}
+
 		template <typename ...Args>
 		bool flush_all(commandbuffer_type& cmd, thrashed_set& data, std::function<void()> on_data_transfer_completed = {}, Args&&... extras)
 		{
