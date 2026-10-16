@@ -94,7 +94,7 @@ namespace vk
 		{
 			if (is_pending && !poke())
 			{
-				wait(FRAME_PRESENT_TIMEOUT);
+				CHECK_RESULT(wait(FRAME_PRESENT_TIMEOUT));
 			}
 
 			++reset_id;
@@ -163,6 +163,13 @@ namespace vk
 				// A lost device never signals the fence. Retire the work so that waiters are released.
 				// NOTE: A timeout also means the device is hung. Some drivers fail to report the loss, so VK_TIMEOUT is handled as a device loss.
 				if (vk::die_with_error(ret)) break;
+				return ret;
+			}
+
+			// A timeout is not completion: the GPU may still own this fence
+			// and the resources covered by its event and heap snapshot.
+			if (ret != VK_SUCCESS)
+			{
 				return ret;
 			}
 

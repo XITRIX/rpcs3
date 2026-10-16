@@ -15,6 +15,7 @@
 #include "util/video_provider.h"
 #ifdef RPCS3_IOS
 #include "ios/IOSGraphicsLifecycle.h"
+#include "VKFrameTimingDiagnostic.hpp"
 #endif
 
 #include "Emu/RSX/NV47/HW/context_accessors.define.h"
@@ -269,11 +270,9 @@ void VKGSRender::frame_context_cleanup(vk::frame_context_t *ctx)
 	ensure(ctx->swap_command_buffer);
 
 	// Perform hard swap here
-	if (ctx->swap_command_buffer->wait(FRAME_PRESENT_TIMEOUT) != VK_SUCCESS)
-	{
-		// Lost surface/device, release swapchain
-		swapchain_unavailable = true;
-	}
+	// Do not release frame resources after an unsuccessful GPU wait.
+	// Normal renderer error handling owns recovery from timeout/device loss.
+	CHECK_RESULT(ctx->swap_command_buffer->wait(FRAME_PRESENT_TIMEOUT));
 
 	// Resource cleanup.
 	{
@@ -449,6 +448,7 @@ vk::viewable_image* VKGSRender::get_present_source(/* inout */ vk::present_surfa
 bool VKGSRender::present_frame(const rsx::display_flip_info_t& info)
 {
 #ifdef RPCS3_IOS
+	vk_frame_timing_diagnostic frame_diagnostic(info.emu_flip);
 	auto& graphics = rpcs3::ios::graphics_lifecycle_state();
 	auto frame_scope = graphics.try_begin_frame();
 	if (!frame_scope)
@@ -644,6 +644,9 @@ bool VKGSRender::present_frame(const rsx::display_flip_info_t& info)
 	ensure(m_current_frame->present_image == umax);
 	ensure(m_current_frame->swap_command_buffer == nullptr);
 
+	#ifdef RPCS3_IOS
+	frame_diagnostic.mark(1);
+#endif
 	u64 timeout = m_swapchain->get_swap_image_count() <= 2? 0ull: 100000000ull;
 	u32 out_of_date_rebuilds = 0;
 	while (VkResult status = m_swapchain->acquire_next_swapchain_image(m_current_frame->acquire_signal_semaphore, timeout, &m_current_frame->present_image))
@@ -701,6 +704,9 @@ bool VKGSRender::present_frame(const rsx::display_flip_info_t& info)
 		}
 	}
 
+	#ifdef RPCS3_IOS
+	frame_diagnostic.mark(2);
+#endif
 	// Confirm that the driver did not silently fail
 	ensure(m_current_frame->present_image != umax);
 
@@ -1129,7 +1135,13 @@ bool VKGSRender::present_frame(const rsx::display_flip_info_t& info)
 		vk::change_image_layout(*m_current_command_buffer, target_image, target_layout, present_layout, subresource_range);
 	}
 
+	#ifdef RPCS3_IOS
+	frame_diagnostic.mark(3);
+#endif
 	queue_swap_request(!acquire_consumed_before_present);
+#ifdef RPCS3_IOS
+	frame_diagnostic.mark(4);
+#endif
 
 	m_ctx->stats.flip_time = m_profiler.duration();
 
