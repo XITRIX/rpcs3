@@ -1327,8 +1327,11 @@ void GLGSRender::on_invalidate_memory_range(const utils::address_range32 &range,
 
 void GLGSRender::on_semaphore_acquire_wait()
 {
+	// A CPU producer may be polling a report before releasing this semaphore.
+	// Service report-page flush requests even when no texture flush/flip is pending.
 	if (!work_queue.empty() ||
-		(async_flip_requested & flip_request::emu_requested))
+		(async_flip_requested & flip_request::emu_requested) ||
+		(m_eng_interrupt_mask & rsx::pipe_flush_interrupt))
 	{
 		do_local_task(rsx::FIFO::state::lock_wait);
 	}
