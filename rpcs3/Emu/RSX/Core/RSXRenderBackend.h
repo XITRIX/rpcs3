@@ -115,6 +115,7 @@ namespace rsx
 		virtual void on_end_conditional_rendering() {}
 
 		// Memory. Handled per-context.
+		virtual bool on_read_fault(context* /*ctx*/, u32 /*address*/, u32 /*size*/, u64& /*value*/) { return false; }
 		virtual bool on_access_violation(context* /*ctx*/, u32 /*address*/, bool /*is_writing*/) { return false; }
 		virtual void on_invalidate_memory_range(context* /*ctx*/, const utils::address_range32& /*range*/, invalidation_cause /*cause*/) {}
 		virtual void on_unmap_memory_range(const utils::address_range32& /*range*/) {}

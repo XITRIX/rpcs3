@@ -55,6 +55,7 @@ extern thread_local std::string(*g_tls_log_prefix)();
 namespace rsx
 {
 	std::function<bool(u32 addr, bool is_writing)> g_access_violation_handler;
+	std::function<bool(u32 addr, u32 size, u64& value)> g_read_fault_handler;
 
 	rsx_iomap_table::rsx_iomap_table() noexcept
 		: ea(fill_array(-1))
@@ -342,10 +343,22 @@ namespace rsx
 
 	thread::~thread()
 	{
+		g_read_fault_handler = [this](u32 address, u32 size, u64& value)
+		{
+			rsx::mm_flush(address);
+			reader_lock renderer_lock(m_renderer_lock);
+			reader_lock contexts_lock(m_contexts_lock);
+			// A single cache can prove a neighbouring-page false positive. With
+			// multiple contexts, use the ordinary handler that visits every cache.
+			return m_renderer && m_contexts.size() == 1 &&
+				m_renderer->on_read_fault(m_contexts.begin()->second.get(), address, size, value);
+		};
+
 		g_user_asked_for_frame_capture = false;
 		g_user_asked_for_frame_capture_count = 0;
 		g_frame_capture_remaining = 0;
 		frame_capture.reset();
+		g_read_fault_handler = nullptr;
 		g_access_violation_handler = nullptr;
 
 		release_backend_resources();
@@ -366,6 +379,10 @@ namespace rsx
 		{
 			// The current context's channel is live
 			save_fifo_channel(m_ctx->fifo);
+			if (fifo_ctrl && fifo_ctrl->get_remaining_args_count() && !(state & cpu_flag::again))
+			{
+				m_ctx->fifo.get += 4;
+			}
 
 			reader_lock lock(m_contexts_lock);
 			ar(::size32(m_contexts), m_ctx->id());
@@ -376,10 +393,11 @@ namespace rsx
 				save_context(ar, *ctx);
 			}
 
-			// The method the puller was executing, if it has to run again
-			if (fifo_ctrl && state & cpu_flag::again)
+			const bool retry_current = !!(state & cpu_flag::again);
+			const u32 pending = fifo_ctrl ? fifo_ctrl->get_remaining_args_count() : 0;
+			if (fifo_ctrl && (retry_current || pending))
 			{
-				ar(fifo_ctrl->get_remaining_args_count() + 1);
+				ar(pending + static_cast<u32>(retry_current));
 				ar(fifo_ctrl->last_cmd());
 			}
 			else
@@ -941,6 +959,7 @@ namespace rsx
 		zcull_ctrl->set_provider(nullptr);
 
 		// Deregister violation handler
+		g_read_fault_handler = nullptr;
 		g_access_violation_handler = nullptr;
 
 		// Clear any pending flush requests to release threads

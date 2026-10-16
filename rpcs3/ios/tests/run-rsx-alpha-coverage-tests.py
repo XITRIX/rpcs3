@@ -38,7 +38,9 @@ flags = "\n".join("constexpr u32 " + re.search(
 # Pipeline records persist fp_ctrl verbatim. The previous port used the new
 # upstream depth bit for alpha-to-one, so those records must not be preloaded.
 for renderer in ("GL/GLGSRender.cpp", "VK/VKGSRender.cpp"):
-    assert '"v1.95-apple-depth-alpha2"' in (RSX / renderer).read_text()
+    # Later renderer fixes append cache-generation suffixes to this namespace.
+    assert re.search(r'"v1\.95-apple-depth-alpha2(?:-[a-z0-9-]+)?"',
+                     (RSX / renderer).read_text())
 
 # Ensure both frontend consumers connect the program key to the shared epilogue.
 for frontend in ("GL/GLFragmentProgram.cpp", "VK/VKFragmentProgram.cpp"):

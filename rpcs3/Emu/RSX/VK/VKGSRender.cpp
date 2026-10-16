@@ -949,6 +949,12 @@ std::string VKGSRender::configured_logical_id() const
 		: "Vulkan | " + adapter;
 }
 
+bool VKGSRender::on_read_fault(rsx::context* ctx, u32 address, u32 size, u64& value)
+{
+	const auto resources = res(ctx);
+	return resources && resources->texture_cache.read_page_false_positive(address, size, value);
+}
+
 bool VKGSRender::on_access_violation(rsx::context* ctx, u32 address, bool is_writing)
 {
 	const auto resources = res(ctx);

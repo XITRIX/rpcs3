@@ -348,6 +348,7 @@ protected:
 	bool scaled_image_from_memory(const rsx::blit_src_info& src, const rsx::blit_dst_info& dst, bool interpolate) override;
 	void notify_tile_unbound(u32 tile) override;
 
+	bool on_read_fault(rsx::context* ctx, u32 address, u32 size, u64& value) override;
 	bool on_access_violation(rsx::context* ctx, u32 address, bool is_writing) override;
 	void on_invalidate_memory_range(rsx::context* ctx, const utils::address_range32 &range, rsx::invalidation_cause cause) override;
 	void on_unmap_memory_range(const utils::address_range32& range) override;
