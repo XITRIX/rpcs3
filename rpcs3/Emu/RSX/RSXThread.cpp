@@ -122,6 +122,7 @@ bool serialize<rsx::rsx_iomap_table>(utils::serial& ar, rsx::rsx_iomap_table& o)
 namespace rsx
 {
 	std::function<bool(u32 addr, bool is_writing)> g_access_violation_handler;
+	std::function<bool(u32 addr, u32 size, u64& value)> g_read_fault_handler;
 
 	// TODO: Proper context manager
 	static rsx::context s_ctx{ .rsxthr = nullptr, .register_state = &method_registers };
@@ -707,6 +708,7 @@ namespace rsx
 		g_user_asked_for_frame_capture_count = 0;
 		g_frame_capture_remaining = 0;
 		frame_capture.reset();
+		g_read_fault_handler = nullptr;
 		g_access_violation_handler = nullptr;
 	}
 
@@ -757,9 +759,11 @@ namespace rsx
 
 		if (ar.is_writing())
 		{
-			if (fifo_ctrl && state & cpu_flag::again)
+			const bool retry_current = !!(state & cpu_flag::again);
+			const u32 pending = fifo_ctrl ? fifo_ctrl->get_remaining_args_count() : 0;
+			if (fifo_ctrl && (retry_current || pending))
 			{
-				ar(fifo_ctrl->get_remaining_args_count() + 1);
+				ar(pending + static_cast<u32>(retry_current));
 				ar(fifo_ctrl->last_cmd());
 			}
 			else
@@ -767,7 +771,9 @@ namespace rsx
 				ar(u32{0});
 			}
 
-			ar(fifo_ctrl ? fifo_ctrl->get_pos() : 0);
+			// A packet waiting for PUT resumes at its next argument. A method
+			// interrupted while executing must instead retry its current one.
+			ar(fifo_ctrl ? fifo_ctrl->get_pos() + (pending && !retry_current ? 4 : 0) : 0);
 		}
 		else
 		{
@@ -1290,6 +1296,7 @@ namespace rsx
 		}
 
 		// Deregister violation handler
+		g_read_fault_handler = nullptr;
 		g_access_violation_handler = nullptr;
 
 		// Clear any pending flush requests to release threads
