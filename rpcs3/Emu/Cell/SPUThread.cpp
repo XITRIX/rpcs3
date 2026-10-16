@@ -3613,6 +3613,30 @@ static FORCE_INLINE bool commit_rdata_reservation(atomic_t<u64>& res, u64 expect
 #endif
 }
 
+#ifdef RPCS3_IOS
+static bool wait_for_reservation_release(u32 addr, u64 expected)
+{
+	if (!(expected & vm::rsrv_unique_lock))
+	{
+		return false;
+	}
+
+	// A long-running writer needs CPU time to finish its PPU/RSX handshake.
+	// Register before rechecking the lock so a successful store cannot lose
+	// its wakeup. Failed stores need not notify, hence the bounded timeout.
+	if (auto [wait_var, flag] = vm::reservation_notifier_begin_wait(addr, expected & ~u64{127}); wait_var)
+	{
+		if (vm::reservation_acquire(addr) == expected)
+		{
+			utils::bless<atomic_t<u32>>(&wait_var->raw().wait_flag)->wait(flag, atomic_wait_timeout{50'000});
+		}
+		vm::reservation_notifier_end_wait(*wait_var);
+	}
+
+	return true;
+}
+#endif
+
 bool spu_thread::do_putllc(const spu_mfc_cmd& args)
 {
 	perf_meter<"PUTLLC-"_u64> perf0(nullptr);
@@ -3672,6 +3696,14 @@ bool spu_thread::do_putllc(const spu_mfc_cmd& args)
 		const bool relaxed_spurs = !accurate && addr - spurs_addr <= 0x80;
 		const usz diff16_pos = relaxed_spurs ? usz{umax} : scan16_rdata(to_write, rdata);
 
+		if (accurate)
+		{
+			// A protected write may wait for RSX readback. Resolve it before
+			// locking the reservation so other SPUs can continue using this line.
+			// The fetch_op below rechecks rtime after the fault handler returns.
+			utils::trigger_write_page_fault(vm::base(addr));
+		}
+
 		auto [_oldd, _ok] = res.fetch_op([&](u64& r)
 		{
 			if ((r & -128) != rtime || (r & 127))
@@ -3698,11 +3730,6 @@ bool spu_thread::do_putllc(const spu_mfc_cmd& args)
 				return true;
 			}
 		}
-		else
-		{
-			utils::trigger_write_page_fault(vm::base(addr));
-		}
-
 		auto& super_data = *vm::get_super_ptr<spu_rdata_t>(addr);
 		const bool success = [&]()
 		{
@@ -3755,7 +3782,13 @@ bool spu_thread::do_putllc(const spu_mfc_cmd& args)
 
 				const bool switched_from_running_to_idle = (static_cast<u8>(rdata[SPU_IDLE]) & thread_bit_mask) == 0 && (_ref<u8>(0x100 + SPU_IDLE) & thread_bit_mask) != 0;
 
-				if (switched_from_running_to_idle)
+				if (switched_from_running_to_idle
+#ifdef RPCS3_IOS
+					// GETLLAR may now park while this writer owns the line.
+					// Wake registered readers even when SPURS remains active.
+					|| vm::reservation_notifier_count(addr, rtime)
+#endif
+					)
 				{
 					vm::reservation_notifier_notify(addr, rtime);
 				}
@@ -4827,7 +4860,12 @@ bool spu_thread::process_mfc_cmd()
 				}
 			}
 
+#ifdef RPCS3_IOS
+			// Let a contended writer finish its PPU handshake promptly.
+			if (i < 4) [[likely]]
+#else
 			if (i < 24) [[likely]]
+#endif
 			{
 				i++;
 				busy_wait(300);
@@ -4835,6 +4873,9 @@ bool spu_thread::process_mfc_cmd()
 			else
 			{
 				state += cpu_flag::wait + cpu_flag::temp;
+#ifdef RPCS3_IOS
+				if (!wait_for_reservation_release(addr, ntime))
+#endif
 				std::this_thread::yield();
 				static_cast<void>(check_state());
 			}
@@ -6340,7 +6381,9 @@ s64 spu_thread::get_ch_value(u32 ch)
 							return true;
 						}
 
-						if (!vm::check_addr(raddr))
+						// A same-data store can still invalidate this reservation.
+						// The callback may outlive the nominal wait timeout.
+						if (!vm::check_addr(raddr) || vm::reservation_acquire(raddr) != _this->rtime)
 						{
 							set_lr = true;
 						}

@@ -1902,8 +1902,17 @@ void lv2_obj::schedule_all(u64 current_time)
 {
 	auto it = std::find(g_to_notify, std::end(g_to_notify), std::add_pointer_t<const void>{});
 
-	if (!g_pending && g_scheduler_ready)
+	if (g_scheduler_ready)
 	{
+		// A pending suspension still occupies a virtual hardware thread.
+		// Count every unsuspended thread too, including any outside the eligible
+		// priority prefix. Never admit more than the configured capacity.
+		usz running = 0;
+		for (auto p = +g_ppu; p; p = p->next_ppu)
+			running += !(p->state & cpu_flag::suspend);
+		const usz capacity = g_cfg.core.ppu_threads;
+		usz slots = running >= capacity || g_pending >= capacity - running
+			? 0 : capacity - running - g_pending;
 		auto target = +g_ppu;
 
 		// Wake up threads
@@ -1911,6 +1920,11 @@ void lv2_obj::schedule_all(u64 current_time)
 		{
 			if (target->state & cpu_flag::suspend)
 			{
+				// An outstanding acknowledgment belongs to a still-running
+				// thread. Leave its state intact until its own safe point.
+				if (target->ack_suspend || !slots) continue;
+				--slots;
+
 				ppu_log.trace("schedule(): %s", target->id);
 
 				// Remove yield if it was sleeping until now

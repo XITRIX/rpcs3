@@ -418,8 +418,19 @@ u64 VKGSRender::get_cycles()
 	return thread_ctrl::get_cycles(static_cast<named_thread<VKGSRender>&>(*this));
 }
 
+namespace rsx
+{
+	extern std::function<bool(u32, u32, u64&)> g_read_fault_handler;
+}
+
 VKGSRender::VKGSRender(utils::serial* ar) noexcept : GSRender(ar)
 {
+	rsx::g_read_fault_handler = [this](u32 address, u32 size, u64& value)
+	{
+		rsx::mm_flush(address);
+		return m_texture_cache.read_page_false_positive(address, size, value);
+	};
+
 	// Initialize dependencies
 	g_fxo->need<rsx::dma_manager>();
 	g_fxo->need<vk::driver_manager_thread>();
