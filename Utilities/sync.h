@@ -108,6 +108,13 @@ inline int futex(volatile void* uaddr, int futex_op, uint val, const timespec* t
 		case FUTEX_WAKE_PRIVATE:
 		case FUTEX_WAKE_BITSET_PRIVATE:
 		{
+			// Match the fallback dispatcher: zero means no waiters to wake.
+			// Do not decrement an unsigned zero into an unbounded wake loop.
+			if (!val)
+			{
+				return 0;
+			}
+
 			for (;;)
 			{
 				int ret = 0;

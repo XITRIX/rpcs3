@@ -56,6 +56,7 @@ namespace rsx
 
 			u64 start = get_system_time();
 			u64 last_check_val = start;
+			bool timeout_reported = false;
 #ifdef RPCS3_IOS
 			u32 wait_spins = 0;
 #endif
@@ -68,7 +69,7 @@ namespace rsx
 					return;
 				}
 
-				if (const auto tdr = static_cast<u64>(g_cfg.video.driver_recovery_timeout))
+				if (const auto tdr = static_cast<u64>(g_cfg.video.driver_recovery_timeout); tdr && !timeout_reported)
 				{
 					const u64 current = get_system_time();
 
@@ -84,9 +85,16 @@ namespace rsx
 
 					if ((current - start) > tdr)
 					{
-						// If longer than driver timeout force exit
-						rsx_log.error("nv406e::semaphore_acquire has timed out. semaphore_address=0x%X", addr);
+						rsx_log.error("nv406e::semaphore_acquire has timed out. semaphore_address=0x%X, expected=0x%X, observed=0x%X", addr, arg, atomic_sema.load());
+#ifdef RPCS3_IOS
+						// A slow guest producer is not permission to consume its
+						// unfinished commands/resources. Keep servicing the backend
+						// and native Stop/Pause until the semaphore is satisfied.
+						// Report once instead of poisoning shader caches after timeout.
+						timeout_reported = true;
+#else
 						break;
+#endif
 					}
 				}
 

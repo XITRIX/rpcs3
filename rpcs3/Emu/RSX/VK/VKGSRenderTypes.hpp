@@ -94,7 +94,7 @@ namespace vk
 		{
 			if (is_pending && !poke())
 			{
-				wait(FRAME_PRESENT_TIMEOUT);
+				CHECK_RESULT(wait(FRAME_PRESENT_TIMEOUT));
 			}
 
 			++reset_id;
@@ -143,6 +143,13 @@ namespace vk
 			}
 
 			const auto ret = vk::wait_for_fence(m_submit_fence, timeout);
+
+			// A timeout is not completion: the GPU may still own this fence
+			// and the resources covered by its event and heap snapshot.
+			if (ret != VK_SUCCESS)
+			{
+				return ret;
+			}
 
 			lock.upgrade();
 

@@ -1084,8 +1084,11 @@ void VKGSRender::on_invalidate_memory_range(const utils::address_range32 &range,
 
 void VKGSRender::on_semaphore_acquire_wait()
 {
+	// A CPU producer may be polling a report before releasing this semaphore.
+	// Service report-page flush requests even when no texture flush/flip is pending.
 	if (m_flush_requests.pending() ||
 		(async_flip_requested & flip_request::emu_requested) ||
+		(m_eng_interrupt_mask & rsx::pipe_flush_interrupt) ||
 		(m_queue_status & flush_queue_state::deadlock))
 	{
 		do_local_task(rsx::FIFO::state::lock_wait);
