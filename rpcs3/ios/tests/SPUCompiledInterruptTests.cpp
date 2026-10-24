@@ -21,12 +21,12 @@ bs_t<cpu_flag>operator+(cpu_flag a,cpu_flag b){return bs_t<cpu_flag>(u32(a)|u32(
 struct flags:bs_t<cpu_flag>{unsigned notifications=0;void notify_one(){++notifications;}template<class F>void atomic_op(F f){f(*this);}};
 constexpr u32 SPU_EVENT_TM=1,SPU_EVENT_LR=2,SPU_EVENT_INTR_BUSY_CHECK=7;
 u64 clock_ticks=0;u64 get_timebased_time(){return clock_ticks;}u64 get_system_time(){return clock_ticks;}
-struct{struct{u32 clocks_scale=100,mfc_transfers_timeout=0,mfc_transfers_shuffling=0;}core;}g_cfg;
+struct{struct{u32 clocks_scale=100,mfc_transfers_timeout=0,mfc_transfers_shuffling=0,mfc_shuffling_instructions=1;}core;}g_cfg;
 struct events{u32 mask=0;bool count=false;events load()const{return *this;}};
 struct spu_thread{
  u32 id=1,pc=0x100,srr0=0,branch=0,deliver=0,polled=0,lr_polls=0,cpu_work_iteration_count=0,current_bp_pc=0;
  bool interrupt_requires_escape=true,in_cpu_work=false,allow_interrupts_in_cpu_work=false,interrupts_enabled=false,is_dec_frozen=false,unsavable=false,has_active_local_bps=false;
- u32 ch_dec_value=0,mfc_size=0;u64 ch_dec_start_timestamp=0,mfc_last_timestamp=0,dec_intr_deadline=umax;
+ u32 ch_dec_value=0,mfc_size=0,mfc_queued_ops_timeout=0;u64 ch_dec_start_timestamp=0,mfc_last_timestamp=0,dec_intr_deadline=umax;
  atomic_t<u64>dec_intr_armed{};flags state;events ch_events;unsigned char local_breakpoints[32768]{};
  std::function<void()> before_pending_clear;
  void arm_dec_interrupt();void cancel_dec_interrupt();void set_interrupt_status(bool);bool check_state_with_interrupts(bool may_escape=true);
