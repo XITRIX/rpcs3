@@ -66,3 +66,10 @@ namespace vk
 
 	inline VkBool32 to_bool32(bool x) { return x ? VK_TRUE : VK_FALSE; }
 }
+
+#if defined(RPCS3_IOS) && !defined(RPCS3_APPLE_VULKAN_IMPLEMENTATION)
+#define APPLE_VK(name) extern PFN_##name rpcs3_##name;
+#include "AppleVulkanFunctions.inc"
+#undef APPLE_VK
+#include "AppleVulkanAliases.h"
+#endif

@@ -1,3 +1,4 @@
+#include "Emu/RSX/VK/AppleVulkanDispatch.h"
 #include "RPCS3IOS.h"
 #include "RPCS3IOSBigPicture.h"
 #include "RPCS3IOSBootProgress.h"
@@ -705,7 +706,8 @@ void enumerate_current_settings(
 		}
 
 		const bool is_zcull_accuracy = setting.key == zcull_accuracy_key;
-		const std::string value = is_zcull_accuracy
+		const std::string value = setting.key == "gpu.apple_backend" &&
+			!vk::apple::kosmickrisp_availability().available ? "MoltenVK" : is_zcull_accuracy
 			? zcull_accuracy_value(false)
 			: setting.entry->to_string();
 		const std::string default_value = is_zcull_accuracy
@@ -749,7 +751,9 @@ void enumerate_current_settings(
 			}
 			std::erase_if(options, [&setting](const std::string& option)
 			{
-				return (setting.key == "advanced.fifo_accuracy" && option == "PS3") ||
+				return (setting.key == "gpu.apple_backend" && option == "KosmicKrisp" &&
+                    !vk::apple::kosmickrisp_availability().available) ||
+                    (setting.key == "advanced.fifo_accuracy" && option == "PS3") ||
 					(setting.key == "gpu.shader_mode" && option == "Legacy Recompiler (single-threaded)") ||
 					(setting.key == "cpu.spu_decoder" && option == "Recompiler (ASMJIT)") ||
 					(setting.key == "network.psn_status" && option == "Simulated") ||
@@ -763,6 +767,9 @@ void enumerate_current_settings(
 			}
 		}
 
+		std::string description{setting.description};
+		if (setting.key == "gpu.apple_backend" && !vk::apple::kosmickrisp_availability().available)
+			description += " KosmicKrisp unavailable: " + vk::apple::kosmickrisp_availability().reason;
 		const rpcs3_ios_setting_info info{
 			sizeof(rpcs3_ios_setting_info),
 			static_cast<uint32_t>(setting.kind),
@@ -770,7 +777,7 @@ void enumerate_current_settings(
 			setting.category.data(),
 			setting.section.data(),
 			setting.name.data(),
-			setting.description.data(),
+			description.c_str(),
 			value.c_str(),
 			default_value.c_str(),
 			setting.minimum,
@@ -830,6 +837,21 @@ rpcs3_ios_status update_current_setting(
 	{
 		set_error(fmt::format("Unknown or unavailable iOS setting: %s", key));
 		return RPCS3_IOS_SETTING_NOT_FOUND;
+	}
+
+	if (setting->key == "gpu.apple_backend")
+	{
+		const std::string_view backend{value};
+		if (backend != "MoltenVK" && backend != "KosmicKrisp")
+		{
+			set_error("Unknown Apple graphics backend");
+			return RPCS3_IOS_SETTING_INVALID;
+		}
+		if (backend == "KosmicKrisp" && !vk::apple::kosmickrisp_availability().available)
+		{
+			set_error(vk::apple::kosmickrisp_availability().reason);
+			return RPCS3_IOS_SETTING_INVALID;
+		}
 	}
 
 	if (setting->key == "network.psn_country" && std::none_of(countries::g_countries.begin(), countries::g_countries.end(), [value](const auto& country)
@@ -1304,9 +1326,9 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
 #ifdef RPCS3_MACOS
-	return "{\"abi\":30," RPCS3_IOS_CORE_BUILD_PROFILE_JSON "\"frontend\":\"macos\",\"upstream\":\"2f1ad2ed1097c93628db4a293690768b157db1f2\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"coreaudio-default-output\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies-big-picture-savestate-management-selected-boot\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop-big-picture\",\"media_codecs\":true}";
+	return "{\"abi\":30," RPCS3_IOS_CORE_BUILD_PROFILE_JSON "\"frontend\":\"macos\",\"upstream\":\"2f1ad2ed1097c93628db4a293690768b157db1f2\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk-kosmickrisp\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"coreaudio-default-output\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies-big-picture-savestate-management-selected-boot\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop-big-picture\",\"media_codecs\":true}";
 #else
-	return "{\"abi\":30," RPCS3_IOS_CORE_BUILD_PROFILE_JSON "\"frontend\":\"ios\",\"upstream\":\"2f1ad2ed1097c93628db4a293690768b157db1f2\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies-big-picture-savestate-management-selected-boot\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop-big-picture\",\"media_codecs\":true}";
+	return "{\"abi\":30," RPCS3_IOS_CORE_BUILD_PROFILE_JSON "\"frontend\":\"ios\",\"upstream\":\"2f1ad2ed1097c93628db4a293690768b157db1f2\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk-kosmickrisp\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies-big-picture-savestate-management-selected-boot\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop-big-picture\",\"media_codecs\":true}";
 #endif
 }
 

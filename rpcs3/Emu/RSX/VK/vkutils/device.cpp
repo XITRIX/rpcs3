@@ -1,3 +1,6 @@
+#ifdef RPCS3_IOS
+#include "../AppleVulkanDispatch.h"
+#endif
 #include "device.h"
 #include "instance.h"
 #include "VRAMBudgetPolicy.h"
@@ -50,7 +53,7 @@ namespace vk
 			}
 			if (std::string root = rpcs3::cache::get_ppu_cache(); !root.empty())
 			{
-				return root + "shaders_cache/vk_pipeline_cache.bin";
+				return root + (apple::using_kosmickrisp() ? "shaders_cache/vk_pipeline_cache_kosmickrisp.bin" : "shaders_cache/vk_pipeline_cache.bin");
 			}
 			return {}; // Guestless sessions keep only the in-memory cache.
 #else
@@ -558,7 +561,11 @@ namespace vk
 	{
 		if (!driver_properties.driverID)
 		{
-			const auto gpu_name = get_name();
+#ifdef RPCS3_IOS
+			// Actual dispatch identity also covers legacy drivers without IDs.
+			return apple::using_kosmickrisp() ? driver_vendor::KOSMICKRISP : driver_vendor::MVK;
+#endif
+			const std::string gpu_name = props.deviceName;
 
 			if (gpu_name.find("Microsoft Direct3D12") != umax)
 			{
@@ -602,6 +609,11 @@ namespace vk
 			if (gpu_name.find("V3D") != umax)
 			{
 				return driver_vendor::V3DV;
+			}
+
+			if (std::string_view(driver_properties.driverName).find("MoltenVK") != std::string_view::npos)
+			{
+				return driver_vendor::MVK;
 			}
 
 			if (gpu_name.find("Apple") != umax)
