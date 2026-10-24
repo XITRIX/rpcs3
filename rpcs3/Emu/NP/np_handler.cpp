@@ -41,8 +41,13 @@
 
 #if defined(__FreeBSD__) || defined(__APPLE__)
 #include <net/if_dl.h>
+// Mobile Apple SDKs do not expose the BSD route-table ABI. Keep real
+// interface netmask discovery and the upstream gateway fallback there.
+#if __has_include(<net/route.h>)
+#define RPCS3_HAS_BSD_ROUTE_SYSCTL 1
 #include <net/route.h>
 #include <sys/sysctl.h>
+#endif
 #endif
 
 #include "util/yaml.hpp"
@@ -768,7 +773,7 @@ namespace np
 			freeifaddrs(ifap);
 		}
 
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(RPCS3_HAS_BSD_ROUTE_SYSCTL)
 		int mib[] = {CTL_NET, PF_ROUTE, 0, AF_INET, NET_RT_FLAGS, RTF_GATEWAY};
 		usz size = 0;
 
