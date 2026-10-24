@@ -395,6 +395,19 @@ namespace np::avatar
 		return result;
 	}
 
+	std::vector<u8> get_preview_image(const std::vector<u8>& png)
+	{
+		if (png.empty() || png.size() > 8 * 1024 * 1024)
+			return {};
+		png_image image{};
+		image.version = PNG_IMAGE_VERSION;
+		const bool header_ok = png_image_begin_read_from_memory(&image, png.data(), png.size());
+		const bool bounded = header_ok && image.width && image.height &&
+			image.width <= 4096 && image.height <= 4096;
+		png_image_free(&image);
+		return bounded ? convert_image(png, SCE_NP_AVATAR_SIZE_LARGE) : std::vector<u8>{};
+	}
+
 	std::string get_default_avatar_path(const std::string& user_id)
 	{
 		const u32 index = user_id.empty() ? 0 : rpcs3::utils::check_user(user_id) % 9;
