@@ -180,6 +180,7 @@ endif()
 
 if(RPCS3_FRONTEND STREQUAL "IOS")
     add_library(RPCS3Core SHARED
+        Input/blob_detector.cpp
         ios/FirmwareInstaller.cpp
         ios/FirmwareInstaller.h
         ios/GameArchiveContract.h
