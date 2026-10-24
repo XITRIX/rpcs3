@@ -45,6 +45,8 @@
 #include "Emu/NP/np_handler.h"
 #include "Emu/NP/rpcn_client.h"
 #include "Emu/NP/rpcn_config.h"
+#include "Emu/NP/np_avatar.h"
+#include "Crypto/utils.h"
 #ifdef HAVE_VULKAN
 #include "Emu/RSX/VK/VKGSRender.h"
 #endif
@@ -1326,9 +1328,9 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
 #ifdef RPCS3_MACOS
-	return "{\"abi\":30," RPCS3_IOS_CORE_BUILD_PROFILE_JSON "\"frontend\":\"macos\",\"upstream\":\"2f1ad2ed1097c93628db4a293690768b157db1f2\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk-kosmickrisp\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"coreaudio-default-output\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies-big-picture-savestate-management-selected-boot\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop-big-picture\",\"media_codecs\":true}";
+	return "{\"abi\":30," RPCS3_IOS_CORE_BUILD_PROFILE_JSON "\"frontend\":\"macos\",\"upstream\":\"06ae1af55161e8a9e8ad77395a97455d493b5cb3\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk-kosmickrisp\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"coreaudio-default-output\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies-big-picture-savestate-management-selected-boot\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop-big-picture\",\"media_codecs\":true}";
 #else
-	return "{\"abi\":30," RPCS3_IOS_CORE_BUILD_PROFILE_JSON "\"frontend\":\"ios\",\"upstream\":\"2f1ad2ed1097c93628db4a293690768b157db1f2\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk-kosmickrisp\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies-big-picture-savestate-management-selected-boot\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop-big-picture\",\"media_codecs\":true}";
+	return "{\"abi\":30," RPCS3_IOS_CORE_BUILD_PROFILE_JSON "\"frontend\":\"ios\",\"upstream\":\"06ae1af55161e8a9e8ad77395a97455d493b5cb3\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk-kosmickrisp\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies-big-picture-savestate-management-selected-boot\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop-big-picture\",\"media_codecs\":true}";
 #endif
 }
 
@@ -3062,6 +3064,178 @@ extern "C" rpcs3_ios_status rpcs3_ios_set_runtime_patch_enabled(
 	{
 		set_error("Unknown exception while changing a game patch");
 	}
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+
+namespace
+{
+constexpr size_t avatar_import_limit = 8 * 1024 * 1024;
+
+std::vector<u8> normalize_avatar_png(const u8* bytes, size_t size)
+{
+	if (!bytes || !size || size > avatar_import_limit)
+		return {};
+	return np::avatar::get_preview_image({bytes, bytes + size});
+}
+
+std::vector<u8> load_avatar_preview(const std::string& path)
+{
+	const fs::file file{path};
+	if (!file || file.size() > avatar_import_limit || !np::avatar::is_file_usable(path))
+		return {};
+	const auto png = np::avatar::load_file(path);
+	return normalize_avatar_png(png.data(), png.size());
+}
+
+std::vector<std::string> firmware_avatar_paths()
+{
+	const std::string directory = g_cfg_vfs.get_dev_flash() + "vsh/resource/explore/user/";
+	std::vector<std::string> paths;
+	for (const auto& entry : fs::dir(directory))
+	{
+		const auto& name = entry.name;
+		if (!entry.is_directory && name.size() == 7 && name.ends_with(".png") &&
+			std::ranges::all_of(std::string_view{name}.substr(0, 3), [](char c) { return c >= '0' && c <= '9'; }))
+			paths.push_back(directory + name);
+	}
+	std::ranges::sort(paths);
+	return paths;
+}
+
+std::string firmware_avatar_id(const std::string& path)
+{
+	return "firmware:" + path.substr(path.find_last_of('/') + 1);
+}
+
+std::string installed_avatar_id(const std::string& user, const std::string& path)
+{
+	const std::string prefix = rpcs3::utils::get_hdd0_dir() + "home/" + user + "/psn_avatar/";
+	return path.starts_with(prefix) ? "installed:" + path.substr(prefix.size()) : std::string{};
+}
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_enumerate_user_avatars(
+	rpcs3_ios_avatar_callback callback, void* context) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (!callback)
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("Stop emulation before loading local user avatars");
+		return result;
+	}
+	try
+	{
+		const std::string user = Emu.GetUsr();
+		const std::string selected = np::avatar::get_selected_avatar(user);
+		auto send = [&](const std::string& id, const std::string& name, const std::vector<u8>& png, bool active)
+		{
+			const rpcs3_ios_avatar_info info{sizeof(rpcs3_ios_avatar_info), active ? 1u : 0u,
+				id.c_str(), name.c_str(), png.data(), png.size(), user.c_str()};
+			callback(context, &info);
+		};
+		send("default", "Default Avatar", np::avatar::get_default_image(user, SCE_NP_AVATAR_SIZE_LARGE), selected.empty());
+		bool selected_known = false;
+		for (const auto& path : firmware_avatar_paths())
+		{
+			const auto png = load_avatar_preview(path);
+			if (png.empty())
+				continue;
+			const auto filename = path.substr(path.find_last_of('/') + 1);
+			send(firmware_avatar_id(path), "PS3 Avatar " + filename.substr(0, 3), png, path == selected);
+			selected_known |= path == selected;
+		}
+		for (const auto& path : np::avatar::get_installed_avatars(user))
+		{
+			const auto png = load_avatar_preview(path);
+			if (png.empty())
+				continue; // Same as Qt: hide missing licenses and undecodable images.
+			const auto id = installed_avatar_id(user, path);
+			if (id.empty())
+				continue;
+			send(id, path.substr(path.find_last_of('/') + 1), png, path == selected);
+			selected_known |= path == selected;
+		}
+		if (!selected.empty() && !selected_known)
+			send("current", "Custom Avatar", np::avatar::get_user_image(user, SCE_NP_AVATAR_SIZE_LARGE), true);
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error) { set_error(error.what()); }
+	catch (...) { set_error("Unknown exception while loading local user avatars"); }
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_set_user_avatar(
+	const char* identifier, const uint8_t* bytes, size_t size) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if ((identifier && (bytes || size)) || (!identifier && (!bytes || !size || size > avatar_import_limit)))
+	{
+		set_error("Select an avatar identifier or import a PNG up to 8 MiB");
+		return RPCS3_IOS_INVALID_ARGUMENT;
+	}
+	if (const auto result = rpcs3::ios::validate_idle_operation_contract(
+		g_lifecycle.state(), current_emulation_state()); result != RPCS3_IOS_OK)
+	{
+		set_error("Stop emulation before changing the local user avatar");
+		return result;
+	}
+	try
+	{
+		const std::string user = Emu.GetUsr();
+		const std::string user_dir = rpcs3::utils::get_hdd0_dir() + "home/" + user + "/";
+		std::string path;
+		if (!identifier)
+		{
+			const auto png = normalize_avatar_png(bytes, size);
+			if (png.empty())
+			{
+				set_error("Choose a valid PNG no larger than 4096 by 4096 pixels and 8 MiB");
+				return RPCS3_IOS_INVALID_ARGUMENT;
+			}
+			// Content-addressed, core-owned files survive Files security-scope expiry.
+			path = user_dir + "rpcs3_avatar_" + sha256_get_hash(reinterpret_cast<const char*>(png.data()), png.size(), true) + ".png";
+			fs::pending_file destination{path};
+			if (!destination.file || destination.file.write(png.data(), png.size()) != png.size() || !destination.commit())
+			{
+				set_error("Unable to save the imported avatar");
+				return RPCS3_IOS_SETTINGS_SAVE_FAILED;
+			}
+		}
+		else if (std::string_view{identifier} == "current")
+		{
+			return RPCS3_IOS_OK;
+		}
+		else if (std::string_view{identifier} != "default")
+		{
+			const bool firmware = std::string_view{identifier}.starts_with("firmware:");
+			const auto candidates = firmware ? firmware_avatar_paths() : np::avatar::get_installed_avatars(user);
+			for (const auto& candidate : candidates)
+			{
+				if ((firmware ? firmware_avatar_id(candidate) : installed_avatar_id(user, candidate)) == identifier)
+				{
+					path = candidate;
+					break;
+				}
+			}
+			if (path.empty() || load_avatar_preview(path).empty())
+			{
+				set_error("This avatar is unavailable or its RAP license is missing");
+				return RPCS3_IOS_INVALID_ARGUMENT;
+			}
+		}
+		if (!np::avatar::set_selected_avatar(user, path))
+		{
+			set_error("Unable to save the local user avatar selection");
+			return RPCS3_IOS_SETTINGS_SAVE_FAILED;
+		}
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::exception& error) { set_error(error.what()); }
+	catch (...) { set_error("Unknown exception while changing the local user avatar"); }
 	return RPCS3_IOS_INTERNAL_ERROR;
 }
 

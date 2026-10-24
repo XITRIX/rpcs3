@@ -7,6 +7,8 @@
 
 namespace np::avatar
 {
+	// Normalize a decoded PNG using the same dimensions and limits as guest lookup.
+	std::vector<u8> get_preview_image(const std::vector<u8>& png);
 	u32 get_dimension(s32 size_type);
 	u32 get_max_size(s32 size_type);
 	std::vector<u8> load_file(const std::string& path);

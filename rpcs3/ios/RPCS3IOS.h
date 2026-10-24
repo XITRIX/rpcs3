@@ -646,6 +646,25 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_runtime_patch_enabled(
     const char* app_version,
     const char* description,
     uint32_t enabled) RPCS3_IOS_NOEXCEPT;
+// Optional ABI30 avatar extension. Callback bytes/strings live only during the call.
+// Identifiers are opaque and re-resolved for the active local user while stopped.
+typedef struct rpcs3_ios_avatar_info
+{
+    uint32_t struct_size;
+    uint32_t selected;
+    const char* identifier;
+    const char* name;
+    const uint8_t* png;
+    size_t png_size;
+    const char* user_id;
+} rpcs3_ios_avatar_info;
+typedef void (*rpcs3_ios_avatar_callback)(void*, const rpcs3_ios_avatar_info*);
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_user_avatars(
+    rpcs3_ios_avatar_callback callback, void* context) RPCS3_IOS_NOEXCEPT;
+// Select identifier with no PNG, or import PNG with a null identifier. 8 MiB maximum.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_set_user_avatar(
+    const char* identifier, const uint8_t* png, size_t png_size) RPCS3_IOS_NOEXCEPT;
+
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_enumerate_settings(
     rpcs3_ios_setting_callback setting_callback,
     rpcs3_ios_setting_option_callback option_callback,
