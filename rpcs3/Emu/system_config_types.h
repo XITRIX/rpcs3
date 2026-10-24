@@ -41,6 +41,12 @@ enum class mouse_handler
 	raw
 };
 
+enum class apple_vulkan_driver
+{
+	moltenvk,
+	kosmickrisp,
+};
+
 enum class video_renderer
 {
 	null,

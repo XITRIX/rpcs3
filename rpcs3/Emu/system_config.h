@@ -151,6 +151,9 @@ struct cfg_root : cfg::node
 
 	struct node_video : cfg::node
 	{
+#ifdef RPCS3_IOS
+		cfg::_enum<apple_vulkan_driver> apple_graphics_backend{ this, "Graphics Backend", apple_vulkan_driver::moltenvk };
+#endif
 		node_video(cfg::node* _this) : cfg::node(_this, "Video") {}
 
 #ifdef RPCS3_IOS

@@ -1,3 +1,7 @@
+#ifdef RPCS3_IOS
+// Resolve allocator functions from the selected driver, never the static MVK symbols.
+#define VMA_STATIC_VULKAN_FUNCTIONS 0
+#endif
 #define VMA_IMPLEMENTATION
 #define VMA_VULKAN_VERSION 1002000
 

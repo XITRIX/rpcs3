@@ -38,6 +38,7 @@ const std::array catalog{
 	SETTING("cpu.ppu_reservation_priority", "CPU", "SPU", "PPU Reservation Priority", "Prioritizes PPU reservations over competing SPU reservations.", kind::RPCS3_IOS_SETTING_BOOLEAN, g_cfg.core.ppu_reservation_priority_over_spu, 0, 1, 1),
 
 	// GPU
+    SETTING("gpu.apple_backend", "GPU", "Graphics Backend", "Graphics Backend", "Selects the Vulkan driver for the next boot. MoltenVK is the default; KosmicKrisp is experimental and requires Metal 4 and a working bundled driver.", kind::RPCS3_IOS_SETTING_CHOICE, g_cfg.video.apple_graphics_backend, 0, 0, 0),
 	SETTING("gpu.resolution", "GPU", "Display", "Default resolution", "Sets the resolution reported to PlayStation 3 software.", kind::RPCS3_IOS_SETTING_CHOICE, g_cfg.video.resolution, 0, 0, 0),
 	SETTING("gpu.aspect_ratio", "GPU", "Display", "Aspect ratio", "Sets the aspect ratio reported to PlayStation 3 software.", kind::RPCS3_IOS_SETTING_CHOICE, g_cfg.video.aspect_ratio, 0, 0, 0),
 	SETTING("gpu.frame_limit", "GPU", "Display", "Framelimit", "Limits presentation rate independently of the emulated game clock.", kind::RPCS3_IOS_SETTING_CHOICE, g_cfg.video.frame_limit, 0, 0, 0),
