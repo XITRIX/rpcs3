@@ -18,6 +18,20 @@ void fmt_class_string<mouse_handler>::format(std::string& out, u64 arg)
 }
 
 template <>
+void fmt_class_string<apple_vulkan_driver>::format(std::string& out, u64 arg)
+{
+	format_enum(out, arg, [](apple_vulkan_driver value)
+	{
+		switch (value)
+		{
+		case apple_vulkan_driver::moltenvk: return "MoltenVK";
+		case apple_vulkan_driver::kosmickrisp: return "KosmicKrisp";
+		}
+		return unknown;
+	});
+}
+
+template <>
 void fmt_class_string<video_renderer>::format(std::string& out, u64 arg)
 {
 	format_enum(out, arg, [](video_renderer value)

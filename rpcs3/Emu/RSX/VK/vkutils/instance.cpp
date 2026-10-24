@@ -1,4 +1,7 @@
 #include "stdafx.h"
+#ifdef RPCS3_IOS
+#include "../AppleVulkanDispatch.h"
+#endif
 #include "instance.h"
 
 #include "Emu/system_config.h"
@@ -89,6 +92,9 @@ namespace vk
 #endif
 	bool instance::create(const char* app_name, bool fast)
 	{
+#ifdef RPCS3_IOS
+		vk::apple::select_backend(g_cfg.video.apple_graphics_backend.to_string());
+#endif
 		// Initialize a vulkan instance
 		VkApplicationInfo app = {};
 

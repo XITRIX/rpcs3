@@ -749,6 +749,10 @@ if(TARGET 3rdparty_vulkan)
         RSX/VK/VKTextureCache.cpp
         RSX/VK/VulkanAPI.cpp
     )
+    if(RPCS3_FRONTEND STREQUAL "IOS")
+        target_sources(rpcs3_emu PRIVATE RSX/VK/AppleVulkanDispatch.mm)
+        set_source_files_properties(RSX/VK/AppleVulkanDispatch.mm PROPERTIES COMPILE_OPTIONS -fexceptions)
+    endif()
     if(APPLE)
         target_sources(rpcs3_emu PRIVATE
             RSX/VK/vkutils/metal_layer.mm

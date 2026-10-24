@@ -353,7 +353,8 @@ void VKVertexDecompilerThread::insertMainStart(std::stringstream& OS)
 	// programs. Disabling fast math alone does not request Metal's invariant
 	// position compilation; MoltenVK propagates this SPIR-V decoration.
 	properties2.require_explicit_invariance =
-		(vk::is_NVIDIA(vk::get_driver_vendor()) || vk::get_driver_vendor() == vk::driver_vendor::MVK) &&
+		(vk::is_NVIDIA(vk::get_driver_vendor()) || vk::get_driver_vendor() == vk::driver_vendor::MVK ||
+			vk::get_driver_vendor() == vk::driver_vendor::KOSMICKRISP) &&
 		g_cfg.video.shader_precision != gpu_preset_level::low;
 	properties2.require_instanced_render = !!(m_prog.ctrl & RSX_SHADER_CONTROL_INSTANCED_CONSTANTS);
 	properties2.emulate_depth_range = !!(m_prog.ctrl & RSX_SHADER_CONTROL_EMULATE_DEPTH_RANGE);

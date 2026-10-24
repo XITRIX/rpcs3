@@ -168,6 +168,12 @@ namespace vk
 		std::fill(stats.begin(), stats.end(), VmaBudget{});
 
 		VmaAllocatorCreateInfo allocatorInfo = {};
+#ifdef RPCS3_IOS
+		VmaVulkanFunctions functions{};
+		functions.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
+		functions.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
+		allocatorInfo.pVulkanFunctions = &functions;
+#endif
 		allocatorInfo.physicalDevice = pdev;
 		allocatorInfo.device = dev;
 		allocatorInfo.instance = inst;
