@@ -1080,6 +1080,10 @@ namespace vm
 			shm->unmap_critical(g_base_addr + addr);
 #ifdef _WIN32
 			shm->unmap_critical(g_sudo_addr + addr);
+#elif defined(RPCS3_IOS)
+			// POSIX file backing can leave this mirror until overwritten. A
+			// donated interval cannot be reused while that alias remains live.
+			if (shm->has_donated_backing()) shm->unmap_critical(g_sudo_addr + addr);
 #endif
 		}
 
@@ -1461,6 +1465,8 @@ namespace vm
 				m_common->unmap_critical(vm::base(addr));
 #ifdef _WIN32
 				m_common->unmap_critical(vm::get_super_ptr(addr));
+#elif defined(RPCS3_IOS)
+				if (m_common->has_donated_backing()) m_common->unmap_critical(vm::get_super_ptr(addr));
 #endif
 				ensure(m_common.use_count() == 1);
 				m_common.reset();

@@ -74,3 +74,6 @@ _rpcs3_ios_shutdown
 _rpcs3_ios_last_error
 _rpcs3_ios_enumerate_user_avatars
 _rpcs3_ios_set_user_avatar
+_rpcs3_ios_offer_donated_memory
+
+_rpcs3_ios_get_donated_memory_usage

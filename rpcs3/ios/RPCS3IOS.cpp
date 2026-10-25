@@ -1,3 +1,4 @@
+#include "IOSDonatedMemory.h"
 #include "Emu/RSX/VK/AppleVulkanDispatch.h"
 #include "RPCS3IOS.h"
 #include "RPCS3IOSBigPicture.h"
@@ -389,6 +390,9 @@ void emit_jit_arena_statistics(std::string_view phase)
 {
 	constexpr usz mib = 1024 * 1024;
 	const auto stats = rpcs3::ios::jit::get_statistics();
+    const auto donated = rpcs3::ios::donation::snapshot();
+    if (donated.capacity) emit_log(4, fmt::format("Guest RAM donation: capacity=%u MiB live=%u MiB peak=%u MiB quarantined=%u MiB misses=%u; not a footprint-savings measurement",
+        donated.capacity / mib, donated.live / mib, donated.peak / mib, donated.quarantined / mib, donated.misses));
 	if (stats.mode == rpcs3::ios::jit::memory_mode::regular)
 	{
 		emit_log(4, fmt::format("Regular JIT %s: mapped=%u MiB code/%u MiB data; live=%u MiB code/%u MiB data; no prepared arena",
@@ -1334,6 +1338,15 @@ extern "C" const char* rpcs3_ios_build_info(void) noexcept
 #endif
 }
 
+extern "C" rpcs3_ios_status rpcs3_ios_offer_donated_memory(void* address, uint64_t size) noexcept
+{
+    try {
+        std::lock_guard lock(g_api_mutex);
+        if (g_lifecycle.state() != RPCS3_IOS_STATE_UNINITIALIZED) return RPCS3_IOS_INVALID_STATE;
+        return rpcs3::ios::donation::offer(address, size) ? RPCS3_IOS_OK : RPCS3_IOS_INVALID_ARGUMENT;
+    } catch (...) { return RPCS3_IOS_INTERNAL_ERROR; }
+}
+
 extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config) noexcept
 {
 	std::lock_guard lock(g_api_mutex);
@@ -1432,6 +1445,8 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		rpcs3::ios::shared_pad_states().clear();
 		rpcs3::ios::shared_pad_feedback().clear();
 		const auto jit_stats = rpcs3::ios::jit::get_statistics();
+		const auto footprint_diagnostics = rpcs3::ios::jit::no_footprint_diagnostics();
+		if (!footprint_diagnostics.empty()) emit_log(4, footprint_diagnostics);
 		if (jit_stats.backend == rpcs3::ios::jit::arena_backend::disabled)
 		{
 			emit_log(4, "JIT-less mode: 0-byte code/data arenas; native PPU/SPU interpreters; no Universal JIT initialization");
@@ -4888,6 +4903,19 @@ extern "C" rpcs3_ios_status rpcs3_ios_get_boot_progress(
 	}
 
 	return RPCS3_IOS_INTERNAL_ERROR;
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_get_donated_memory_usage(uint64_t* capacity, uint64_t* live) noexcept
+{
+    if (!capacity || !live) return RPCS3_IOS_INVALID_ARGUMENT;
+    try
+    {
+        const auto stats = rpcs3::ios::donation::snapshot();
+        *capacity = stats.capacity;
+        *live = stats.live;
+        return RPCS3_IOS_OK;
+    }
+    catch (...) { return RPCS3_IOS_INTERNAL_ERROR; }
 }
 
 extern "C" rpcs3_ios_status rpcs3_ios_get_performance_metrics(

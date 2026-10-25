@@ -1,6 +1,7 @@
 #pragma once
 
 #include "util/types.hpp"
+#include <string>
 
 namespace rpcs3::ios::jit
 {
@@ -107,5 +108,7 @@ void release_allocation(bool executable, void* address, usz size) noexcept;
 void* writable(const void* executable, usz size = 1) noexcept;
 void flush(const void* executable, usz size) noexcept;
 arena_statistics get_statistics() noexcept;
+// Empty unless the process opted into the prepared-arena accounting experiment.
+std::string no_footprint_diagnostics();
 const char* last_error() noexcept;
 }

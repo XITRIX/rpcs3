@@ -74,6 +74,9 @@ namespace utils
 #else
 		int m_file{};
 #endif
+#ifdef RPCS3_IOS
+		void* m_donation = nullptr;
+#endif
 		u32 m_flags{};
 		u64 m_size{};
 		atomic_t<void*> m_ptr{nullptr};
@@ -90,6 +93,10 @@ namespace utils
 		shm& operator=(const shm&) = delete;
 
 		~shm();
+
+#ifdef RPCS3_IOS
+		bool has_donated_backing() const { return m_donation != nullptr; }
+#endif
 
 		// Map shared memory
 		u8* map(void* ptr, protection prot = protection::rw, bool cow = false) const;
