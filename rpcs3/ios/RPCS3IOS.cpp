@@ -4774,6 +4774,14 @@ extern "C" rpcs3_ios_status rpcs3_ios_boot_game(
 			}
 			boot_path = selected->path;
 
+			// Reject missing external state while still stopped. Native trophy
+			// deserialization uses an ensure and cannot be unwound safely.
+			if (const auto error = rpcs3::ios::savestate_trophy_error(game->title_id); !error.empty())
+			{
+				set_error(error);
+				return RPCS3_IOS_BOOT_FAILED;
+			}
+
 			// Savestates for disc titles store the title ID and restore the
 			// current disc source through RPCS3's games configuration. The iOS
 			// library is independently core-owned, so make sure its validated

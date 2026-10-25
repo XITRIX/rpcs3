@@ -35,4 +35,8 @@ struct trophy_info
 // Enumerates only already registered trophy data for the active PS3 user.
 // This operation is read-only: it never generates or repairs TROPUSR.DAT.
 std::vector<trophy_info> installed_trophies(std::string_view title_id);
+
+// Read-only prerequisite check before a frontend starts native deserialization.
+// Save states do not carry the active user's installed trophy databases.
+std::string savestate_trophy_error(std::string_view title_id);
 }
