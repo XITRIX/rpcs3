@@ -55,7 +55,11 @@ namespace vk::apple
 			if (!dladdr(reinterpret_cast<const void*>(&select_backend), &image) || !image.dli_fname)
 				return {false, "Cannot locate the bundled graphics runtime."};
 			const auto frameworks = std::filesystem::path(image.dli_fname).parent_path();
+#if TARGET_OS_OSX
+			const auto manifest = frameworks / "KosmicKrisp.framework/Resources/kosmickrisp_icd.json";
+#else
 			const auto manifest = frameworks / "KosmicKrisp.framework/kosmickrisp_icd.json";
+#endif
 			const auto library = frameworks / "VulkanLoader.framework/VulkanLoader";
 			if (!std::filesystem::is_regular_file(manifest) || !std::filesystem::is_regular_file(library))
 				return {false, "The KosmicKrisp runtime is not included in this build."};
