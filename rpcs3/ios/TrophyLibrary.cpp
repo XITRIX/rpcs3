@@ -119,6 +119,32 @@ trophy_grade parsed_grade(u32 value)
 }
 }
 
+std::string savestate_trophy_error(std::string_view title_id)
+{
+	const auto game = find_installed_game(title_id);
+	if (!game)
+	{
+		return {};
+	}
+
+	const std::string trophy_root = rpcs3::utils::get_hdd0_dir() +
+		"home/" + Emu.GetUsr() + "/trophy/";
+	for (const auto& set : source_trophy_sets(*game))
+	{
+		const std::string path = trophy_root + set;
+		TROPUSRLoader user_trophies;
+		if (!read_configuration(path + "/TROPCONF.SFM") ||
+			!user_trophies.LoadExistingFromHostPath(path + "/TROPUSR.DAT"))
+		{
+			return fmt::format("Cannot load this save state because trophy data for %s is missing or unreadable. "
+				"Start the game normally and let trophy initialization finish, then retry the save state. "
+				"To preserve existing trophy progress, restore the matching trophy data from the original profile. "
+				"The save state has not been changed.", set);
+		}
+	}
+	return {};
+}
+
 std::vector<trophy_info> installed_trophies(std::string_view title_id)
 {
 	std::vector<trophy_info> result;
