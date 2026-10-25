@@ -958,20 +958,20 @@ namespace np
 				{
 					return trans_ctx->result.has_value();
 				});
-			{
-				std::lock_guard lock_threads(this->mutex_async_transactions);
-				this->async_transactions.erase(req_id);
-			}
-
 			if (!has_value)
 			{
 				trans_ctx->result = SCE_NP_COMMUNITY_ERROR_TIMEOUT;
-				return;
 			}
 
-			// Only 2 cases should be timeout or caller setting result
 			ensure(trans_ctx->result, "transaction_async_handler: trans_ctx->result is not set");
 			trans_ctx->completion_cond.notify_one();
+
+			// Reply handlers take the registry lock before the context lock. Publish
+			// completion first, then release the context before registry cleanup.
+			// A late reply observes result and cannot write guest output buffers.
+			lock.unlock();
+			std::lock_guard lock_threads(this->mutex_async_transactions);
+			this->async_transactions.erase(req_id);
 		};
 
 		{
@@ -1011,8 +1011,20 @@ namespace np
 			return;
 		}
 
-		auto score_trans = idm::get_unlocked<score_transaction_ctx>(::at32(async_transactions, req_id)->idm_id);
-		ensure(score_trans);
+		const auto& pending = ::at32(async_transactions, req_id);
+		auto score_trans = idm::get_unlocked<score_transaction_ctx>(pending->idm_id);
+		if (!score_trans || score_trans.get() != pending.get())
+		{
+			// The game may destroy the context (and reuse its ID) before RPCN replies.
+			rpcn_log.notice("Ignoring reply for destroyed score transaction (request=%u)", req_id);
+			return;
+		}
+
+		std::lock_guard lock(score_trans->mutex);
+		if (score_trans->result)
+		{
+			return;
+		}
 
 		s32 error_code = CELL_OK;
 
@@ -1025,7 +1037,6 @@ namespace np
 
 		if (error_code != CELL_OK)
 		{
-			std::lock_guard lock(score_trans->mutex);
 			score_trans->result = error_code;
 			score_trans->wake_cond.notify_one();
 			return;
@@ -1041,8 +1052,6 @@ namespace np
 			.uploadNumLimit = resp->uploadnumlimit(),
 			.uploadSizeLimit = resp->uploadsizelimit()
 		};
-
-		std::lock_guard lock(score_trans->mutex);
 
 		const auto* tdata = std::get_if<tdata_get_board_infos>(&score_trans->tdata);
 		ensure(tdata);
@@ -1080,10 +1089,20 @@ namespace np
 			return;
 		}
 
-		auto score_trans = idm::get_unlocked<score_transaction_ctx>(::at32(async_transactions, req_id)->idm_id);
-		ensure(score_trans);
+		const auto& pending = ::at32(async_transactions, req_id);
+		auto score_trans = idm::get_unlocked<score_transaction_ctx>(pending->idm_id);
+		if (!score_trans || score_trans.get() != pending.get())
+		{
+			// The game may destroy the context (and reuse its ID) before RPCN replies.
+			rpcn_log.notice("Ignoring reply for destroyed score transaction (request=%u)", req_id);
+			return;
+		}
 
 		std::lock_guard lock(score_trans->mutex);
+		if (score_trans->result)
+		{
+			return;
+		}
 
 		switch (error)
 		{
@@ -1150,6 +1169,10 @@ namespace np
 
 		auto trans = ::at32(async_transactions, req_id);
 		std::lock_guard lock(trans->mutex);
+		if (trans->result)
+		{
+			return;
+		}
 
 		switch (error)
 		{
@@ -1202,9 +1225,20 @@ namespace np
 			return;
 		}
 
-		auto score_trans = idm::get_unlocked<score_transaction_ctx>(::at32(async_transactions, req_id)->idm_id);
-		ensure(score_trans);
+		const auto& pending = ::at32(async_transactions, req_id);
+		auto score_trans = idm::get_unlocked<score_transaction_ctx>(pending->idm_id);
+		if (!score_trans || score_trans.get() != pending.get())
+		{
+			// The game may destroy the context (and reuse its ID) before RPCN replies.
+			rpcn_log.notice("Ignoring reply for destroyed score transaction (request=%u)", req_id);
+			return;
+		}
+
 		std::lock_guard lock(score_trans->mutex);
+		if (score_trans->result)
+		{
+			return;
+		}
 
 		switch (error)
 		{
@@ -1283,9 +1317,20 @@ namespace np
 			return;
 		}
 
-		auto score_trans = idm::get_unlocked<score_transaction_ctx>(::at32(async_transactions, req_id)->idm_id);
-		ensure(score_trans);
+		const auto& pending = ::at32(async_transactions, req_id);
+		auto score_trans = idm::get_unlocked<score_transaction_ctx>(pending->idm_id);
+		if (!score_trans || score_trans.get() != pending.get())
+		{
+			// The game may destroy the context (and reuse its ID) before RPCN replies.
+			rpcn_log.notice("Ignoring reply for destroyed score transaction (request=%u)", req_id);
+			return;
+		}
+
 		std::lock_guard lock(score_trans->mutex);
+		if (score_trans->result)
+		{
+			return;
+		}
 
 		switch (error)
 		{
