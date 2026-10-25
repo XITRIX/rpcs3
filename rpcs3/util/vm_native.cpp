@@ -3,6 +3,7 @@
 #include "util/asm.hpp"
 #ifdef RPCS3_IOS
 #include "ios/RPCS3IOSSharedMemory.h"
+#include "ios/IOSDonatedMemory.h"
 #endif
 #ifdef _WIN32
 #include "Utilities/File.h"
@@ -511,6 +512,7 @@ namespace utils
 		const ULARGE_INTEGER max_size{ .QuadPart = m_size };
 		m_handle = ensure(::CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, max_size.HighPart, max_size.LowPart, nullptr));
 #elif defined(RPCS3_IOS)
+		if ((m_donation = rpcs3::ios::donation::acquire(m_size))) return;
 		m_file = ensure(rpcs3::ios::create_shared_memory_file(fs::get_cache_dir(), m_size), FN(x >= 0));
 #elif defined(__linux__) || defined(__FreeBSD__)
 		m_file = -1;
@@ -721,6 +723,7 @@ namespace utils
 #else
 #ifdef RPCS3_IOS
 		(void)storage;
+		if ((m_donation = rpcs3::ios::donation::acquire(m_size))) return;
 		m_file = ensure(rpcs3::ios::create_shared_memory_file(fs::get_cache_dir(), m_size), FN(x >= 0));
 		return;
 #else
@@ -829,6 +832,9 @@ namespace utils
 	shm::~shm()
 	{
 		this->unmap_self();
+#ifdef RPCS3_IOS
+		if (m_donation) { delete static_cast<rpcs3::ios::donation::loan*>(m_donation); return; }
+#endif
 
 #ifdef _WIN32
 		::CloseHandle(m_handle);
@@ -842,6 +848,9 @@ namespace utils
 
 	u8* shm::map(void* ptr, protection prot, bool cow) const
 	{
+#ifdef RPCS3_IOS
+		if (m_donation) return static_cast<u8*>(static_cast<rpcs3::ios::donation::loan*>(m_donation)->map(ptr, +prot, cow, true));
+#endif
 #ifdef _WIN32
 		DWORD access = FILE_MAP_WRITE;
 		switch (prot)
@@ -911,6 +920,9 @@ namespace utils
 
 	u8* shm::try_map(void* ptr, protection prot, bool cow) const
 	{
+#ifdef RPCS3_IOS
+		if (m_donation) return ptr ? static_cast<u8*>(static_cast<rpcs3::ios::donation::loan*>(m_donation)->map(reinterpret_cast<void*>(reinterpret_cast<uptr>(ptr) & -0x10000), +prot, cow, false)) : nullptr;
+#endif
 		// Non-null pointer shall be specified
 		const auto target = ensure(reinterpret_cast<u8*>(reinterpret_cast<u64>(ptr) & -0x10000));
 
@@ -1056,6 +1068,9 @@ namespace utils
 
 	void shm::unmap(void* ptr) const
 	{
+#ifdef RPCS3_IOS
+		if (m_donation) { static_cast<rpcs3::ios::donation::loan*>(m_donation)->unmap(ptr); return; }
+#endif
 #ifdef _WIN32
 		::UnmapViewOfFile(ptr);
 #else
@@ -1065,6 +1080,9 @@ namespace utils
 
 	void shm::unmap_critical(void* ptr)
 	{
+#ifdef RPCS3_IOS
+		if (m_donation) { static_cast<rpcs3::ios::donation::loan*>(m_donation)->unmap(reinterpret_cast<void*>(reinterpret_cast<uptr>(ptr) & -0x10000), true); return; }
+#endif
 		const auto target = reinterpret_cast<u8*>(reinterpret_cast<u64>(ptr) & -0x10000);
 
 #ifdef _WIN32

@@ -1,6 +1,7 @@
 #include "JITIOS.h"
 #include "JITArenaAllocator.h"
 #include "JITIOSLayoutPolicy.h"
+#include "JITFootprint.h"
 
 #if !defined(RPCS3_IOS)
 #error "JITIOS.cpp is only available in the Apple mobile frontend"
@@ -65,6 +66,41 @@ std::mutex g_protocol_mutex;
 std::mutex g_arena_mutex;
 std::mutex g_error_mutex;
 arena_state g_arena;
+std::string& footprint_diagnostics()
+{
+    static auto* text = new std::string;
+    return *text;
+}
+
+bool no_footprint_requested() noexcept
+{
+	// Device JIT backing defaults on, latched before constructor-time code
+	// generation. Explicit 0 is a diagnostic opt-out; Mac/Simulator/JIT-less
+	// paths remain unchanged by the call-site platform/backend guards.
+	static const bool enabled = []
+	{
+		const char* value = std::getenv("RPCS3_JIT_NO_FOOTPRINT");
+		return !value || std::strcmp(value, "0") != 0;
+	}();
+	return enabled;
+}
+
+void record_footprint_request(const char* label, const rpcs3::ios::jit::footprint_request& result)
+{
+	const bool measured = result.before.valid && result.after.valid;
+	const auto reduction = measured ? static_cast<int64_t>(result.before.bytes) - static_cast<int64_t>(result.after.bytes) : 0;
+	const std::string line = std::string{"JIT tagged-backing: "} + label +
+		" requested=" + std::to_string(result.requested) + " covered=" + std::to_string(result.covered) +
+		" shared_entry=" + std::to_string(result.shared_entry) + " entry_kr=" + std::to_string(result.entry_result) +
+		" ownership_called=" + std::to_string(result.called) + " ownership_kr=" + std::to_string(result.ownership_result) +
+		" samples_valid=" + std::to_string(measured) + " footprint_before=" + std::to_string(result.before.bytes) +
+		" footprint_after=" + std::to_string(result.after.bytes) + " before_minus_after_bytes=" + std::to_string(reduction) +
+		"; API acceptance alone does not establish memory relief";
+	os_log(OS_LOG_DEFAULT, "%{public}s", line.c_str());
+	if (!footprint_diagnostics().empty()) footprint_diagnostics() += '\n';
+	footprint_diagnostics() += line;
+}
+
 
 struct regular_group
 {
@@ -182,6 +218,36 @@ bool map_arena_region(u8* address, usz size, int protection) noexcept
 {
 	return ::mmap(address, size, protection,
 		MAP_FIXED | MAP_PRIVATE | MAP_ANON, jit_vm_tag, 0) == address;
+}
+
+bool map_jit_code(u8* address, usz size, int protection) noexcept
+{
+#if !TARGET_OS_SIMULATOR && !TARGET_OS_OSX
+    if (no_footprint_requested())
+    {
+        static bool probed = false; // Caller holds g_arena_mutex.
+        if (!probed)
+        {
+            probed = true;
+            record_footprint_request("tagged-control-populated-after-request", rpcs3::ios::jit::probe_named_footprint());
+        }
+        // Bound object size like the original design. All pages are still
+        // virgin reservations; on failure ordinary mapping replaces the range.
+        constexpr usz chunk = 128 * 1024 * 1024;
+        bool complete = true;
+        for (usz offset = 0; offset < size; offset += chunk)
+        {
+            rpcs3::ios::jit::footprint_request result;
+            const bool mapped = rpcs3::ios::jit::map_ledger_backing(address + offset,
+                std::min(chunk, size - offset), protection, result);
+            if (footprint_diagnostics().size() < 8192)
+                record_footprint_request("tagged-code-before-mapping", result);
+            if (!mapped) { complete = false; break; }
+        }
+        if (complete) return true;
+    }
+#endif
+    return map_arena_region(address, size, protection);
 }
 
 u32 process_expanded_jit_arena_capacity() noexcept
@@ -471,7 +537,7 @@ bool commit_regular_group(regular_group& group, bool executable, usz end) noexce
 	const usz next = std::min(capacity, (end + unit - 1) & ~(unit - 1));
 	u8* const target = (executable ? group.code : group.data) + committed;
 	const usz size = next - committed;
-	if (!map_arena_region(target, size, PROT_READ | PROT_WRITE))
+	if (!(executable ? map_jit_code(target, size, PROT_READ | PROT_WRITE) : map_arena_region(target, size, PROT_READ | PROT_WRITE)))
 	{
 		set_error("Unable to map regular JIT pages: " + std::string{std::strerror(errno)});
 		return false;
@@ -682,7 +748,7 @@ bool prepare_arena(u32 expanded_capacity_mib) noexcept
 	const int initial_code_protection = backend == arena_backend::universal_mirrored
 		? PROT_READ | PROT_EXEC
 		: PROT_READ | PROT_WRITE;
-	if (!map_arena_region(layout, capacity, initial_code_protection))
+	if (!map_jit_code(layout, capacity, initial_code_protection))
 	{
 		const std::string detail = std::strerror(errno);
 		discard_layout(layout, capacity, data, data_capacity, 0);
@@ -1089,5 +1155,11 @@ const char* last_error() noexcept
 	std::lock_guard lock(g_error_mutex);
 	copy = g_last_error;
 	return copy.c_str();
+}
+
+std::string no_footprint_diagnostics()
+{
+	std::lock_guard lock(g_arena_mutex);
+	return footprint_diagnostics();
 }
 }

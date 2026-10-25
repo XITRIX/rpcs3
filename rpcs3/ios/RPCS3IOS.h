@@ -72,6 +72,11 @@ typedef enum rpcs3_ios_status
     RPCS3_IOS_SAVESTATE_STORAGE_FAILED = 48
 } rpcs3_ios_status;
 
+// Optional ABI30 extension: process-lifetime host mapping, offered before initialize.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_offer_donated_memory(void* address, uint64_t size) RPCS3_IOS_NOEXCEPT;
+// Optional observational ABI30 export; available during boot without the lifecycle lock.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_get_donated_memory_usage(uint64_t* capacity, uint64_t* live) RPCS3_IOS_NOEXCEPT;
+
 typedef enum rpcs3_ios_state
 {
     RPCS3_IOS_STATE_UNINITIALIZED = 0,
