@@ -789,8 +789,8 @@ namespace rsx
 		public:
 			inline reference operator*() const { return *obj; }
 			inline pointer operator->() const { return obj; }
-			inline reference operator++() { next(); return *obj; }
-			inline reference operator++(int) { auto *ptr = obj; next(); return *ptr; }
+			inline range_iterator_tmpl& operator++() { next(); return *this; }
+			inline range_iterator_tmpl operator++(int) { auto previous = *this; next(); return previous; }
 			inline bool operator==(const range_iterator_tmpl &rhs) const { return obj == rhs.obj && unowned_remaining == rhs.unowned_remaining; }
 
 			inline void set_end(u32 new_end)
@@ -798,9 +798,11 @@ namespace rsx
 				range.end = new_end;
 
 				// If we've exceeded the new end, invalidate iterator
-				if (block->get_start() > range.end)
+				if (block && block->get_start() > range.end)
 				{
 					block = nullptr;
+					obj = nullptr;
+					unowned_remaining = false;
 				}
 			}
 
