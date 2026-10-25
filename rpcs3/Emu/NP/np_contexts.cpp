@@ -141,7 +141,16 @@ s32 create_score_transaction_context(const shared_ptr<score_ctx>& score)
 }
 bool destroy_score_transaction_context(s32 ctx_id)
 {
-	return idm::remove<score_transaction_ctx>(static_cast<u32>(ctx_id));
+	auto trans = idm::withdraw<score_transaction_ctx>(static_cast<u32>(ctx_id));
+	if (!trans)
+	{
+		return false;
+	}
+
+	// Serialize destruction with reply output writes and wake the request worker.
+	// The registry may retain this context until that worker removes the request.
+	trans->abort_transaction();
+	return true;
 }
 
 match2_ctx::match2_ctx(vm::cptr<SceNpCommunicationId> communicationId, vm::cptr<SceNpCommunicationPassphrase> passphrase, s32 option)
