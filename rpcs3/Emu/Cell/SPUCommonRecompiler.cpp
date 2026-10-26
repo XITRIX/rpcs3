@@ -4546,6 +4546,14 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
 		}
 	}
 
+	// Reject invalid analysis before dereferencing the first block in giga mode.
+	if (!m_bbs.count(entry_point))
+	{
+		// Invalid code
+		spu_log.error("[0x%x] Invalid code", entry_point);
+		return {};
+	}
+
 	// Ensure there is a function at the lowest address
 	if (g_cfg.core.spu_block_size == spu_block_size_type::giga)
 	{
@@ -4614,13 +4622,6 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
 		{
 			break;
 		}
-	}
-
-	if (!m_bbs.count(entry_point))
-	{
-		// Invalid code
-		spu_log.error("[0x%x] Invalid code", entry_point);
-		return {};
 	}
 
 	// Fill entry map
