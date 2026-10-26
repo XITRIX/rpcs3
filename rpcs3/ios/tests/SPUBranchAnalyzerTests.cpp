@@ -68,6 +68,7 @@ struct analyzer : spu_recompiler_base
 	using spu_recompiler_base::m_patterns;
 	using spu_recompiler_base::m_targets;
 	using spu_recompiler_base::m_bbs;
+	using spu_recompiler_base::m_funcs;
 	using spu_recompiler_base::m_block_info;
 	void init() override {}
 	spu_function_t compile(spu_program&&) override
@@ -131,6 +132,24 @@ static void check_loop(u32 base)
 	++cases;
 }
 
+static void check_empty_analysis(u32 entry)
+{
+	// Empty local-store filler is encountered during offline cache scanning.
+	// It produces no basic blocks and must be rejected before giga-mode setup.
+	std::vector<be_t<u32>> ls(65536);
+	auto a = std::make_unique<analyzer>();
+	const auto program = a->analyse(ls.data(), entry);
+	ensure(program.data.empty());
+	ensure(a->m_bbs.empty());
+	ensure(a->m_funcs.empty());
+	// Reusing the analyser for valid code must recover without stale state.
+	ls[entry / 4] = 0x35000000; // BI lr
+	const auto valid = a->analyse(ls.data(), entry);
+	ensure(!valid.data.empty());
+	ensure(a->m_bbs.count(entry));
+	++cases;
+}
+
 int main(int argc, char** argv)
 {
 	if (argc >= 2)
@@ -166,6 +185,10 @@ int main(int argc, char** argv)
 	for (auto mode : {spu_block_size_type::safe, spu_block_size_type::mega, spu_block_size_type::giga})
 	{
 		g_cfg.core.spu_block_size = mode;
+		for (u32 entry : {0x100u, 0x2342cu, 0x3fffcu})
+		{
+			check_empty_analysis(entry);
+		}
 		for (u32 base : {0x100u, 0xc16cu, 0x3ffc0u})
 		{
 			check_loop(base);
