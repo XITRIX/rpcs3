@@ -78,6 +78,14 @@ namespace vk
 		_vkCreateDebugReportCallback = reinterpret_cast<PFN_vkCreateDebugReportCallbackEXT>(vkGetInstanceProcAddr(m_instance, "vkCreateDebugReportCallbackEXT"));
 		_vkDestroyDebugReportCallback = reinterpret_cast<PFN_vkDestroyDebugReportCallbackEXT>(vkGetInstanceProcAddr(m_instance, "vkDestroyDebugReportCallbackEXT"));
 
+		if (!_vkCreateDebugReportCallback || !_vkDestroyDebugReportCallback)
+		{
+			// Debug reporting is optional and may be absent on the selected ICD.
+			// Do not turn an otherwise usable renderer into a startup failure.
+			rsx_log.warning("Vulkan debug-report callbacks are unavailable; continuing without driver diagnostics");
+			return;
+		}
+
 		VkDebugReportCallbackCreateInfoEXT dbgCreateInfo = {};
 		dbgCreateInfo.sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CREATE_INFO_EXT;
 		dbgCreateInfo.pfnCallback = callback;
@@ -201,7 +209,16 @@ namespace vk
 			}
 #endif //(WIN32, __APPLE__)
 			if (g_cfg.video.debug_output)
+			{
+#ifdef RPCS3_IOS
+				// Apple runtimes use a directly linked ICD or a bundled loader with
+				// external layers disabled. Keep driver diagnostics without asking
+				// for a validation layer that is not shipped with the application.
+				rsx_log.warning("Vulkan validation layers are unavailable in the bundled Apple runtime; using driver diagnostics only");
+#else
 				layers.push_back("VK_LAYER_KHRONOS_validation");
+#endif
+			}
 		}
 #ifdef __APPLE__ 
 		// MoltenVK's ICD will not be detected without these extensions enabled.

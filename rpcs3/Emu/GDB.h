@@ -2,6 +2,7 @@
 
 #include "Utilities/Thread.h"
 #include <string>
+#include <optional>
 
 struct gdb_cmd;
 
@@ -23,19 +24,16 @@ class gdb_thread
 	void start_server();
 	//read at most cnt bytes to buf, returns number of bytes actually read
 	int read(void* buf, int cnt) const;
-	//reads one character
-	char read_char();
-	//reads pairs of hex characters and returns their integer value
-	u8 read_hexbyte();
+	// Reads one character; false means disconnect or shutdown.
+	bool read_char(char& result);
+	// Reads two hexadecimal characters; false ends this client session.
+	bool read_hexbyte(u8& result);
 
-	// Tries to read command, returns false on error
-	bool try_read_cmd(gdb_cmd& out_cmd);
+	// true: valid packet; false: bad checksum; nullopt: end this client session.
+	std::optional<bool> try_read_cmd(gdb_cmd& out_cmd);
 
-	//reads commands until receiveing one with valid checksum
-	//in case of other exception (i.e. wrong first char of command)
-	//it will log exception text and return false
-	//in that case best for caller would be to stop reading, because
-	//chance of getting correct command is low
+	// Reads until a valid checksum, returning false for disconnect, shutdown
+	// or malformed framing so the caller can close this client.
 	bool read_cmd(gdb_cmd& out_cmd);
 	//send cnt bytes from buf to client
 	void send(const char* buf, int cnt) const;
@@ -63,7 +61,7 @@ class gdb_thread
 	//send reason of stop, returns false if sending response failed
 	bool send_reason();
 
-	void wait_with_interrupts();
+	bool wait_with_interrupts();
 
 	//commands
 	bool cmd_extended_mode(const gdb_cmd& cmd);

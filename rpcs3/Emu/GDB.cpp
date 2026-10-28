@@ -223,36 +223,39 @@ int gdb_thread::read(void* buf, int cnt) const
 				continue;
 			}
 
-			GDB.error("Error during socket read.");
-			fmt::throw_exception("Error during socket read");
+			GDB.error("Error during socket read; disconnecting client.");
+			return 0;
 		}
 		return result;
 	}
 	return 0;
 }
 
-char gdb_thread::read_char()
+bool gdb_thread::read_char(char& result)
 {
-	char result;
-	const int cnt = read(&result, 1);
-	if (!cnt)
+	// EOF and shutdown end the client session, not the emulation session.
+	return read(&result, 1) == 1;
+}
+
+bool gdb_thread::read_hexbyte(u8& result)
+{
+	char bytes[2];
+	if (!read_char(bytes[0]) || !read_char(bytes[1]))
 	{
-		fmt::throw_exception("Tried to read char, but no data was available");
+		return false;
 	}
-	return result;
+
+	const auto [end, error] = std::from_chars(bytes, bytes + 2, result, 16);
+	return error == std::errc{} && end == bytes + 2;
 }
 
-u8 gdb_thread::read_hexbyte()
+std::optional<bool> gdb_thread::try_read_cmd(gdb_cmd& out_cmd)
 {
-	std::string s;
-	s += read_char();
-	s += read_char();
-	return hex_to_u8(s);
-}
-
-bool gdb_thread::try_read_cmd(gdb_cmd& out_cmd)
-{
-	char c = read_char();
+	char c;
+	if (!read_char(c))
+	{
+		return std::nullopt;
+	}
 	//interrupt
 	if (c == 0x03) [[unlikely]]
 	{
@@ -266,11 +269,15 @@ bool gdb_thread::try_read_cmd(gdb_cmd& out_cmd)
 		//gdb starts conversation with + for some reason
 		if (c == '+')
 		{
-			c = read_char();
+			if (!read_char(c))
+			{
+				return std::nullopt;
+			}
 		}
 		if (c != '$')
 		{
-			fmt::throw_exception("Expected start of packet character '$', got '%c' instead", c);
+			GDB.error("Expected start of packet character '$', got '%c' instead; disconnecting client.", c);
+			return std::nullopt;
 		}
 	}
 	//clear packet data
@@ -281,7 +288,10 @@ bool gdb_thread::try_read_cmd(gdb_cmd& out_cmd)
 	u8 checksum = 0;
 	while (true)
 	{
-		c = read_char();
+		if (!read_char(c))
+		{
+			return std::nullopt;
+		}
 		if (c == '#')
 		{
 			break;
@@ -290,8 +300,13 @@ bool gdb_thread::try_read_cmd(gdb_cmd& out_cmd)
 		//escaped char
 		if (c == '}')
 		{
-			c = read_char() ^ 0x20;
+			if (!read_char(c))
+			{
+				return std::nullopt;
+			}
+			// The checksum covers transmitted bytes, including the escaped byte.
 			checksum = (checksum + reinterpret_cast<u8&>(c)) % 256;
+			c ^= 0x20;
 		}
 		//cmd-data splitters
 		if (cmd_part && ((c == ':') || (c == '.') || (c == ';')))
@@ -312,7 +327,10 @@ bool gdb_thread::try_read_cmd(gdb_cmd& out_cmd)
 			out_cmd.data += c;
 		}
 	}
-	out_cmd.checksum = read_hexbyte();
+	if (!read_hexbyte(out_cmd.checksum))
+	{
+		return std::nullopt;
+	}
 	return out_cmd.checksum == checksum;
 }
 
@@ -320,7 +338,12 @@ bool gdb_thread::read_cmd(gdb_cmd& out_cmd)
 {
 	while (true)
 	{
-		if (try_read_cmd(out_cmd))
+		const auto result = try_read_cmd(out_cmd);
+		if (!result.has_value())
+		{
+			return false;
+		}
+		if (*result)
 		{
 			ack(true);
 			return true;
@@ -381,7 +404,11 @@ bool gdb_thread::send_cmd_ack(std::string_view cmd)
 	while (true)
 	{
 		send_cmd(cmd);
-		const char c = read_char();
+		char c;
+		if (!read_char(c))
+		{
+			return false;
+		}
 		if (c == '+') [[likely]]
 			return true;
 		if (c != '-') [[unlikely]]
@@ -527,7 +554,7 @@ bool gdb_thread::send_reason()
 	return send_cmd_ack("S05");
 }
 
-void gdb_thread::wait_with_interrupts()
+bool gdb_thread::wait_with_interrupts()
 {
 	char c;
 	while (!paused && thread_ctrl::state() != thread_state::aborting)
@@ -542,14 +569,19 @@ void gdb_thread::wait_with_interrupts()
 				continue;
 			}
 
-			GDB.error("Error during socket read.");
-			fmt::throw_exception("Error during socket read");
+			GDB.error("Error during socket read; disconnecting client.");
+			return false;
+		}
+		else if (result == 0)
+		{
+			return false;
 		}
 		else if (c == 0x03)
 		{
 			paused = true;
 		}
 	}
+	return paused && thread_ctrl::state() != thread_state::aborting;
 }
 
 bool gdb_thread::cmd_extended_mode(const gdb_cmd&)
@@ -889,7 +921,10 @@ bool gdb_thread::cmd_vcont(const gdb_cmd& cmd)
 			Emu.Resume();
 		}
 
-		wait_with_interrupts();
+		if (!wait_with_interrupts())
+		{
+			return false;
+		}
 		//we are in all-stop mode
 		Emu.Pause();
 		select_thread(pausedBy);
@@ -1008,6 +1043,8 @@ void gdb_thread::operator()()
 			GDB.error("Could not establish new connection.");
 			return;
 		}
+		set_nonblocking(client_socket);
+
 		//stop immediately
 		if (Emu.IsRunning())
 		{
@@ -1054,6 +1091,9 @@ void gdb_thread::operator()()
 				}
 			}
 		}
+
+		closesocket(client_socket);
+		client_socket = -1;
 	}
 }
 
