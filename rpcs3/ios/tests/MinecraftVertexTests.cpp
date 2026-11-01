@@ -140,6 +140,7 @@ namespace rsx
 		}
 	};
 	rsx_state method_registers;
+	using context = rsx_state;
 	struct push_info
 	{
 		u32 vertex_count = 0;
@@ -157,6 +158,7 @@ namespace rsx
 	{
 		return x + (location ? 0x10000 : 0);
 	}
+	u32 get_address(context*, u32 x, u32 location) { return get_address(x, location); }
 	u32 get_vertex_offset_from_base(u32 b, u32 o)
 	{
 		return b + o;
@@ -230,6 +232,7 @@ struct interleaved_attribute_t
 	u16 frequency;
 };
 #define RANGE_FIELDS                                                                         \
+	context* ctx = &rsx::method_registers; \
 	u32 attribute_stride = 0, base_offset = 0, memory_location = 0, real_offset_address = 0; \
 	bool single_vertex = false, interleaved = false;                                         \
 	std::pair<u32, u32> vertex_range{};                                                      \

@@ -70,6 +70,11 @@ int main()
 		// A disabled vertex texture also retains a cached view until visited.
 		vertex.samplers[3] = std::make_unique<sampler>(context::framebuffer);
 		fragment.dirty[2] = true; // Preserve unrelated register invalidation.
+		std::uint32_t fragment_mask = 1u << 2;
+		std::uint32_t vertex_mask = 0;
+		assert(rsx::invalidate_sampler_context(fragment.samplers, fragment_mask, context::framebuffer));
+		assert(rsx::invalidate_sampler_context(vertex.samplers, vertex_mask, context::framebuffer));
+		assert(fragment_mask == ((1u << 2) | (1u << 12)) && vertex_mask == (1u << 3));
 
 		bool all_dirty = initially_dirty;
 		const bool fragment_invalidated = fragment.invalidate_framebuffers();

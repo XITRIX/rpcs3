@@ -37,7 +37,7 @@ namespace rsx
 	{
 		Unmapped() : std::runtime_error("RSXIO memory not mapped!") {}
 	};
-	u32 get_address(u32 offset, u32 location)
+	u32 get_address(Registers*, u32 offset, u32 location)
 	{
 		++lookups;
 		if (location == 0) return 0xc0000000u + offset;
@@ -46,6 +46,8 @@ namespace rsx
 	}
 }
 
+#define REGS(ctx) (ctx)
+static auto* m_ctx = &rsx::method_registers;
 static std::set<u32> scan()
 {
 	// Includes both array calls as well as the loop, directly from production.

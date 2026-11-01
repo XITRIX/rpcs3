@@ -10,7 +10,7 @@ HERE=Path(__file__).resolve().parent;CORE=HERE.parents[2]
 p=argparse.ArgumentParser();p.add_argument('--sanitize',action='store_true');args=p.parse_args()
 def baseline(path):return (HERE/'GTA5BatchReference'/('Draw.cpp' if path.endswith('VKDraw.cpp') else 'Pipeline.h')).read_text()
 drawpath='rpcs3/Emu/RSX/VK/VKDraw.cpp'
-draw=(CORE/drawpath).read_text();old=baseline(drawpath)
+draw=(CORE/drawpath).read_text().replace('m_ctx->program.fp_metadata', 'current_fp_metadata').replace('m_fs_sampler_descriptors', 'fs_sampler_state');old=baseline(drawpath)
 def iteration(s):
     start=s.index('for (u32 textures_ref = current_fp_metadata.referenced_textures_mask')
     end=s.index('\n\n\t\tif (!fs_sampler_state',start)

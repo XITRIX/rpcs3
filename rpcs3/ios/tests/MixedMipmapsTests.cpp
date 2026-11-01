@@ -105,11 +105,12 @@ namespace helpers
     }
 }
 struct guest_texture { int decoded_remap() const { return 0; } };
-std::vector<unsigned> get_subresources_layout(guest_texture) { return {0,1,2,3,4}; }
+std::vector<unsigned> get_subresources_layout(void*, guest_texture) { return {0,1,2,3,4}; }
 int classify_format(u32) { return 0; }
 struct surfaces { using surface_type=source_image*; };
 struct cache
 {
+    void* m_ctx = nullptr;
     using commandbuffer_type=int;
     using image_view_type=source_image*;
     using viewable_image_type=source_image*;

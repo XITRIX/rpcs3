@@ -34,6 +34,7 @@ fixture = r'''
 #include <cstdio>
 #include <stdexcept>
 using u32=uint32_t;
+constexpr u32 umax=~u32{0};
 using VkQueryResultFlags=u32;
 constexpr u32 VK_QUERY_RESULT_PARTIAL_BIT=1, VK_QUERY_RESULT_WITH_AVAILABILITY_BIT=2, VK_QUERY_RESULT_WAIT_BIT=4;
 constexpr int VK_SUCCESS=0, VK_NOT_READY=1;
@@ -55,7 +56,7 @@ int vkGetQueryPoolResults(render_device&,query_pool&,u32,u32,size_t,void* data,s
     out[1]=available;
     return available || partial ? VK_SUCCESS : VK_NOT_READY;
 }
-[[noreturn]] void die_with_error(int){throw std::runtime_error("query error");}
+[[noreturn]] bool die_with_error(int){throw std::runtime_error("query error");}
 struct query_pool_manager {
     struct query_slot_info {query_pool* pool;bool any_passed=false,active=true,ready=false;u32 data=0;};
     render_device device;query_pool pool;
