@@ -131,8 +131,8 @@ static void reconnect_case()
 	check(getsockname(server.server_socket, reinterpret_cast<sockaddr*>(&address), &length) == 0, "socket address");
 	sockets_closed = 0;
 	std::thread worker([&] { server(); });
-	// Empty connection, truncated packet and valid packet on three successive clients.
-	for (const std::string& input : {std::string{}, std::string{"$qSupp"}, std::string{"$qSupported#37+"}})
+	// Empty, truncated, malformed-start and valid packets on successive clients.
+	for (const std::string& input : {std::string{}, std::string{"$qSupp"}, std::string{"G"}, std::string{"$qSupported#37+"}})
 	{
 		const int client = socket(AF_INET, SOCK_STREAM, 0);
 		check(client >= 0, "client socket");
@@ -149,7 +149,7 @@ static void reconnect_case()
 	aborting = true;
 	worker.join();
 	aborting = false;
-	check(server.client_socket == -1 && sockets_closed == 3, "client descriptors leaked");
+	check(server.client_socket == -1 && sockets_closed == 4, "client descriptors leaked");
 	::close(server.server_socket);
 }
 int main()
@@ -164,6 +164,9 @@ int main()
 	read_case(packet("X0,3:#$}"), true, "X", "0,3:#$}", "+");
 	read_case("$qC#00$qC#b4", true, "qC", "", "-+");
 	read_case("$qC#00", false, "", "", "-");
+	// Blur 0.12 report D2DB9686: a bare G must only end this client.
+	read_case("G", false);
+	read_case("+G", false);
 	read_case("!", false);
 	read_case("$qC#zz", false);
 	const auto encoded = packet("X0,3:#$}");
