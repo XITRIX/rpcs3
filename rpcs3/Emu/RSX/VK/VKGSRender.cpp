@@ -947,6 +947,14 @@ std::string VKGSRender::configured_logical_id() const
 
 	// An empty adapter selects the default GPU, which is the one in use
 	const std::string adapter = g_cfg.video.vk.adapter.to_string();
+#ifdef RPCS3_IOS
+	// The headless Apple frontend uses this placeholder before Vulkan can
+	// enumerate devices. It selects the default GPU, not a different adapter.
+	if (adapter == "iOS Metal GPU")
+	{
+		return logical_id();
+	}
+#endif
 	return adapter.empty()
 		? logical_id()
 		: "Vulkan | " + adapter;
