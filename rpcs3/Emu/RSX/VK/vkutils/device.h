@@ -78,6 +78,7 @@ namespace vk
 		VkPhysicalDeviceProperties props;
 		VkPhysicalDeviceFeatures features;
 		VkPhysicalDeviceMemoryProperties memory_properties;
+		u64 max_buffer_allocation_size = 0;
 		std::vector<VkQueueFamilyProperties> queue_props;
 
 		mutable std::unordered_map<VkFormat, VkFormatProperties> format_properties;
@@ -136,6 +137,7 @@ namespace vk
 		const VkQueueFamilyProperties& get_queue_properties(u32 queue);
 		const VkPhysicalDeviceMemoryProperties& get_memory_properties() const;
 		const VkPhysicalDeviceLimits& get_limits() const;
+		u64 get_max_buffer_allocation_size() const { return max_buffer_allocation_size; }
 		bool get_shader_interpreter_support() const
 		{
 			// The fragment interpreter declares four texture types for all 16 RSX slots.

@@ -455,6 +455,13 @@ namespace vk
 
 		VkPhysicalDeviceDescriptorIndexingPropertiesEXT descriptor_indexing_props{};
 		VkPhysicalDeviceMultiDrawPropertiesEXT multidraw_props{};
+		VkPhysicalDeviceMaintenance3Properties allocation_props{};
+		if (props.apiVersion >= VK_API_VERSION_1_1 || device_extensions.is_supported(VK_KHR_MAINTENANCE_3_EXTENSION_NAME))
+		{
+			allocation_props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES;
+			allocation_props.pNext = properties2.pNext;
+			properties2.pNext = &allocation_props;
+		}
 
 		descriptor_indexing_props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES_EXT;
 		descriptor_indexing_props.pNext = properties2.pNext;
@@ -469,6 +476,7 @@ namespace vk
 
 		vkGetPhysicalDeviceProperties2(dev, &properties2);
 		props = properties2.properties;
+		max_buffer_allocation_size = allocation_props.maxMemoryAllocationSize;
 
 		if (get_driver_vendor() == driver_vendor::MVK)
 		{

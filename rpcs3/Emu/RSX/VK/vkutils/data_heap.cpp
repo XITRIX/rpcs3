@@ -1,6 +1,7 @@
 #include "barriers.h"
 #include "data_heap.h"
 #include "device.h"
+#include "HeapGrowthPolicy.h"
 
 #include "../../RSXOffload.h"
 #include "../VKHelpers.h"
@@ -16,6 +17,13 @@ namespace vk
 
 	void data_heap::create(VkBufferUsageFlags usage, usz size, rsx::flags32_t flags, const char* name, usz guard, VkBool32 notify)
 	{
+		const auto device_limit = g_render_device->gpu().get_max_buffer_allocation_size();
+		if (device_limit && size > device_limit)
+		{
+			rsx_log.warning("Reducing heap '%s' from %llu to driver allocation limit %llu bytes", name, size, device_limit);
+			size = device_limit;
+		}
+		ensure(size > guard, "Driver buffer allocation limit is smaller than the heap guard");
 		rsx::data_heap::init(size, name, guard);
 
 		const auto& memory_map = g_render_device->get_memory_mapping();
@@ -100,13 +108,14 @@ namespace vk
 	{
 		// Create new heap. All sizes are aligned up by 64M, upto 1GiB
 		const usz size_limit = (m_flags & heap_pool_fixed_size) ? initial_size : 1024 * 0x100000;
-		usz aligned_new_size = utils::align(m_size + size, 64 * 0x100000);
+		const auto device_limit = g_render_device->gpu().get_max_buffer_allocation_size();
+		usz aligned_new_size = heap_growth_size(m_size, size, size_limit, device_limit);
+		if (!aligned_new_size) return false; // A single request cannot fit the driver limit.
 
-		if (aligned_new_size >= size_limit)
+		if (aligned_new_size >= std::min<u64>(size_limit, device_limit ? device_limit : size_limit))
 		{
 			// Too large, try to swap out the heap instead of growing.
 			rsx_log.error("[%s] Pool limit was reached. Will attempt to swap out the current heap.", m_name);
-			aligned_new_size = size_limit;
 		}
 
 		// Wait for DMA activity to end
