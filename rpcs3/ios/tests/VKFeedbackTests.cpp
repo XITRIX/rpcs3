@@ -133,8 +133,22 @@ struct VKGSRender
 	vk::command_buffer command;
 	vk::command_buffer* m_current_command_buffer = &command;
 	vk::texture_cache m_texture_cache;
+	struct context_stub
+	{
+		struct { fragment_program_utils::fragment_program_metadata& fp_metadata; } program;
+	} context{{current_fp_metadata}};
+	context_stub* m_ctx = &context;
+	auto& descriptors() { return fs_sampler_state; }
+	decltype(fs_sampler_state)& m_fs_sampler_descriptors = fs_sampler_state;
+	struct resources_stub
+	{
+		decltype(m_rtts)& surface_cache;
+		vk::texture_cache& texture_cache;
+	} resources{m_rtts, m_texture_cache};
+	resources_stub* res() { return &resources; }
 	vk::image_view* snapshot_color_feedback(u32 texture_index, vk::image_view* view);
 };
+#define REGS(ctx) (&rsx::method_registers)
 #include "VKFeedback.inc"
 
 static v128 instruction(u32 opcode, u32 texture = 0, bool end = false, bool constant = false)
