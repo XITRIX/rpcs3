@@ -90,15 +90,16 @@ namespace rsx
             if (lock) { assert(addr == 0x10000); ++reservations; }
         }
     };
-    struct renderer : thread_base
+    struct renderer_stub : thread_base
     {
+        renderer_stub* renderer() { return this; }
         std::thread::id owner = std::this_thread::get_id();
         std::function<void(u32, void*)> callback;
         bool is_current_thread() { return owner == std::this_thread::get_id(); }
         void on_semaphore_acquire_wait() { std::this_thread::yield(); }
         void renderctl(u32 cmd, void* data) { callback(cmd, data); }
     } gpu;
-    renderer* get_current_renderer() { return &gpu; }
+    renderer_stub* get_current_renderer() { return &gpu; }
     void write_index_array_for_non_indexed_non_native_primitive_to_buffer(char* dst, primitive_type, u32 count)
     {
         for (u32 i = 0; i < count; ++i) reinterpret_cast<u32*>(dst)[i] = i;

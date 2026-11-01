@@ -357,7 +357,7 @@ namespace rsx
 		g_user_asked_for_frame_capture = false;
 		g_user_asked_for_frame_capture_count = 0;
 		g_frame_capture_remaining = 0;
-		frame_capture.reset();
+		frame_capture.reset(*REGS(m_ctx));
 		g_read_fault_handler = nullptr;
 		g_access_violation_handler = nullptr;
 
@@ -1952,9 +1952,9 @@ namespace rsx
 	void thread::notify_zcull_info_changed()
 	{
 		// Query counting can require an otherwise unused framebuffer attachment.
-		if (m_graphics_state.test(rsx::rtt_config_contested))
+		if (m_ctx->graphics_state.test(rsx::rtt_config_contested))
 		{
-			m_graphics_state.set(rsx::rtt_config_dirty);
+			m_ctx->graphics_state.set(rsx::rtt_config_dirty);
 		}
 		check_zcull_status(false);
 	}
@@ -2246,7 +2246,7 @@ namespace rsx
 				// Keep already committed files; stop the burst at the first failure.
 				capture_frames_remaining = 0;
 			}
-			frame_capture.reset();
+			frame_capture.reset(*REGS(m_ctx));
 			g_frame_capture_remaining = capture_frames_remaining;
 			pause_emulator = capture_frames_remaining == 0;
 		}
@@ -2266,9 +2266,10 @@ namespace rsx
 		if (capture_frames_remaining)
 		{
 			// Start the next recording at this SAME boundary: no uncaptured gap frame.
+			request_guest_write_back();
 			capture_current_frame = true;
 			frame_debug.reset();
-			frame_capture.reset();
+			frame_capture.reset(*REGS(m_ctx));
 			frame_capture.replay_commands.reserve(8000);
 			rsx::frame_capture_data::replay_command replay_cmd;
 			replay_cmd.rsx_command = std::make_pair(NV4097_NO_OPERATION, 0);

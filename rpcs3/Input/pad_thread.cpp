@@ -997,7 +997,7 @@ void pad_thread::set_target_window(void* window)
 {
 	m_curwindow = window;
 
-#ifndef ANDROID
+#if !defined(ANDROID) && !defined(RPCS3_IOS)
 	for (const auto& [type, handler] : m_handlers)
 	{
 		if (type == pad_handler::keyboard)

@@ -17,7 +17,7 @@ with tempfile.TemporaryDirectory(prefix='rsx-single-lock-') as d:
     for version in ('old','new'):
         mutex=strip((CORE/'Utilities/mutex.h').read_text());mutex=mutex[:mutex.index('// Simplified shared')]
         (p/(version+'-mutex.inc')).write_text(mutex+'\n'+strip((CORE/'Utilities/mutex.cpp').read_text()))
-        path=HERE/'GTA5SyncReference/IOMapAccepted8.hpp' if version=='old' else CORE/'rpcs3/Emu/RSX/Core/RSXIOMap.hpp'
+        path=HERE/'GTA5SyncReference/IOMapAccepted8.hpp' if version=='old' else CORE/'rpcs3/Emu/RSX/NV47/FW/RSXIOMap.hpp'
         (p/(version+'-rsx.inc')).write_text(strip(path.read_text())+'\ninline rsx::rsx_iomap_table::rsx_iomap_table() noexcept = default;\nstruct renderer_t {rsx::rsx_iomap_table iomap_table;};\ninline renderer_t renderer;\n')
     cmd=[os.environ.get('CXX','clang++'),'-std=c++20','-O2','-pthread','-Wall','-Wextra','-Werror',str(HERE/'RSXSingleLockTests.cpp'),'-I',str(p),'-o',str(p/'test')]
     if args.sanitize:cmd[1:1]=['-fsanitize=address,undefined','-fno-omit-frame-pointer']

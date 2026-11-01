@@ -27,8 +27,8 @@ struct worker{claim m_exec_claim;bool m_rsx_running_jobs=false;queue m_work_queu
 worker* active=nullptr;unsigned pauses=0;
 namespace utils{void pause(){++pauses;if(pauses==1000 && active)active->m_processed_count.value=active->m_enqueued_count.value;}}
 namespace thread_ctrl{void* current=nullptr;void* get_current(){return current;}}
-struct renderer{bool current=true;unsigned callbacks=0;bool is_current_thread(){return current;}void on_semaphore_acquire_wait(){++callbacks;}} gpu;
-renderer* get_current_renderer(){return &gpu;}
+struct renderer_stub{renderer_stub* renderer(){return this;}bool current=true;unsigned callbacks=0;bool is_current_thread(){return current;}void on_semaphore_acquire_wait(){++callbacks;}} gpu;
+renderer_stub* get_current_renderer(){return &gpu;}
 struct dma_manager{struct offload_thread{struct execution_guard{worker& owner;bool runner;~execution_guard(){}};static void execute(int){}};std::unique_ptr<worker>m_thread;bool m_mem_fault_flag=false,m_wait_parking=true;
  bool is_current_thread()const;bool sync(bool=false)const;void join();};
 #include "production.inc"

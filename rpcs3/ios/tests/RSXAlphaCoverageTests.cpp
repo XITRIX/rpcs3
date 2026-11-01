@@ -34,7 +34,8 @@ struct context
 {
     registers_t regs;
     backend_t backend_config{};
-    u32 m_graphics_state = 0;
+    u32 graphics_state = 0;
+    struct { struct { u32 ctrl = 0x80; } fragment_program; } program;
     const backend_t& get_backend_config() const { return backend_config; }
 };
 #define REGS(ctx) (&(ctx)->regs)
@@ -42,10 +43,9 @@ struct context
 #include "invalidation.inc"
 u32 select(context* m_ctx)
 {
-    const auto& backend_config = m_ctx->backend_config;
-    struct { u32 ctrl = 0x80; } current_fragment_program;
+    m_ctx->program.fragment_program.ctrl = 0x80;
 #include "selection.inc"
-    return current_fragment_program.ctrl;
+    return m_ctx->program.fragment_program.ctrl;
 }
 
 struct vec4
@@ -110,12 +110,12 @@ int main()
         for (u32 old : {0u, 0x10u, 0x100u, 0x110u})
         {
             ctx.regs.latch = old;
-            ctx.m_graphics_state = 0;
+            ctx.graphics_state = 0;
             set_aa_control(&ctx, 0, ctx.regs.value.bits);
             const bool changed = old != ctx.regs.value.bits;
             const bool shader_changed = changed && !(hw && single_hw)
                 && (((old ^ ctx.regs.value.bits) & 0x10) || (coverage && ((old ^ ctx.regs.value.bits) & 0x100)));
-            check(ctx.m_graphics_state == ((changed ? 1u : 0u) | (shader_changed ? 2u : 0u)), "AA state shader invalidation");
+            check(ctx.graphics_state == ((changed ? 1u : 0u) | (shader_changed ? 2u : 0u)), "AA state shader invalidation");
         }
     }
 

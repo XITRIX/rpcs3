@@ -75,7 +75,7 @@ with tempfile.TemporaryDirectory(prefix='rpcs3-guest-clock-') as directory:
     (out / 'StallSPUCompile.inc').write_text(scope.replace('#ifdef ARCH_ARM64', '#if 1'))
     ppu = method(args.ppu_source.read_text(), 'bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_size)\n')
     hold = re.search(r'const guest_time_stall clock_hold\([^;]+;', ppu)
-    assert hold and ppu.index(hold[0]) < ppu.index('for (auto& func : info.get_funcs())', ppu.index('const bool is_being_used_in_emulation'))
+    assert hold and ppu.index(hold[0]) < ppu.index('for (const auto& func : info.get_funcs())', ppu.index('const bool is_being_used_in_emulation'))
     assert ppu.index(hold[0]) < ppu.index('threads.join()')
     (out / 'StallPPUHold.inc').write_text(hold[0])
     capture = method(args.capture_source.read_text(), 'void thread::on_frame_end(')

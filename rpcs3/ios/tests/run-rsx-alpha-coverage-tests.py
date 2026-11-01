@@ -26,7 +26,7 @@ def block(source, marker):
     return source[start:end]
 
 
-selection = block((RSX / "RSXThread.cpp").read_text(),
+selection = block((RSX / "Core/RSXGraphEngine.cpp").read_text(),
                   "if (REGS(m_ctx)->msaa_alpha_to_coverage_enabled())")
 invalidation = block((RSX / "NV47/HW/nv4097.cpp").read_text(), "void set_aa_control(")
 enums = (RSX / "gcm_enums.h").read_text()

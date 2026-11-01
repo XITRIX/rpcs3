@@ -3271,7 +3271,7 @@ namespace rsx
 			if (!base.validate())
 			{
 				invalidate_range_impl_base(cmd, base_range, invalidation_cause::read);
-				auto layout = get_subresources_layout(tex);
+				auto layout = get_subresources_layout(m_ctx, tex);
 				layout.resize(1);
 				auto uploaded = upload_image_from_cpu(cmd, base_range, attr.width, attr.height, 1, 1,
 					attr.pitch, attr.gcm_format, texture_upload_context::blit_engine_src, layout, dimension, false);

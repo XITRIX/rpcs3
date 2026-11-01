@@ -31,7 +31,7 @@ with tempfile.TemporaryDirectory(prefix='rsx-sync-') as temp:
         base = HERE / 'GTA5SyncReference'
         paths = [base/'Mutex.h', base/'Mutex.cpp', base/'IOMap.hpp', base/'Reservation.hpp'] if version == 'old' else [
             CORE/'Utilities/mutex.h', CORE/'Utilities/mutex.cpp',
-            CORE/'rpcs3/Emu/RSX/Core/RSXIOMap.hpp', CORE/'rpcs3/Emu/RSX/Core/RSXReservationLock.hpp']
+            CORE/'rpcs3/Emu/RSX/NV47/FW/RSXIOMap.hpp', CORE/'rpcs3/Emu/RSX/Core/RSXReservationLock.hpp']
         mutex, impl, iomap, reservation = map(lambda x: strip(x.read_text()), paths)
         mutex = mutex[:mutex.index('// Simplified shared')]
         (p/(version+'-mutex.inc')).write_text(mutex+'\n'+impl)

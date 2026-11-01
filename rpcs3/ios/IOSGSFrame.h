@@ -14,6 +14,7 @@ public:
 
 	void close() override;
 	void reset() override;
+	video_renderer renderer() const override { return video_renderer::vulkan; }
 	bool shown() override;
 	void hide() override;
 	void show() override;

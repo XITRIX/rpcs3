@@ -60,7 +60,7 @@ namespace rsx
         std::thread::id owner = std::this_thread::get_id();
         std::atomic<unsigned> pause_requests{0};
         std::atomic<bool> pause_ack{false};
-        std::atomic<unsigned> m_eng_interrupt_mask{0};
+        std::atomic<unsigned> eng_interrupt_mask{0};
         bool is_current_thread() const { return owner == std::this_thread::get_id(); }
         void pause()
         {

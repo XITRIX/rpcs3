@@ -662,8 +662,7 @@ bool VKGSRender::present_frame(const rsx::display_flip_info_t& info)
 			if (!graphics.active())
 			{
 				m_frame->flip(m_context, true);
-				rsx::thread::flip(info);
-				return;
+				return false;
 			}
 #endif
 			// In some cases, after a fullscreen switch, the driver only allows N-1 images to be acquirable, where N = number of available swap images.
@@ -688,8 +687,7 @@ bool VKGSRender::present_frame(const rsx::display_flip_info_t& info)
 			if (out_of_date_rebuilds++ >= 2 || !reinitialize_swapchain())
 			{
 				m_frame->flip(m_context, true);
-				rsx::thread::flip(info);
-				return;
+				return false;
 			}
 			continue;
 		default:
@@ -1171,12 +1169,12 @@ void VKGSRender::post_present()
 			m_draw_fbo = nullptr;
 		}
 		m_fbo_images.clear();
-		m_graphics_state |= rsx::rtt_config_dirty | rsx::scissor_config_state_dirty | rsx::vertex_state_dirty;
+		m_ctx->graphics_state |= rsx::rtt_config_dirty | rsx::scissor_config_state_dirty | rsx::vertex_state_dirty;
 
 		// Samplers can retain views of the replaced surfaces even in slots the
 		// next shader does not use. A global refresh alone loses those slots.
-		rsx::invalidate_sampler_context(fs_sampler_state, m_textures_dirty, rsx::texture_upload_context::framebuffer_storage);
-		rsx::invalidate_sampler_context(vs_sampler_state, m_vertex_textures_dirty, rsx::texture_upload_context::framebuffer_storage);
+		rsx::invalidate_sampler_context(m_fs_sampler_descriptors, m_ctx->textures.fragment_textures_dirty, rsx::texture_upload_context::framebuffer_storage);
+		rsx::invalidate_sampler_context(m_vs_sampler_descriptors, m_ctx->textures.vertex_textures_dirty, rsx::texture_upload_context::framebuffer_storage);
 		m_samplers_dirty.store(true);
 
 		// First, try to reclaim any memory since the res scale upgrade is so memory intensive

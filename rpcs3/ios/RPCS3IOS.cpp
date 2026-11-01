@@ -49,15 +49,15 @@
 #include "Emu/NP/np_avatar.h"
 #include "Crypto/utils.h"
 #ifdef HAVE_VULKAN
-#include "Emu/RSX/VK/VKGSRender.h"
+#include "Emu/RSX/Core/RSXRendererFactory.h"
 #endif
 #include "Emu/system_config.h"
 #include "Emu/system_progress.hpp"
+#include "Utilities/File.h"
 #include "Emu/savestate_utils.hpp"
 #include "Emu/system_utils.hpp"
 #include "Emu/vfs_config.h"
 #include "Input/pad_thread.h"
-#include "Utilities/File.h"
 #include "Utilities/JIT.h"
 #include "Utilities/JITIOS.h"
 #include "Utilities/JITProfile.h"
@@ -1031,7 +1031,7 @@ emu_callbacks make_callbacks()
 		{
 		case video_renderer::vulkan:
 #ifdef HAVE_VULKAN
-			g_fxo->init<rsx::thread, named_thread<VKGSRender>>(archive);
+			rsx::create_render_thread(archive);
 			break;
 #else
 			fmt::throw_exception("The iOS core was built without Vulkan support");

@@ -661,14 +661,14 @@ rsx::flags32_t VKGSRender::load_texture_env()
 vk::image_view* VKGSRender::snapshot_color_feedback(u32 texture_index, vk::image_view* view)
 {
 	if (vk::get_driver_vendor() != vk::driver_vendor::MVK ||
-		!(current_fp_metadata.multiple_texture_reads_mask & (1u << texture_index)) ||
+		!(m_ctx->program.fp_metadata.multiple_texture_reads_mask & (1u << texture_index)) ||
 		view->info.subresourceRange.aspectMask != VK_IMAGE_ASPECT_COLOR_BIT ||
 		view->image()->samples() != 1)
 	{
 		return view;
 	}
 
-	for (const auto& [address, surface] : m_rtts.m_bound_render_targets)
+	for (const auto& [address, surface] : res()->surface_cache.m_bound_render_targets)
 	{
 		if (!surface || surface != view->image() || surface->spp != 1)
 		{
@@ -681,7 +681,7 @@ vk::image_view* VKGSRender::snapshot_color_feedback(u32 texture_index, vk::image
 		// filter for these shaders, not a general proof that single-read feedback is safe.
 		// Already-separated (including strict-mode) views never match the attachment.
 		surface->memory_barrier(*m_current_command_buffer, rsx::surface_access::transfer_read);
-		const auto* desc = static_cast<vk::texture_cache::sampled_image_descriptor*>(fs_sampler_state[texture_index].get());
+		const auto* desc = static_cast<vk::texture_cache::sampled_image_descriptor*>(m_fs_sampler_descriptors[texture_index].get());
 		rsx::image_section_attributes_t attrs{};
 		attrs.address = desc->ref_address;
 		attrs.gcm_format = desc->format_ex.format();
@@ -692,7 +692,7 @@ vk::image_view* VKGSRender::snapshot_color_feedback(u32 texture_index, vk::image
 		// Preserve the full host image and the existing shader coordinate transform,
 		// including cropped aliases and resolution scaling. Do not scale it again.
 		const coord3u rect = { 0, 0, 0, attrs.width, attrs.height, 1 };
-		const auto remap = rsx::method_registers.fragment_textures[texture_index].decoded_remap();
+		const auto remap = REGS(m_ctx)->fragment_textures[texture_index].decoded_remap();
 		auto copy = vk::texture_cache::deferred_subresource::create_copy(
 			surface, attrs, rect, rsx::surface_transform::identity, remap, true);
 		copy.cache_range = surface->get_memory_range();
@@ -702,7 +702,7 @@ vk::image_view* VKGSRender::snapshot_color_feedback(u32 texture_index, vk::image
 		// Explicitly order prior attachment writes before the transfer even if the
 		// attachment was already in GENERAL for a preceding feedback draw.
 		surface->push_layout(*m_current_command_buffer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-		auto snapshot = m_texture_cache.create_temporary_subresource(*m_current_command_buffer, copy);
+		auto snapshot = res()->texture_cache.create_temporary_subresource(*m_current_command_buffer, copy);
 		surface->pop_layout(*m_current_command_buffer);
 		// The temporary-image cache key excludes remapping. Select the current
 		// sampler's view explicitly when reusing an earlier draw's allocation.

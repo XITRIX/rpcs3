@@ -136,9 +136,12 @@ namespace capture_commit
 static bool fail_open = false, fail_commit = false;
 static unsigned completed = 0;
 static u64 deadline = 0;
+static int register_state = 0;
+static int* m_ctx = &register_state;
+static int* REGS(int* ctx) { return ctx; }
 struct capture_data
 {
-	void reset() { host_work(); }
+	void reset(const int& regs) { check(&regs == m_ctx); host_work(); }
 } frame_capture;
 struct log
 {
