@@ -854,6 +854,44 @@ std::string jit_compiler::cpu(std::string_view _cpu)
 	return m_cpu;
 }
 
+std::vector<std::string> jit_compiler::target_features()
+{
+	std::vector<std::string> attributes;
+
+#if defined(ARCH_ARM64)
+	if (utils::has_sha3())
+		attributes.push_back("+sha3");
+	else
+		attributes.push_back("-sha3");
+
+	if (utils::has_dotprod())
+		attributes.push_back("+dotprod");
+	else
+		attributes.push_back("-dotprod");
+
+	// The recompilers emit i8mm intrinsics (e.g. ummla) gated on utils::has_i8mm().
+	// The JIT target features must advertise i8mm too, otherwise the backend fails
+	// with "Cannot select: intrinsic %llvm.aarch64.neon.ummla" whenever the resolved
+	// -mcpu does not already imply it (e.g. the cortex-a78 fallback on Apple silicon).
+	if (utils::has_i8mm())
+		attributes.push_back("+i8mm");
+	else
+		attributes.push_back("-i8mm");
+
+	if (utils::has_sve())
+		attributes.push_back("+sve");
+	else
+		attributes.push_back("-sve");
+
+	if (utils::has_sve2())
+		attributes.push_back("+sve2");
+	else
+		attributes.push_back("-sve2");
+#endif
+
+	return attributes;
+}
+
 std::string jit_compiler::triple1()
 {
 #if defined(_WIN32)
@@ -954,38 +992,7 @@ jit_compiler::jit_compiler(const std::unordered_map<std::string, u64>& _link, st
 		mem = std::make_unique<MemoryManager1>(std::move(symbols_cement));
 	}
 
-	std::vector<std::string> attributes;
-
-#if defined(ARCH_ARM64)
-	if (utils::has_sha3())
-		attributes.push_back("+sha3");
-	else
-		attributes.push_back("-sha3");
-
-	if (utils::has_dotprod())
-		attributes.push_back("+dotprod");
-	else
-		attributes.push_back("-dotprod");
-
-	// The recompilers emit i8mm intrinsics (e.g. ummla) gated on utils::has_i8mm().
-	// The JIT target features must advertise i8mm too, otherwise the backend fails
-	// with "Cannot select: intrinsic %llvm.aarch64.neon.ummla" whenever the resolved
-	// -mcpu does not already imply it (e.g. the cortex-a78 fallback on Apple silicon).
-	if (utils::has_i8mm())
-		attributes.push_back("+i8mm");
-	else
-		attributes.push_back("-i8mm");
-
-	if (utils::has_sve())
-		attributes.push_back("+sve");
-	else
-		attributes.push_back("-sve");
-
-	if (utils::has_sve2())
-		attributes.push_back("+sve2");
-	else
-		attributes.push_back("-sve2");
-#endif
+	const auto attributes = target_features();
 
 	{
 		m_engine.reset(llvm::EngineBuilder(std::move(null_mod))

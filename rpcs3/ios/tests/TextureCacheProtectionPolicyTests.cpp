@@ -23,9 +23,10 @@ int main()
 	for (bool requested : {false, true})
 	for (bool ready : {false, true})
 	for (bool detached : {false, true})
+	for (bool aot : {false, true})
 	{
-		const bool permitted = allow_texture_write_tracking(requested, ready, detached);
-		if (!requested || !ready || !detached) assert(!permitted);
+		const bool permitted = allow_texture_write_tracking(requested, ready, detached, aot);
+		if (!requested || (!ready && !aot) || !detached) assert(!permitted);
 		else assert(permitted);
 	}
 

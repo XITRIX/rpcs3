@@ -513,6 +513,25 @@ RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_update_config_database(
     const void* content,
     size_t content_size) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_run_llvm_self_test(uint64_t input, uint64_t* output) RPCS3_IOS_NOEXCEPT;
+
+// Optional additive ABI30 AOT exports. Older cores omit them. Capability high
+// 32 bits are runtime version; low bits: PPU=1, SPU=2, automatic=4, batched signing=8.
+RPCS3_IOS_EXPORT uint64_t rpcs3_ios_aot_capabilities(void) RPCS3_IOS_NOEXCEPT;
+// Callback executes on a loader worker. It must not call lifecycle exports.
+// Return0 plus a SHA-256 hex digest, or nonzero plus a bounded error message.
+RPCS3_IOS_EXPORT bool rpcs3_ios_aot_is_cancelled(void) RPCS3_IOS_NOEXCEPT;
+typedef int32_t (*rpcs3_ios_aot_native_sign_callback)(void*, const char*, const char*, const char*, char*, size_t);
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_aot_set_native_signer(rpcs3_ios_aot_native_sign_callback callback, void* context) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_aot_configure(const char* signer_sha256, const char* core_sha256) RPCS3_IOS_NOEXCEPT;
+// Begin synchronously before exposing cancellation or queueing prepare.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_aot_begin_preparation(void) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_aot_prepare(const char* title_id, char* identifier, size_t capacity) RPCS3_IOS_NOEXCEPT;
+// Preparation6 reports only remaining new images; immutable signed modules are reused.
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_aot_signing_count(const char* identifier, uint32_t* count) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_aot_signing_paths(const char* identifier, char* input, size_t input_capacity, char* output, size_t output_capacity) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_aot_finalize(const char* identifier, const char* signed_sha256) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_aot_get_status(const char* title_id, char* json, size_t capacity) RPCS3_IOS_NOEXCEPT;
+RPCS3_IOS_EXPORT void rpcs3_ios_aot_cancel(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT const char* rpcs3_ios_firmware_version(void) RPCS3_IOS_NOEXCEPT;
 RPCS3_IOS_EXPORT rpcs3_ios_status rpcs3_ios_install_firmware(
     const char* pup_path,

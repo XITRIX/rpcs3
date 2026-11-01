@@ -4,6 +4,7 @@
 #include <map>
 #include <deque>
 #include <span>
+#include <functional>
 #include "util/types.hpp"
 #include "util/asm.hpp"
 #include "util/to_endian.hpp"
@@ -56,7 +57,7 @@ struct ppu_function
 
 		bool operator==(const iterator& rhs) const noexcept
 		{
-			return it == rhs.it || (rhs.index == index && _this->blocks.empty());
+			return _this == rhs._this && (_this->blocks.empty() ? rhs.index == index : it == rhs.it);
 		}
 
 		bool operator!=(const iterator& rhs) const noexcept
@@ -182,6 +183,19 @@ struct ppu_module : public Type
 		return as_span(parent ? parent->relocs : relocs, bound_local, false);
 	}
 
+	// Shared loader/analyser section metadata. Segment permissions alone do not
+	// distinguish PPU instructions from constants or embedded SPU images.
+	u32 add_analysis_section(u32 type, u64 address, u64 size, u64 flags)
+	{
+		if (type != 1 /* SHT_PROGBITS */ || !address || !size ||
+			address > UINT32_MAX || size > UINT32_MAX - address) return 0;
+		secs.push_back({u32(address), u32(size), type, u32(flags & 7), 0});
+		if ((flags & 4) && !segs.empty() && address >= segs[0].addr &&
+			address + size <= u64(segs[0].addr) + segs[0].size)
+			return u32(address + size);
+		return 0;
+	}
+
 	// Copy info without functions
 	void copy_part(const ppu_module& info)
 	{
@@ -196,6 +210,35 @@ struct ppu_module : public Type
 		is_relocatable = info.is_relocatable;
 		local_bounds = {u32{umax}, 0}; // Initially empty range
 	}
+
+	// Shared native compilation partitioning. Keep whole functions and native
+	// loader metadata; the caller owns backend-specific hook installation.
+	template <typename Exclude>
+	void copy_next_compilation_part(const ppu_module& info, usz& position, Exclude&& exclude)
+	{
+		copy_part(info);
+		const auto functions = info.get_funcs();
+		usz bytes = 0, count = 0;
+		while (position < functions.size())
+		{
+			const auto& function = functions[position];
+			if (!function.size) { ++position; continue; }
+			if (bytes && bytes + function.size > 100 * 1024 && count >= 1000) break;
+			++position;
+			if (exclude(function))
+			{
+				excluded_funcs.push_back(function.addr);
+				continue;
+			}
+			local_bounds.first = std::min(local_bounds.first, function.addr);
+			local_bounds.second = std::max(local_bounds.second, function.addr + function.size);
+			bytes += function.size;
+			++count;
+		}
+	}
+
+	// Run once on the complete module before partitioning for either backend.
+	bool prepare_compilation_attributes(bool accurate_sat) const;
 
 	bool analyse(u32 lib_toc, u32 entry, u32 end, const std::vector<u32>& applied, const std::vector<u32>& exported_funcs = std::vector<u32>{}, std::function<bool()> check_aborted = {});
 	void validate(u32 reloc);
@@ -1425,3 +1468,9 @@ struct ppu_iname
 #undef NAME
 #undef NAME_
 };
+
+// Shared native embedded-SPU search. Callbacks own file validation, compilation
+// or patching; this scanner only reads the supplied, bounded segment bytes.
+void ppu_find_spu_code(std::span<const u8> bytes,
+	const std::function<void(u32, std::span<const u8>)>& on_raw,
+	const std::function<u32(u32)>& on_elf, const std::function<void()>& checkpoint = {}, u32 display_base = 0);

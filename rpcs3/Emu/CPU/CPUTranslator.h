@@ -3281,6 +3281,9 @@ protected:
 	std::vector<std::unique_ptr<translator_pass>> m_transform_passes;
 
 	void initialize(llvm::LLVMContext& context, llvm::ExecutionEngine& engine);
+	// File compilation shares feature selection and instruction lowering without
+	// constructing an execution engine or executable-memory manager.
+	void initialize(llvm::LLVMContext& context, std::string_view cpu);
 
 	// Run intrinsics replacement pass
 	void replace_intrinsics(llvm::Function&);
@@ -3348,7 +3351,7 @@ public:
 #ifdef _WIN32
 		func->setCallingConv(llvm::CallingConv::Win64);
 #endif
-		m_engine->updateGlobalMapping({lame.data(), lame.size()}, reinterpret_cast<uptr>(_func));
+		if (m_engine) m_engine->updateGlobalMapping({lame.data(), lame.size()}, reinterpret_cast<uptr>(_func));
 
 		const auto inst = m_ir->CreateCall(func, {args...});
 		inst->setTailCallKind(llvm::CallInst::TCK_NoTail);

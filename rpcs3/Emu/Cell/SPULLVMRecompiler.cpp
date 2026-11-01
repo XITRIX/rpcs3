@@ -28,6 +28,12 @@ const extern spu_decoder<spu_iflag> g_spu_iflag;
 #ifdef LLVM_AVAILABLE
 
 #include "Emu/CPU/CPUTranslator.h"
+#ifdef RPCS3_IOS_AOT_BACKEND
+#include "ios/AOTRecompiler.h"
+#include "ios/AOTAnalysis.h"
+#include "ios/AOTNativeImports.h"
+#endif
+#include "ios/AOTRuntime.h"
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -84,8 +90,64 @@ void spu_llvm_set_compile_context(spu_llvm_compile_context* context) noexcept
 
 class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 {
+	// These native channel paths only access CPU data: they cannot block,
+	// perform DMA, service pending work or modify local-store instructions.
+	// Keep every other channel as an explicit commit/revalidation boundary.
+	static bool file_channel_continues(spu_opcode_t op)
+	{
+		switch (g_spu_itype.decode(op.opcode))
+		{
+		case spu_itype::RDCH:
+			return op.ra == SPU_RdSRR0 || op.ra == MFC_RdTagMask || op.ra == SPU_RdEventMask || op.ra == SPU_RdMachStat;
+		case spu_itype::WRCH:
+			return op.ra == SPU_WrSRR0 || op.ra == MFC_LSA || op.ra == MFC_EAL || op.ra == MFC_Size || op.ra == MFC_TagID;
+		default: return false;
+		}
+	}
+
+	template <std::size_t N> struct native_helper_name
+	{
+		char text[N];
+		constexpr native_helper_name(const char (&name)[N]) { std::copy_n(name, N, text); }
+		constexpr std::string_view view() const { return {text, N - 1}; }
+	};
+
+	// Retain the native helper and signature at their existing call site. A
+	// semantic name distinguishes anonymous helpers with identical type names.
+	template <auto Function, auto Name, typename... Args>
+	auto native_call_impl(std::string_view name, Args... args)
+	{
+#ifdef RPCS3_IOS_AOT_BACKEND
+		if (m_native_file)
+		{
+			using imported = rpcs3::ios::aot::registered_native_import<Function, Name>;
+			return cpu_translator::call(imported::key(), imported::address(), args...);
+		}
+#endif
+		return cpu_translator::call(name, Function, args...);
+	}
+
+	template <auto Function, native_helper_name Name, typename... Args>
+	auto native_call(Args... args)
+	{
+		return native_call_impl<Function, Name>(Name.view(), args...);
+	}
+
+	template <auto Function, typename... Args>
+	auto native_call(std::string_view name, Args... args)
+	{
+		return native_call_impl<Function, 0>(name, args...);
+	}
+
 	// JIT Instance
-	jit_compiler m_jit{{}, jit_compiler::cpu(g_cfg.core.llvm_cpu.to_string())};
+	std::unique_ptr<jit_compiler> m_jit;
+
+	std::vector<llvm::Function*> m_native_return_chunks;
+	bool m_native_file = false; // Native ABI with file relocation, not fragment execution.
+	llvm::Module* m_file_module = nullptr;
+	llvm::Value* m_file_context = nullptr;
+	u32 m_file_entry_offset = 0;
+	std::vector<std::pair<u32, llvm::Function*>> m_file_entries;
 
 	// Interpreter table size power
 	const u8 m_interp_magn;
@@ -251,7 +313,7 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 #if 0
 		const auto chunk_type = get_ftype<u8*, u8*, u8*, u32>();
 #else
-		const auto chunk_type = get_ftype<void, u8*, u8*, u32>();
+		const auto chunk_type = m_file_module ? get_ftype<void, u8*, u8*, u8*>() : get_ftype<void, u8*, u8*, u32>();
 #endif
 
 		// Get function chunk name
@@ -262,13 +324,14 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 		result->setLinkage(llvm::GlobalValue::InternalLinkage);
 		result->addParamAttr(0, llvm::Attribute::NoAlias);
 		result->addParamAttr(1, llvm::Attribute::NoAlias);
+		if (m_file_module) result->addParamAttr(2, llvm::Attribute::NoAlias);
 #if 1
-		result->setCallingConv(llvm::CallingConv::GHC);
+		result->setCallingConv(m_file_module ? llvm::CallingConv::C : llvm::CallingConv::GHC);
 #endif
 
 		empl.first->second.chunk = result;
 
-		if (g_cfg.core.spu_block_size == spu_block_size_type::giga)
+		if (!m_file_module && g_cfg.core.spu_block_size == spu_block_size_type::giga)
 		{
 			// Find good real function
 			const auto ffound = m_funcs.find(addr);
@@ -302,7 +365,28 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 	// Create tail call to the function chunk (non-tail calls are just out of question)
 	void tail_chunk(llvm::FunctionCallee callee, llvm::Value* base_pc = nullptr)
 	{
-		if (!callee && !g_cfg.core.spu_verification)
+		if (!callee && m_native_file)
+		{
+			// Native JIT patches an executable branch point here. Immutable code
+			// instead loads its target from an image-local RW data slot. The slot
+			// address accompanies entry so a verification miss can invalidate it.
+			ensure(m_finfo && (!m_finfo->fn || m_function == m_finfo->chunk));
+			const auto type = get_ftype<void, u8*, u8*, u64>();
+			const auto resolver = llvm::cast<llvm::Function>(m_module->getOrInsertFunction("spu_dispatcher", type).getCallee());
+			resolver->setCallingConv(llvm::CallingConv::GHC);
+			const auto slot = new llvm::GlobalVariable(*m_module, get_type<u8*>(), false,
+				llvm::GlobalValue::InternalLinkage, resolver, fmt::format("%s-branch-target-%u", m_hash, m_pp_id++));
+			slot->setAlignment(llvm::Align(8));
+			const auto target = m_ir->CreateLoad(get_type<u8*>(), slot);
+			target->setAtomic(llvm::AtomicOrdering::Monotonic);
+			target->setAlignment(llvm::Align(8));
+			const auto call = m_ir->CreateCall(type, target, {m_thread, m_lsptr, m_ir->CreatePtrToInt(slot, get_type<u64>())});
+			call->setCallingConv(llvm::CallingConv::GHC);
+			call->setTailCall();
+			m_ir->CreateRetVoid();
+			return;
+		}
+		if (!callee && (m_native_file || m_file_module || !g_cfg.core.spu_verification))
 		{
 			// Disable patchpoints if verification is disabled
 			callee = m_dispatch;
@@ -331,7 +415,7 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 		}
 
 		ensure(callee);
-		auto call = m_ir->CreateCall(callee, {m_thread, m_lsptr, base_pc ? base_pc : m_base_pc});
+		auto call = m_ir->CreateCall(callee, {m_thread, m_lsptr, m_file_module ? m_file_context : base_pc ? base_pc : m_base_pc});
 		auto func = m_finfo ? m_finfo->chunk : llvm::dyn_cast<llvm::Function>(callee.getCallee());
 		call->setCallingConv(func->getCallingConv());
 		call->setTailCall();
@@ -410,6 +494,7 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 		m_function = func;
 		m_thread = func->getArg(0);
 		m_lsptr = func->getArg(1);
+		m_file_context = m_file_module ? func->getArg(2) : nullptr;
 		m_base_pc = func->getArg(2);
 
 		m_reg_addr.fill(nullptr);
@@ -418,6 +503,7 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 		m_blocks.clear();
 		m_block_queue.clear();
 		m_ir->SetInsertPoint(llvm::BasicBlock::Create(m_context, "", m_function));
+		if (m_file_module) m_base_pc = m_ir->CreateAdd(m_ir->CreateLoad(get_type<u32>(), _ptr(m_file_context, u32(offsetof(rpcs3_aot_runtime_context_v2, code_base_pc)))), m_ir->getInt32(m_file_entry_offset * 4));
 		m_memptr = m_ir->CreateLoad(get_type<u8*>(), spu_ptr(&spu_thread::memory_base_addr));
 	}
 
@@ -1460,7 +1546,10 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 		const auto pstate = spu_ptr(&spu_thread::state);
 		const auto _body = llvm::BasicBlock::Create(m_context, "", m_function);
 		const auto check = llvm::BasicBlock::Create(m_context, "", m_function);
-		m_ir->CreateCondBr(m_ir->CreateICmpEQ(spu_context_attr(m_ir->CreateLoad(get_type<u32>(), pstate, true)), m_ir->getInt32(0)), _body, check, m_md_likely);
+		auto condition = m_ir->CreateICmpEQ(spu_context_attr(m_ir->CreateLoad(get_type<u32>(), pstate, true)), m_ir->getInt32(0));
+		if (m_file_module)
+			condition = m_ir->CreateAnd(condition, m_ir->CreateIsNotNull(m_ir->CreateLoad(get_type<u32>(), _ptr(m_file_context, u32(offsetof(rpcs3_aot_runtime_context_v2, remaining_words))))));
+		m_ir->CreateCondBr(condition, _body, check, m_md_likely);
 		m_ir->SetInsertPoint(check);
 		update_pc(addr);
 
@@ -1484,6 +1573,13 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 		{
 			// True functions retain caller state on the native stack.
 			may_be_unsafe_for_savestate = true;
+		}
+
+		if (m_file_module)
+		{
+			m_ir->CreateRetVoid();
+			m_ir->SetInsertPoint(_body);
+			return;
 		}
 
 		if (may_be_unsafe_for_savestate)
@@ -1603,7 +1699,7 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 				m_ir->CreateCondBr(m_ir->CreateICmpNE(m_ir->getInt32(info.required_pc), m_base_pc), heavy_op, short_op);
 				m_ir->SetInsertPoint(heavy_op);
 				update_pc();
-				call("spu_exec_mfc_cmd", &exec_mfc_cmd<false>, m_thread);
+				native_call<&exec_mfc_cmd<false>, "spu_exec_mfc_cmd">(m_thread);
 				m_ir->CreateBr(_final);
 				m_ir->SetInsertPoint(short_op);
 			}
@@ -1621,7 +1717,7 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 
 		if (g_cfg.core.rsx_accurate_res_access)
 		{
-			const auto success = call("spu_putllc16_rsx_res", +[](spu_thread* _spu, u32 ls_dst, u32 lsa, u32 eal, u32 notify) -> bool
+			const auto success = native_call<+[](spu_thread* _spu, u32 ls_dst, u32 lsa, u32 eal, u32 notify) -> bool
 			{
 				const u32 raddr = eal;
 
@@ -1687,13 +1783,13 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 				}
 
 				return true;
-			}, m_thread, dest, _lsa, _eal, m_ir->getInt32(!info.no_notify));
+			}, "spu_putllc16_rsx_res">(m_thread, dest, _lsa, _eal, m_ir->getInt32(!info.no_notify));
 
 
 			m_ir->CreateCondBr(success, _final, _fail);
 
 			m_ir->SetInsertPoint(_fail);
-			call("PUTLLC16_fail", +on_fail, m_thread, _eal);
+			native_call<+on_fail, "PUTLLC16_fail">(m_thread, _eal);
 			m_ir->CreateStore(m_ir->getInt64(spu_channel::bit_count | MFC_PUTLLC_FAILURE), spu_ptr(&spu_thread::ch_atomic_stat));
 			m_ir->CreateBr(_final);
 
@@ -1767,7 +1863,7 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 
 			m_ir->CreateCondBr(compare_data_change_res, notify_block, notify_next);
 			m_ir->SetInsertPoint(notify_block);
-			call("atomic_wait_engine::notify_all", static_cast<void(*)(const void*)>(atomic_wait_engine::notify_all), rptr);
+			native_call<static_cast<void(*)(const void*)>(atomic_wait_engine::notify_all), "atomic_wait_engine::notify_all">(rptr);
 			m_ir->CreateBr(notify_next);
 			m_ir->SetInsertPoint(notify_next);
 		}
@@ -1812,7 +1908,7 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 		m_ir->CreateBr(_fail);
 
 		m_ir->SetInsertPoint(_fail);
-		call("PUTLLC16_fail", +on_fail, m_thread, _eal);
+		native_call<+on_fail, "PUTLLC16_fail">(m_thread, _eal);
 		m_ir->CreateStore(m_ir->getInt64(spu_channel::bit_count | MFC_PUTLLC_FAILURE), spu_ptr(&spu_thread::ch_atomic_stat));
 		m_ir->CreateBr(_final);
 
@@ -1875,7 +1971,7 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 			m_ir->CreateCondBr(m_ir->CreateICmpNE(m_ir->getInt32(info.required_pc), m_base_pc), heavy_op, short_op);
 			m_ir->SetInsertPoint(heavy_op);
 			update_pc();
-			call("spu_exec_mfc_cmd", &exec_mfc_cmd<false>, m_thread);
+			native_call<&exec_mfc_cmd<false>, "spu_exec_mfc_cmd">(m_thread);
 			m_ir->CreateBr(_final);
 			m_ir->SetInsertPoint(short_op);
 		}
@@ -1899,7 +1995,7 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 		m_ir->CreateBr(_final);
 
 		m_ir->SetInsertPoint(_fail);
-		call("PUTLLC0_fail", +on_fail, m_thread, _eal);
+		native_call<+on_fail, "PUTLLC0_fail">(m_thread, _eal);
 		m_ir->CreateStore(m_ir->getInt64(spu_channel::bit_count | MFC_PUTLLC_FAILURE), spu_ptr(&spu_thread::ch_atomic_stat));
 		m_ir->CreateBr(_final);
 
@@ -1907,13 +2003,218 @@ class spu_llvm_recompiler : public spu_recompiler_base, public cpu_translator
 		m_ir->CreateStore(m_ir->getInt32(0), spu_ptr(&spu_thread::raddr));
 	}
 
+	// Pure code-generation metadata; shared by JIT and file-only setup.
+	void initialize_metadata()
+	{
+		const auto md_name = llvm::MDString::get(m_context, "branch_weights");
+		const auto md_low = llvm::ValueAsMetadata::get(llvm::ConstantInt::get(GetType<u32>(), 1));
+		const auto md_high = llvm::ValueAsMetadata::get(llvm::ConstantInt::get(GetType<u32>(), 999));
+
+		// Metadata for branch weights
+		m_md_likely = llvm::MDTuple::get(m_context, {md_name, md_high, md_low});
+		m_md_unlikely = llvm::MDTuple::get(m_context, {md_name, md_low, md_high});
+
+		const auto domain = llvm::MDNode::getDistinct(m_context, {llvm::MDString::get(m_context, "SPU_mem")});
+		const auto scope = llvm::MDNode::get(m_context, {llvm::MDString::get(m_context, "SPU_mem_scope"), domain});
+
+		m_md_spu_memory_domain = llvm::MDNode::get(m_context, scope);
+
+		const auto domain2 = llvm::MDNode::getDistinct(m_context, {llvm::MDString::get(m_context, "SPU_ctx")});
+		const auto scope2 = llvm::MDNode::get(m_context, {llvm::MDString::get(m_context, "SPU_ctx_scope"), domain2});
+
+		m_md_spu_context_domain = llvm::MDNode::get(m_context, scope2);
+	}
+
 public:
-	spu_llvm_recompiler(u8 interp_magn = 0)
+	spu_llvm_recompiler(u8 interp_magn = 0, bool file_only = false)
 		: spu_recompiler_base()
 		, cpu_translator(nullptr, false)
 		, m_interp_magn(interp_magn)
 	{
+		if (!file_only) m_jit = std::make_unique<jit_compiler>(std::unordered_map<std::string, u64>{}, jit_compiler::cpu(g_cfg.core.llvm_cpu.to_string()));
 	}
+
+	void set_native_program_identity(const spu_program& program, std::string_view name = {})
+	{
+		sha1_context ctx;
+		u8 output[20];
+
+		sha1_starts(&ctx);
+		sha1_update(&ctx, reinterpret_cast<const u8*>(program.data.data()), program.data.size() * 4);
+		sha1_finish(&ctx, output);
+
+		m_hash.clear();
+		fmt::append(m_hash, "__spu-0x%05x-%s", program.entry_point, fmt::base57(output));
+
+		be_t<u64> hash_start;
+		std::memcpy(&hash_start, output, sizeof(hash_start));
+		m_hash_start = hash_start;
+		if (!name.empty()) m_hash = std::string(name);
+	}
+
+	void configure_native_options()
+	{
+#ifdef ARCH_ARM64
+		m_use_tbl2 = !g_spu_llvm_compile_context || g_spu_llvm_compile_context->use_tbl2;
+		m_use_fma = !g_spu_llvm_compile_context || g_spu_llvm_compile_context->use_fma;
+
+		if (g_spu_llvm_compile_context)
+		{
+			g_spu_llvm_compile_context->llvm_error.clear();
+		}
+#endif
+
+	}
+
+	llvm::GlobalVariable* native_binding(std::string_view name, llvm::Type* type)
+	{
+		const std::string symbol = m_hash + "." + std::string(name);
+		if (auto value = m_module->getNamedGlobal(symbol)) return value;
+		return new llvm::GlobalVariable(*m_module, type, false, llvm::GlobalValue::InternalLinkage,
+			llvm::Constant::getNullValue(type), symbol);
+	}
+
+	llvm::Value* native_return_token(llvm::Function* function)
+	{
+		auto found = std::find(m_native_return_chunks.begin(), m_native_return_chunks.end(), function);
+		const auto index = std::distance(m_native_return_chunks.begin(), found);
+		if (found == m_native_return_chunks.end()) m_native_return_chunks.push_back(function);
+		const auto base = m_ir->CreateLoad(get_type<u32>(), native_binding("aot_spu_return_base", get_type<u32>()));
+		return m_ir->CreateZExt(m_ir->CreateAdd(base, m_ir->getInt32(index)), get_type<u64>());
+	}
+
+#ifdef RPCS3_IOS_AOT_BACKEND
+	llvm::Function* translate_native_file(llvm::Module& module, const be_t<u32>* local_store, u32 entry,
+		std::string_view cpu, std::string_view name, spu_program* identity)
+	{
+		if (!local_store || entry >= SPU_LS_SIZE || entry % 4 || name.empty()) return nullptr;
+		ensure(!m_jit && !m_spurt && !m_engine);
+		cpu_translator::initialize(module.getContext(), cpu);
+		m_module = &module;
+		m_native_file = true;
+		initialize_metadata();
+		initialize_native_transforms();
+		reset_transforms();
+		auto program = analyse(local_store, entry);
+		if (program.data.empty()) return nullptr;
+		m_pos = program.lower_bound; m_base = program.entry_point;
+		m_size = program.data.size() * 4; m_pp_id = 0;
+		set_native_program_identity(program, name);
+		configure_native_options();
+		auto function = build_native_program(program);
+		if (identity && function) *identity = std::move(program);
+		return function;
+	}
+
+	llvm::Function* translate_file(llvm::Module& module, const rpcs3::ios::aot::instruction& unit,
+		std::string_view name, std::string_view cpu, std::vector<std::uint32_t>& entry_points)
+	{
+		ensure(!m_jit && !m_interp_magn);
+		cpu_translator::initialize(module.getContext(), cpu);
+		m_module = m_file_module = &module;
+		const u32 origin = !unit.blocks.empty() || unit.address ? unit.address : 0x100;
+		const auto words = unit.words.empty() ? std::span<const u32>(&unit.opcode, 1) : std::span<const u32>(unit.words);
+		if (origin >= SPU_LS_SIZE || words.size() > (SPU_LS_SIZE - origin) / 4 || unit.entry_offset >= words.size()) return nullptr;
+		std::vector<be_t<u32>> local_store(SPU_LS_SIZE / 4);
+		for (usz i = 0; i < words.size(); ++i) local_store[origin / 4 + i] = words[i];
+		std::vector<u32> resume_entries;
+		for (usz i = 0; i + 1 < words.size(); ++i)
+		{
+			const auto kind = g_spu_itype.decode(words[i]);
+			if (words[i] && words[i + 1] && !file_channel_continues({words[i]}) &&
+				(kind == spu_itype::RDCH || kind == spu_itype::WRCH || kind == spu_itype::SYNC ||
+				kind == spu_itype::STOP || kind == spu_itype::STOPD)) resume_entries.push_back(origin + (i + 1) * 4);
+		}
+		const auto program = analyse(local_store.data(), origin + unit.entry_offset * 4, nullptr, true, resume_entries);
+		if (program.data.empty() || program.lower_bound < origin ||
+			u64(program.lower_bound) + program.data.size() * 4 > u64(origin) + words.size() * 4) return nullptr;
+		m_pos = program.lower_bound;
+		m_base = program.entry_point;
+		m_file_entry_offset = unit.entry_offset;
+		m_size = program.data.size() * 4;
+		m_hash = std::string(name);
+		m_hash_start = 0;
+		llvm::IRBuilder<> ir(module.getContext());
+		m_ir = &ir;
+		initialize_metadata();
+		init_luts();
+		const auto entry = add_function(program.entry_point);
+		for (const auto address : resume_entries)
+			if (const auto block = m_bbs.find(address); block != m_bbs.end() && block->second.size) add_function(address);
+		for (const auto& [address, block] : m_bbs)
+			if (block.size && std::any_of(block.preds.begin(), block.preds.end(), [&](u32 pred) { return pred >= address; }))
+				add_function(address);
+		m_dispatch = llvm::Function::Create(entry->chunk->getFunctionType(), llvm::GlobalValue::InternalLinkage, "file_dispatch", module);
+		m_ir->SetInsertPoint(llvm::BasicBlock::Create(m_context, "return", m_dispatch));
+		m_ir->CreateRetVoid();
+		m_test_state = llvm::Function::Create(get_ftype<void, u8*>(), llvm::GlobalValue::InternalLinkage, "file_state", module);
+		m_ir->SetInsertPoint(llvm::BasicBlock::Create(m_context, "return", m_test_state));
+		m_ir->CreateRetVoid();
+		build_program_body(program, entry);
+		const auto wrapper = llvm::Function::Create(get_ftype<void, u8*>(), llvm::GlobalValue::InternalLinkage,
+			llvm::StringRef(name.data(), name.size()), module);
+		m_ir->SetInsertPoint(llvm::BasicBlock::Create(m_context, "entry", wrapper));
+		const auto runtime = wrapper->getArg(0);
+		const auto thread = m_ir->CreateLoad(get_type<u8*>(), _ptr(runtime, u32(offsetof(rpcs3_aot_runtime_context_v2, cpu))));
+		const auto ls = m_ir->CreateLoad(get_type<u8*>(), _ptr(runtime, u32(offsetof(rpcs3_aot_runtime_context_v2, local_store))));
+		const auto pc_now = m_ir->CreateLoad(get_type<u32>(), _ptr(runtime, u32(offsetof(rpcs3_aot_runtime_context_v2, guest_pc))));
+		const auto base = m_ir->CreateLoad(get_type<u32>(), _ptr(runtime, u32(offsetof(rpcs3_aot_runtime_context_v2, code_base_pc))));
+		const auto done = llvm::BasicBlock::Create(m_context, "done", wrapper);
+		const auto dispatch = m_ir->CreateSwitch(m_ir->CreateLShr(m_ir->CreateSub(pc_now, base), 2), done, m_file_entries.size());
+		for (const auto& [offset, chunk] : m_file_entries)
+		{
+			entry_points.push_back(offset);
+			const auto entry = llvm::BasicBlock::Create(m_context, "chunk", wrapper);
+			dispatch->addCase(m_ir->getInt32(offset), entry);
+			m_ir->SetInsertPoint(entry);
+			m_ir->CreateCall(chunk, {thread, ls, runtime});
+			m_ir->CreateBr(done);
+		}
+		m_ir->SetInsertPoint(done);
+		const auto pc = m_ir->CreateLoad(get_type<u32>(), _ptr(thread, ::offset32(&spu_thread::pc)));
+		m_ir->CreateStore(pc, _ptr(runtime, u32(offsetof(rpcs3_aot_runtime_context_v2, next_pc))));
+		m_ir->CreateRetVoid();
+		return wrapper;
+	}
+
+	void analyze_file(const be_t<u32>* local_store, u32 entry, rpcs3::ios::aot::instruction_inventory& inventory,
+		const std::function<void()>& checkpoint)
+	{
+		if (checkpoint) checkpoint();
+		const auto program = analyse(local_store, entry, nullptr, true);
+		if (program.data.empty()) return;
+		rpcs3::ios::aot::instruction unit{2, +local_store[entry / 4], {}};
+		unit.address = program.lower_bound;
+		unit.entry_offset = (entry - program.lower_bound) / 4;
+		// Native spu_program data marks non-code holes with zero. Preserve that
+		// verification identity instead of binding mutable LS data as instructions.
+		for (usz i = 0; i < program.data.size(); ++i)
+		{
+			const u32 word = std::bit_cast<be_t<u32>>(program.data[i]);
+			unit.words.push_back(word);
+			if (!word) continue;
+			if (unit.blocks.empty() || unit.blocks.back().first + unit.blocks.back().second != i)
+				unit.blocks.emplace_back(i, 1);
+			else ++unit.blocks.back().second;
+		}
+		++inventory[std::move(unit)];
+	}
+
+	static u64 file_runtime_symbol(std::string_view name)
+	{
+		// Native helpers used by the shared lowering's interpreter-style exit
+		// boundaries. They already implement channels, scheduling and interrupts.
+		if (name == "wait_on_spu_channel") return reinterpret_cast<u64>(&exec_wait_channel);
+		if (name == "wait_spu_inbox") return reinterpret_cast<u64>(&exec_wait_inbox);
+		if (name == "spu_get_events") return reinterpret_cast<u64>(&exec_get_events);
+		if (name == "spu_check_interrupts") return reinterpret_cast<u64>(&exec_check_interrupts);
+		if (name == "spu_read_channel") return reinterpret_cast<u64>(&file_rdch);
+		if (name == "spu_read_channel_count") return reinterpret_cast<u64>(&exec_rchcnt);
+		if (name == "spu_write_channel") return reinterpret_cast<u64>(&file_wrch);
+		if (name == "spu_syscall") return reinterpret_cast<u64>(&exec_stop);
+		return 0;
+	}
+#endif
 
 	virtual void init() override
 	{
@@ -1921,54 +2222,49 @@ public:
 		if (!m_spurt)
 		{
 			m_spurt = &g_fxo->get<spu_runtime>();
-			cpu_translator::initialize(m_jit.get_context(), m_jit.get_engine());
+			cpu_translator::initialize(m_jit->get_context(), m_jit->get_engine());
 
-			const auto md_name = llvm::MDString::get(m_context, "branch_weights");
-			const auto md_low = llvm::ValueAsMetadata::get(llvm::ConstantInt::get(GetType<u32>(), 1));
-			const auto md_high = llvm::ValueAsMetadata::get(llvm::ConstantInt::get(GetType<u32>(), 999));
+			initialize_metadata();
 
-			// Metadata for branch weights
-			m_md_likely = llvm::MDTuple::get(m_context, {md_name, md_high, md_low});
-			m_md_unlikely = llvm::MDTuple::get(m_context, {md_name, md_low, md_high});
-
-			const auto domain = llvm::MDNode::getDistinct(m_context, {llvm::MDString::get(m_context, "SPU_mem")});
-			const auto scope = llvm::MDNode::get(m_context, {llvm::MDString::get(m_context, "SPU_mem_scope"), domain}); 
-
-			m_md_spu_memory_domain = llvm::MDNode::get(m_context, scope);
-
-			const auto domain2 = llvm::MDNode::getDistinct(m_context, {llvm::MDString::get(m_context, "SPU_ctx")});
-			const auto scope2 = llvm::MDNode::get(m_context, {llvm::MDString::get(m_context, "SPU_ctx_scope"), domain2}); 
-
-			m_md_spu_context_domain = llvm::MDNode::get(m_context, scope2);
-
-			// Initialize transform passes
-			clear_transforms();
-#ifdef ARCH_ARM64
-			{
-				auto should_exclude_function = [](std::string_view fn_name)
-				{
-					return fn_name.starts_with("spu_") || fn_name.starts_with("tr_");
-				};
-
-				aarch64::GHC_frame_preservation_pass::config_t config =
-				{
-					.debug_info = false,         // Set to "true" to insert debug frames on x27
-					.use_stack_frames = false,   // We don't need this since the SPU GW allocates global scratch on the stack
-					.hypervisor_context_offset = ::offset32(&spu_thread::hv_ctx),
-					.exclusion_callback = should_exclude_function,
-					.base_register_lookup = {}   // Unused, always x19 on SPU
-				};
-
-				// Create transform pass
-				std::unique_ptr<translator_pass> ghc_fixup_pass = std::make_unique<aarch64::GHC_frame_preservation_pass>(config);
-
-				// Register it
-				register_transform_pass(ghc_fixup_pass);
-			}
-#endif
+			initialize_native_transforms();
 		}
 
 		reset_transforms();
+	}
+
+	void initialize_native_transforms()
+	{
+		// Initialize transform passes
+		clear_transforms();
+#ifdef ARCH_ARM64
+		{
+			auto should_exclude_function = [](std::string_view fn_name)
+			{
+				return fn_name.starts_with("spu_") || fn_name.starts_with("tr_");
+			};
+
+			aarch64::GHC_frame_preservation_pass::config_t config =
+			{
+				.debug_info = false,         // Set to "true" to insert debug frames on x27
+				.use_stack_frames = false,   // We don't need this since the SPU GW allocates global scratch on the stack
+				.hypervisor_context_offset = ::offset32(&spu_thread::hv_ctx),
+				.exclusion_callback = should_exclude_function,
+				.base_register_lookup = {}   // Unused, always x19 on SPU
+			};
+
+			// tr_all can tail into the returning C dispatcher on a cache miss.
+			// Use the frame pass's existing imposter handling to restore the
+			// native gateway instead of assuming this GHC bridge never returns.
+			// Signed-file dispatch exits through its prebuilt non-returning bridge.
+			if (!m_native_file) config.faux_function_list.emplace_back("spu_dispatcher");
+
+			// Create transform pass
+			std::unique_ptr<translator_pass> ghc_fixup_pass = std::make_unique<aarch64::GHC_frame_preservation_pass>(config);
+
+			// Register it
+			register_transform_pass(ghc_fixup_pass);
+		}
+#endif
 	}
 
 	void init_luts()
@@ -2057,40 +2353,14 @@ public:
 			}
 		}
 
-		{
-			sha1_context ctx;
-			u8 output[20];
-
-			sha1_starts(&ctx);
-			sha1_update(&ctx, reinterpret_cast<const u8*>(func.data.data()), func.data.size() * 4);
-			sha1_finish(&ctx, output);
-
-			m_hash.clear();
-			fmt::append(m_hash, "__spu-0x%05x-%s", func.entry_point, fmt::base57(output));
-
-			be_t<u64> hash_start;
-			std::memcpy(&hash_start, output, sizeof(hash_start));
-			m_hash_start = hash_start;
-		}
-
-#ifdef ARCH_ARM64
-		m_use_tbl2 = !g_spu_llvm_compile_context || g_spu_llvm_compile_context->use_tbl2;
-		m_use_fma = !g_spu_llvm_compile_context || g_spu_llvm_compile_context->use_fma;
-
-		if (g_spu_llvm_compile_context)
-		{
-			g_spu_llvm_compile_context->llvm_error.clear();
-		}
-#endif
+		set_native_program_identity(func);
+		configure_native_options();
 
 		spu_log.notice("Building function 0x%x... (size %u, %s)", func.entry_point, func.data.size(), m_hash);
 
 		m_pos = func.lower_bound;
 		m_base = func.entry_point;
 		m_size = ::size32(func.data) * 4;
-		const u32 start = m_pos;
-		const u32 end = start + m_size;
-
 		m_pp_id = 0;
 
 		std::string function_log;
@@ -2135,9 +2405,17 @@ public:
 		// Create LLVM module
 		std::unique_ptr<Module> _module = std::make_unique<Module>(m_hash + ".obj", m_context);
 		_module->setTargetTriple(Triple(jit_compiler::triple2()));
-		_module->setDataLayout(m_jit.get_engine().getTargetMachine()->createDataLayout());
+		_module->setDataLayout(m_jit->get_engine().getTargetMachine()->createDataLayout());
 		m_module = _module.get();
 
+		const auto main_func = build_native_program(func);
+		return install_program(std::move(_module), func, add_loc, add_to_file, std::move(function_log), main_func);
+	}
+
+	llvm::Function* build_native_program(const spu_program& func)
+	{
+		using namespace llvm;
+		const u32 start = m_pos, end = start + m_size;
 		// Initialize IR Builder
 		IRBuilder<> irb(m_context);
 		m_ir = &irb;
@@ -2201,7 +2479,7 @@ public:
 			m_ir->CreateStore(store_timeout, mfc_ops);
 			m_ir->CreateCondBr(m_ir->CreateIsNull(store_timeout), label_mfc_ops, label_next);
 			m_ir->SetInsertPoint(label_mfc_ops);
-			call("spu_work", +spu_work, m_thread);
+			native_call<+spu_work, "spu_work">(m_thread);
 			m_ir->CreateBr(label_next);
 			m_ir->SetInsertPoint(label_next);
 		}
@@ -2210,7 +2488,7 @@ public:
 		if ((g_cfg.core.spu_prof || g_cfg.core.spu_debug) && g_cfg.core.spu_verification)
 			m_ir->CreateStore(m_ir->getInt64((m_hash_start & -65536)), spu_ptr(&spu_thread::block_hash));
 
-		if (!g_cfg.core.spu_verification)
+		if (!m_native_file && !g_cfg.core.spu_verification)
 		{
 			// Disable check (unsafe)
 			m_ir->CreateBr(label_body);
@@ -2867,8 +3145,8 @@ public:
 		const auto entry_call = m_ir->CreateCall(entry_chunk->chunk, {m_thread, m_lsptr, m_base_pc});
 		entry_call->setCallingConv(entry_chunk->chunk->getCallingConv());
 
-		const auto dispatcher = llvm::cast<llvm::Function>(m_module->getOrInsertFunction("spu_dispatcher", main_func->getType()).getCallee());
-		m_engine->updateGlobalMapping("spu_dispatcher", reinterpret_cast<u64>(spu_runtime::tr_all));
+		const auto dispatcher = llvm::cast<llvm::Function>(m_module->getOrInsertFunction("spu_dispatcher", main_func->getFunctionType()).getCallee());
+		if (m_engine) m_engine->updateGlobalMapping("spu_dispatcher", reinterpret_cast<u64>(spu_runtime::tr_all));
 		dispatcher->setCallingConv(main_func->getCallingConv());
 
 		// Proceed to the next code
@@ -2891,11 +3169,15 @@ public:
 
 		m_ir->SetInsertPoint(label_diff);
 
-		if (g_cfg.core.spu_verification)
+		if (m_native_file || g_cfg.core.spu_verification)
 		{
 			const auto pbfail = spu_ptr(&spu_thread::block_failure);
 			m_ir->CreateStore(m_ir->CreateAdd(m_ir->CreateLoad(get_type<u64>(), pbfail), m_ir->getInt64(1)), pbfail);
 			const auto dispci = call("spu_dispatch", spu_runtime::tr_dispatch, m_thread, m_lsptr, main_arg2);
+			// The signed-file resolver is a non-returning GHC bridge. Native
+			// JIT's C dispatcher may return after repairing a patchpoint; keep
+			// its declaration so the frame pass restores the gateway on return.
+			if (m_native_file) dispci->getCalledFunction()->setCallingConv(CallingConv::GHC);
 			dispci->setCallingConv(CallingConv::GHC);
 			dispci->setTailCall();
 			m_ir->CreateRetVoid();
@@ -2905,7 +3187,7 @@ public:
 			m_ir->CreateUnreachable();
 		}
 
-		m_dispatch = cast<Function>(_module->getOrInsertFunction("__spu-null", entry_chunk->chunk->getFunctionType()).getCallee());
+		m_dispatch = cast<Function>(m_module->getOrInsertFunction("__spu-null", entry_chunk->chunk->getFunctionType()).getCallee());
 		m_dispatch->setLinkage(llvm::GlobalValue::InternalLinkage);
 		m_dispatch->setCallingConv(entry_chunk->chunk->getCallingConv());
 		set_function(m_dispatch);
@@ -2934,13 +3216,21 @@ public:
 		m_ir->SetInsertPoint(BasicBlock::Create(m_context, "", m_test_state));
 		const auto escape_yes = BasicBlock::Create(m_context, "", m_test_state);
 		const auto escape_no = BasicBlock::Create(m_context, "", m_test_state);
-		m_ir->CreateCondBr(call("spu_exec_check_state", &exec_check_state, m_test_state->getArg(0)), escape_yes, escape_no);
+		m_ir->CreateCondBr(native_call<&exec_check_state, "spu_exec_check_state">(m_test_state->getArg(0)), escape_yes, escape_no);
 		m_ir->SetInsertPoint(escape_yes);
 		call("spu_escape", spu_runtime::g_escape, m_test_state->getArg(0));
 		m_ir->CreateRetVoid();
 		m_ir->SetInsertPoint(escape_no);
 		m_ir->CreateRetVoid();
 
+		build_program_body(func, entry_chunk);
+		return main_func;
+	}
+
+	void build_program_body(const spu_program& func, function_info* entry_chunk)
+	{
+		using namespace llvm;
+		const u32 start = func.lower_bound, end = start + m_size;
 		// Create function table (uninitialized)
 		m_function_table = new llvm::GlobalVariable(*m_module, llvm::ArrayType::get(entry_chunk->chunk->getType(), m_size / 4), true, llvm::GlobalValue::InternalLinkage, nullptr);
 
@@ -3116,7 +3406,7 @@ public:
 				}
 
 				// State check at the beginning of the chunk
-				if (need_check || (bi == 0 && g_cfg.core.spu_block_size != spu_block_size_type::safe))
+				if (m_file_module || need_check || (bi == 0 && g_cfg.core.spu_block_size != spu_block_size_type::safe))
 				{
 					check_state(baddr);
 
@@ -3193,13 +3483,13 @@ public:
 						m_ir->CreateStore(store_timeout, mfc_ops);
 						m_ir->CreateCondBr(m_ir->CreateIsNull(store_timeout), label_mfc_ops, label_next);
 						m_ir->SetInsertPoint(label_mfc_ops);
-						call("spu_work_limited", +spu_work_limted, m_thread);
+						native_call<+spu_work_limted, "spu_work_limited">(m_thread);
 						m_ir->CreateBr(label_next);
 						m_ir->SetInsertPoint(label_next);
 					}
 				}
 
-				const bool is_reduced_loop = m_inst_attrs[(baddr - start) / 4] == inst_attr::reduced_loop;
+				const bool is_reduced_loop = !m_file_module && m_inst_attrs[(baddr - start) / 4] == inst_attr::reduced_loop;
 				m_reduced_loop_info = is_reduced_loop ? std::static_pointer_cast<reduced_loop_t>(ensure(m_patterns.at(baddr - start).info_ptr)) : nullptr;
 
 				BasicBlock* block_optimization_phi_parent =  nullptr;
@@ -3634,7 +3924,7 @@ public:
 							}
 						}
 
-							
+
 						break;
 					}
 
@@ -3739,6 +4029,18 @@ public:
 						break;
 					}
 
+					if (m_file_module)
+					{
+						const auto count = _ptr(m_file_context, u32(offsetof(rpcs3_aot_runtime_context_v2, executed_words)));
+						m_ir->CreateStore(m_ir->CreateAdd(m_ir->CreateLoad(get_type<u32>(), count), m_ir->getInt32(1)), count);
+						const auto budget = _ptr(m_file_context, u32(offsetof(rpcs3_aot_runtime_context_v2, remaining_words)));
+						const auto remaining = m_ir->CreateLoad(get_type<u32>(), budget);
+						m_ir->CreateStore(m_ir->CreateBinaryIntrinsic(llvm::Intrinsic::usub_sat, remaining, m_ir->getInt32(1)), budget);
+						const auto kind = g_spu_itype.decode(op);
+						if (!file_channel_continues({op}) && (kind == spu_itype::RDCH || kind == spu_itype::WRCH || kind == spu_itype::RCHCNT || kind == spu_itype::STOP || kind == spu_itype::STOPD))
+						{ ensure_gpr_stores(); update_pc(); }
+					}
+
 					// Set variable for set_link()
 					if (m_pos + 4 >= end)
 						m_next_op = 0;
@@ -3767,6 +4069,16 @@ public:
 
 					// Execute recompiler function (TODO)
 					(this->*decode(op))({op});
+					if (m_file_module && !llvm_has_terminator(m_ir->GetInsertBlock()))
+					{
+						const auto kind = g_spu_itype.decode(op);
+						if (!file_channel_continues({op}) && (kind == spu_itype::RDCH || kind == spu_itype::WRCH || kind == spu_itype::STOP || kind == spu_itype::STOPD))
+						{
+							m_block->block_end = m_ir->GetInsertBlock();
+							update_pc(m_pos + 4);
+							tail_chunk(m_dispatch);
+						}
+					}
 				}
 
 				// Finalize block with fallthrough if necessary
@@ -4366,6 +4678,16 @@ public:
 			m_dispatch = nullptr;
 		}
 
+		if (m_native_file)
+		{
+			std::vector<llvm::Constant*> chunks(m_native_return_chunks.begin(), m_native_return_chunks.end());
+			const auto type = llvm::ArrayType::get(get_type<u8*>(), chunks.size());
+			new llvm::GlobalVariable(*m_module, type, true, llvm::GlobalValue::InternalLinkage,
+				llvm::ConstantArray::get(type, chunks), m_hash + ".aot_spu_return_chunks");
+		}
+		if (m_file_module)
+			for (const auto& [addr, info] : m_functions)
+				m_file_entries.emplace_back((addr - (m_base - m_file_entry_offset * 4)) / 4, info.chunk);
 		// Clear context (TODO)
 		m_blocks.clear();
 		m_block_queue.clear();
@@ -4373,6 +4695,12 @@ public:
 		m_function_queue.clear();
 		m_function_table = nullptr;
 
+	}
+
+	spu_function_t install_program(std::unique_ptr<llvm::Module> _module, const spu_program& func,
+		spu_item* add_loc, bool add_to_file, std::string function_log, llvm::Function* main_func)
+	{
+		using namespace llvm;
 		// Append for now
 		std::string& llvm_log = function_log;
 		raw_string_ostream out(llvm_log);
@@ -4449,21 +4777,21 @@ public:
 				if (g_cfg.core.spu_debug)
 				{
 					// Testing only
-					added = m_jit.try_add(std::move(_module), m_spurt->get_cache_path() + "llvm/", llvm_error);
+					added = m_jit->try_add(std::move(_module), m_spurt->get_cache_path() + "llvm/", llvm_error);
 				}
 				else if (!m_spurt->get_obj_cache_path().empty())
 				{
 					// ARM64 objects embed process-specific host addresses as
 					// immediates without relocations. Compile into the current
 					// process only until every such address is symbolic.
-					added = m_jit.try_add(std::move(_module), llvm_error);
+					added = m_jit->try_add(std::move(_module), llvm_error);
 				}
 				else
 				{
-					added = m_jit.try_add(std::move(_module), llvm_error);
+					added = m_jit->try_add(std::move(_module), llvm_error);
 				}
 
-				if (!added || !m_jit.try_fin(llvm_error))
+				if (!added || !m_jit->try_fin(llvm_error))
 				{
 					if (add_to_file)
 					{
@@ -4478,40 +4806,40 @@ public:
 				if (g_cfg.core.spu_debug)
 				{
 					// Testing only
-					m_jit.add(std::move(_module), m_spurt->get_cache_path() + "llvm/");
+					m_jit->add(std::move(_module), m_spurt->get_cache_path() + "llvm/");
 				}
 				else if (!m_spurt->get_obj_cache_path().empty())
 				{
-					m_jit.add(std::move(_module));
+					m_jit->add(std::move(_module));
 				}
 				else
 				{
-					m_jit.add(std::move(_module));
+					m_jit->add(std::move(_module));
 				}
 
-				m_jit.fin();
+				m_jit->fin();
 			}
 #else
 			if (g_cfg.core.spu_debug)
 			{
 				// Testing only
-				m_jit.add(std::move(_module), m_spurt->get_cache_path() + "llvm/");
+				m_jit->add(std::move(_module), m_spurt->get_cache_path() + "llvm/");
 			}
 			else if (!m_spurt->get_obj_cache_path().empty())
 			{
-				m_jit.add(std::move(_module), m_spurt->get_obj_cache_path());
+				m_jit->add(std::move(_module), m_spurt->get_obj_cache_path());
 			}
 			else
 			{
-				m_jit.add(std::move(_module));
+				m_jit->add(std::move(_module));
 			}
 
-			m_jit.fin();
+			m_jit->fin();
 #endif
 		}
 
 		// Register function pointer
-		const spu_function_t fn = reinterpret_cast<spu_function_t>(m_jit.get_engine().getPointerToFunction(main_func));
+		const spu_function_t fn = reinterpret_cast<spu_function_t>(m_jit->get_engine().getPointerToFunction(main_func));
 
 		// Install unconditionally, possibly replacing existing one from spu_fast
 		add_loc->compiled = fn;
@@ -4561,7 +4889,7 @@ public:
 				cache.add(func);
 			}
 
-			spu_log.success("New SPU block compiled successfully (size=%u)", func_size);
+			spu_log.success("New SPU block compiled successfully (size=%u)", func.data.size());
 		}
 
 		return fn;
@@ -4608,7 +4936,7 @@ public:
 		// Create LLVM module
 		std::unique_ptr<Module> _module = std::make_unique<Module>("spu_interpreter.obj", m_context);
 		_module->setTargetTriple(Triple(jit_compiler::triple2()));
-		_module->setDataLayout(m_jit.get_engine().getTargetMachine()->createDataLayout());
+		_module->setDataLayout(m_jit->get_engine().getTargetMachine()->createDataLayout());
 		m_module = _module.get();
 
 		// Initialize IR Builder
@@ -4665,7 +4993,6 @@ public:
 		call0->setCallingConv(CallingConv::GHC);
 		m_ir->CreateRetVoid();
 
-		// Create helper globals
 		{
 			std::vector<llvm::Constant*> float_to;
 			std::vector<llvm::Constant*> to_float;
@@ -4740,27 +5067,27 @@ public:
 				m_memptr = m_ir->CreateLoad(get_type<u8*>(), spu_ptr(&spu_thread::memory_base_addr));
 
 				switch (itype)
-				{
-				case spu_itype::UNK:
-				case spu_itype::DFCEQ:
-				case spu_itype::DFCMEQ:
-				case spu_itype::DFCGT:
-				case spu_itype::DFCMGT:
-				case spu_itype::DFTSV:
-				case spu_itype::STOP:
-				case spu_itype::STOPD:
-				case spu_itype::RDCH:
-				case spu_itype::WRCH:
-				{
-					// Invalid or abortable instruction. Save current address.
-					m_ir->CreateStore(m_interp_pc, spu_ptr(&spu_thread::pc));
-					[[fallthrough]];
-				}
-				default:
-				{
-					break;
-				}
-				}
+					{
+					case spu_itype::UNK:
+					case spu_itype::DFCEQ:
+					case spu_itype::DFCMEQ:
+					case spu_itype::DFCGT:
+					case spu_itype::DFCMGT:
+					case spu_itype::DFTSV:
+					case spu_itype::STOP:
+					case spu_itype::STOPD:
+					case spu_itype::RDCH:
+					case spu_itype::WRCH:
+					{
+						// Invalid or abortable instruction. Save current address.
+						m_ir->CreateStore(m_interp_pc, spu_ptr(&spu_thread::pc));
+						[[fallthrough]];
+					}
+					default:
+					{
+						break;
+					}
+					}
 
 				{
 					m_interp_bblock = nullptr;
@@ -4811,7 +5138,7 @@ public:
 						{
 							if (check)
 							{
-								call("spu_interp_check", &interp_check, m_thread, m_ir->getFalse());
+								native_call<&interp_check, "spu_interp_check">(m_thread, m_ir->getFalse());
 							}
 
 							// Normal instruction.
@@ -4819,7 +5146,7 @@ public:
 
 							if (check && !llvm_has_terminator(m_ir->GetInsertBlock()))
 							{
-								call("spu_interp_check", &interp_check, m_thread, m_ir->getTrue());
+								native_call<&interp_check, "spu_interp_check">(m_thread, m_ir->getTrue());
 							}
 
 							m_interp_pc = m_interp_pc_next;
@@ -4840,7 +5167,7 @@ public:
 
 								const auto escape_yes = BasicBlock::Create(m_context, "", f);
 								const auto escape_no = BasicBlock::Create(m_context, "", f);
-								m_ir->CreateCondBr(call("spu_exec_check_state", &exec_check_state, m_thread), escape_yes, escape_no);
+								m_ir->CreateCondBr(native_call<&exec_check_state, "spu_exec_check_state">(m_thread), escape_yes, escape_no);
 								m_ir->SetInsertPoint(escape_yes);
 								call("spu_escape", spu_runtime::g_escape, m_thread);
 								m_ir->CreateBr(_next);
@@ -4963,21 +5290,21 @@ public:
 		if (g_cfg.core.spu_debug)
 		{
 			// Testing only
-			m_jit.add(std::move(_module), m_spurt->get_cache_path() + "llvm/");
+			m_jit->add(std::move(_module), m_spurt->get_cache_path() + "llvm/");
 		}
 		else if (!m_spurt->get_obj_cache_path().empty())
 		{
-			m_jit.add(std::move(_module), m_spurt->get_obj_cache_path());
+			m_jit->add(std::move(_module), m_spurt->get_obj_cache_path());
 		}
 		else
 		{
-			m_jit.add(std::move(_module));
+			m_jit->add(std::move(_module));
 		}
 
-		m_jit.fin();
+		m_jit->fin();
 
 		// Register interpreter entry point
-		spu_runtime::g_interpreter = reinterpret_cast<spu_function_t>(m_jit.get_engine().getPointerToFunction(main_func));
+		spu_runtime::g_interpreter = reinterpret_cast<spu_function_t>(m_jit->get_engine().getPointerToFunction(main_func));
 #ifdef ARCH_ARM64
 		if (spu_runtime::g_interpreter)
 		{
@@ -4992,7 +5319,7 @@ public:
 		for (u32 i = 0; i < spu_runtime::g_interpreter_table.size(); i++)
 		{
 			// Fill exported interpreter table
-			spu_runtime::g_interpreter_table[i] = ifuncs[i] ? reinterpret_cast<u64>(m_jit.get_engine().getPointerToFunction(ifuncs[i])) : 0;
+			spu_runtime::g_interpreter_table[i] = ifuncs[i] ? reinterpret_cast<u64>(m_jit->get_engine().getPointerToFunction(ifuncs[i])) : 0;
 		}
 
 		if (!spu_runtime::g_interpreter)
@@ -5030,12 +5357,12 @@ public:
 
 		if (m_interp_magn)
 		{
-			call(name, F, m_thread, m_interp_op);
+			native_call<F>(name, m_thread, m_interp_op);
 			return;
 		}
 
 		update_pc();
-		call(name, &exec_fall<F>, m_thread, m_ir->getInt32(op.opcode));
+		native_call<&exec_fall<F>>(name, m_thread, m_ir->getInt32(op.opcode));
 	}
 
 	[[noreturn]] static void exec_unk(spu_thread*, u32 op)
@@ -5048,13 +5375,13 @@ public:
 		if (m_interp_magn)
 		{
 			m_ir->CreateStore(m_interp_pc, spu_ptr(&spu_thread::pc));
-			call("spu_unknown", &exec_unk, m_thread, m_ir->getInt32(op_unk.opcode));
+			native_call<&exec_unk, "spu_unknown">(m_thread, m_ir->getInt32(op_unk.opcode));
 			return;
 		}
 
 		m_block->block_end = m_ir->GetInsertBlock();
 		update_pc();
-		call("spu_unknown", &exec_unk, m_thread, m_ir->getInt32(op_unk.opcode));
+		native_call<&exec_unk, "spu_unknown">(m_thread, m_ir->getInt32(op_unk.opcode));
 	}
 
 	static void exec_stop(spu_thread* _spu, u32 code)
@@ -5073,15 +5400,15 @@ public:
 
 	void STOP(spu_opcode_t op) //
 	{
-		if (m_interp_magn)
+		if (m_interp_magn || m_file_module)
 		{
-			call("spu_syscall", &exec_stop, m_thread, m_ir->CreateAnd(m_interp_op, m_ir->getInt32(0x3fff)));
+			native_call<&exec_stop, "spu_syscall">(m_thread, m_interp_magn ? m_ir->CreateAnd(m_interp_op, m_ir->getInt32(0x3fff)) : m_ir->getInt32(op.opcode & 0x3fff));
 			return;
 		}
 
 		update_pc();
 		ensure_gpr_stores();
-		call("spu_syscall", &exec_stop, m_thread, m_ir->getInt32(op.opcode & 0x3fff));
+		native_call<&exec_stop, "spu_syscall">(m_thread, m_ir->getInt32(op.opcode & 0x3fff));
 
 		if (g_cfg.core.spu_block_size == spu_block_size_type::safe)
 		{
@@ -5096,14 +5423,15 @@ public:
 	{
 		if (m_interp_magn)
 		{
-			call("spu_syscall", &exec_stop, m_thread, m_ir->getInt32(0x3fff));
+			native_call<&exec_stop, "spu_syscall">(m_thread, m_ir->getInt32(0x3fff));
 			return;
 		}
 
 		STOP(spu_opcode_t{0x3fff});
 	}
 
-	static u32 exec_rdch(spu_thread* _spu, u32 ch)
+	template <bool DeferStateCheck>
+	static u32 read_channel(spu_thread* _spu, u32 ch)
 	{
 		const s64 result = _spu->get_ch_value(ch);
 
@@ -5112,9 +5440,23 @@ public:
 			spu_runtime::g_escape(_spu);
 		}
 
-		static_cast<void>(_spu->test_stopped());
+		if constexpr (!DeferStateCheck) static_cast<void>(_spu->test_stopped());
 		return static_cast<u32>(result & 0xffffffff);
 	}
+
+	static u32 exec_rdch(spu_thread* _spu, u32 ch)
+	{
+		return read_channel<false>(_spu, ch);
+	}
+
+#ifdef RPCS3_IOS_AOT_BACKEND
+	static u32 file_rdch(spu_thread* _spu, u32 ch)
+	{
+		// The file entry must first store the consumed value and next PC.
+		// Its native outer loop then handles pause, Stop and pending interrupts.
+		return read_channel<true>(_spu, ch);
+	}
+#endif
 
 	static u32 exec_read_in_mbox(spu_thread* _spu)
 	{
@@ -5178,7 +5520,7 @@ public:
 		m_ir->CreateCondBr(cond, done, wait);
 		m_ir->SetInsertPoint(wait);
 		update_pc();
-		const auto val1 = call("spu_read_channel", &exec_rdch, m_thread, m_ir->getInt32(op.ra));
+		const auto val1 = native_call<&exec_rdch, "spu_read_channel">(m_thread, m_ir->getInt32(op.ra));
 		m_ir->CreateBr(done);
 		m_ir->SetInsertPoint(done);
 		const auto rval = m_ir->CreatePHI(get_type<u32>(), 2);
@@ -5191,9 +5533,9 @@ public:
 	{
 		value_t<u32> res;
 
-		if (m_interp_magn)
+		if (m_interp_magn || (m_file_module && (op.ra == SPU_RdInMbox || op.ra == SPU_RdDec || op.ra == SPU_RdEventStat)))
 		{
-			res.value = call("spu_read_channel", &exec_rdch, m_thread, get_imm<u32>(op.ra).value);
+			res.value = native_call<&exec_rdch, "spu_read_channel">(m_thread, get_imm<u32>(op.ra).value);
 			set_vr(op.rt, insert(splat<u32[4]>(0), 3, res));
 			return;
 		}
@@ -5209,7 +5551,7 @@ public:
 		{
 			update_pc();
 			ensure_gpr_stores();
-			res.value = call("spu_read_in_mbox", &exec_read_in_mbox, m_thread);
+			res.value = native_call<&exec_read_in_mbox, "spu_read_in_mbox">(m_thread);
 			break;
 		}
 		case MFC_RdTagStat:
@@ -5228,7 +5570,7 @@ public:
 				m_ir->SetInsertPoint(fall_rdch);
 				ensure_gpr_stores();
 				update_pc();
-				const auto fall_val = call("spu_read_channel", &exec_rdch, m_thread, m_ir->getInt32(MFC_RdTagStat));
+				const auto fall_val = native_call<&exec_rdch, "spu_read_channel">(m_thread, m_ir->getInt32(MFC_RdTagStat));
 				m_ir->CreateBr(next);
 				m_ir->SetInsertPoint(next);
 				const auto phi_ch_val = m_ir->CreatePHI(get_type<u32>(), 2);
@@ -5279,7 +5621,7 @@ public:
 				const auto dec_value = m_ir->CreateLoad(get_type<u32>(), spu_ptr(&spu_thread::ch_dec_value));
 				// Match decrementer writes and interpreter reads across pauses.
 				// A raw host cycle counter includes time when the SPU was parked.
-				const auto tsctb = call("spu_get_timebase", &get_timebased_time);
+				const auto tsctb = native_call<&get_timebased_time, "spu_get_timebase">();
 				const auto frz = m_ir->CreateLoad(get_type<u8>(), spu_ptr(&spu_thread::is_dec_frozen));
 				const auto frzev = m_ir->CreateICmpEQ(frz, m_ir->getInt8(0));
 
@@ -5289,7 +5631,7 @@ public:
 				break;
 			}
 #endif
-			res.value = call("spu_read_decrementer", &exec_read_dec, m_thread);
+			res.value = native_call<&exec_read_dec, "spu_read_decrementer">(m_thread);
 			break;
 		}
 		case SPU_RdEventMask:
@@ -5312,7 +5654,7 @@ public:
 				m_ir->CreateStore(m_ir->getInt8(1), spu_ptr(&spu_thread::unsavable));
 			}
 
-			res.value = call("spu_read_events", &exec_read_events, m_thread);
+			res.value = native_call<&exec_read_events, "spu_read_events">(m_thread);
 
 			if (!g_cfg.savestate.compatible_mode)
 			{
@@ -5332,7 +5674,7 @@ public:
 		{
 			update_pc();
 			ensure_gpr_stores();
-			res.value = call("spu_read_channel", &exec_rdch, m_thread, m_ir->getInt32(op.ra));
+			res.value = native_call<&exec_rdch, "spu_read_channel">(m_thread, m_ir->getInt32(op.ra));
 			break;
 		}
 		}
@@ -5358,23 +5700,41 @@ public:
 		return m_ir->CreateTrunc(m_ir->CreateXor(shv, inv), get_type<u32>());
 	}
 
+	static u32 exec_wait_channel(spu_thread* _spu, spu_channel* ch, u32 is_read)
+	{
+		if (is_read)
+		{
+			ch->pop_wait(*_spu, false);
+		}
+		else
+		{
+			ch->push_wait(*_spu, 0, false);
+		}
+
+		return ch->get_count();
+	}
+
 	llvm::Value* wait_rchcnt(u32 off, u32 inv = 0)
 	{
-		auto wait_on_channel = [](spu_thread* _spu, spu_channel* ch, u32 is_read) -> u32
+		return m_ir->CreateXor(native_call<&exec_wait_channel, "wait_on_spu_channel">(m_thread, _ptr(m_thread, off), m_ir->getInt32(inv == 0u)), m_ir->getInt32(inv));
+	}
+
+	static u32 exec_wait_inbox(spu_thread* _spu, spu_channel_4_t* ch)
+	{
+		if (const u32 count = ch->get_count())
 		{
-			if (is_read)
-			{
-				ch->pop_wait(*_spu, false);
-			}
-			else
-			{
-				ch->push_wait(*_spu, 0, false);
-			}
+			return count;
+		}
 
-			return ch->get_count();
-		};
-
-		return m_ir->CreateXor(call("wait_on_spu_channel", +wait_on_channel, m_thread, _ptr(m_thread, off), m_ir->getInt32(inv == 0u)), m_ir->getInt32(inv));
+		// A parked SPU must acknowledge suspend_all, just like RDCH.
+		// Restore/check CPU state before continuing guest execution.
+		_spu->state += cpu_flag::wait;
+		ch->pop_wait(*_spu, false);
+		if (_spu->check_state())
+		{
+			spu_runtime::g_escape(_spu);
+		}
+		return ch->get_count();
 	}
 
 	void RCHCNT(spu_opcode_t op) //
@@ -5383,7 +5743,7 @@ public:
 
 		if (m_interp_magn)
 		{
-			res.value = call("spu_read_channel_count", &exec_rchcnt, m_thread, get_imm<u32>(op.ra).value);
+			res.value = native_call<&exec_rchcnt, "spu_read_channel_count">(m_thread, get_imm<u32>(op.ra).value);
 			set_vr(op.rt, insert(splat<u32[4]>(0), 3, res));
 			return;
 		}
@@ -5448,28 +5808,12 @@ public:
 			}
 			case SPU_RdInMbox:
 			{
-				auto wait_inbox = [](spu_thread* _spu, spu_channel_4_t* ch) -> u32
-				{
-					if (const u32 count = ch->get_count())
-					{
-						return count;
-					}
 
-					// A parked SPU must acknowledge suspend_all, just like RDCH.
-					// Restore/check CPU state before continuing guest execution.
-					_spu->state += cpu_flag::wait;
-					ch->pop_wait(*_spu, false);
-					if (_spu->check_state())
-					{
-						spu_runtime::g_escape(_spu);
-					}
-					return ch->get_count();
-				};
 
 				// The wait may acknowledge a savestate/suspend request or escape.
 				update_pc();
 				ensure_gpr_stores();
-				res.value = call("wait_spu_inbox", +wait_inbox, m_thread, spu_ptr(&spu_thread::ch_in_mbox));
+				res.value = native_call<&exec_wait_inbox, "wait_spu_inbox">(m_thread, spu_ptr(&spu_thread::ch_in_mbox));
 				break;
 			}
 			default: break;
@@ -5542,7 +5886,7 @@ public:
 		case SPU_RdEventStat:
 		{
 			const auto mask = m_ir->CreateTrunc(m_ir->CreateLShr(m_ir->CreateLoad(get_type<u64>(), spu_ptr(&spu_thread::ch_events)), 32), get_type<u32>());
-			res.value = call("spu_get_events", &exec_get_events, m_thread, mask);
+			res.value = native_call<&exec_get_events, "spu_get_events">(m_thread, mask);
 			break;
 		}
 
@@ -5573,7 +5917,7 @@ public:
 
 		default:
 		{
-			res.value = call("spu_read_channel_count", &exec_rchcnt, m_thread, m_ir->getInt32(op.ra));
+			res.value = native_call<&exec_rchcnt, "spu_read_channel_count">(m_thread, m_ir->getInt32(op.ra));
 			break;
 		}
 		}
@@ -5581,6 +5925,7 @@ public:
 		set_vr(op.rt, insert(splat<u32[4]>(0), 3, res));
 	}
 
+	template <bool DeferStateCheck = false>
 	static void exec_wrch_result(spu_thread* _spu, bool completed)
 	{
 		if (!completed || _spu->state & cpu_flag::again)
@@ -5588,13 +5933,22 @@ public:
 			spu_runtime::g_escape(_spu);
 		}
 
-		static_cast<void>(_spu->test_stopped());
+		if constexpr (!DeferStateCheck) static_cast<void>(_spu->test_stopped());
 	}
 
 	static void exec_wrch(spu_thread* _spu, u32 ch, u32 value)
 	{
 		exec_wrch_result(_spu, _spu->set_ch_value(ch, value));
 	}
+
+#ifdef RPCS3_IOS_AOT_BACKEND
+	static void file_wrch(spu_thread* _spu, u32 ch, u32 value)
+	{
+		// A completed command must not be snapshotted or interrupted at its
+		// original PC and replayed after the caller resumes.
+		exec_wrch_result<true>(_spu, _spu->set_ch_value(ch, value));
+	}
+#endif
 
 #ifdef ARCH_ARM64
 	static void exec_mfc_wrch(spu_thread* _spu, u32 value)
@@ -5645,9 +5999,9 @@ public:
 	{
 		const auto val = eval(extract(get_vr(op.rt), 3));
 
-		if (m_interp_magn)
+		if (m_interp_magn || (m_file_module && (op.ra == MFC_Cmd || op.ra == MFC_WrListStallAck)))
 		{
-			call("spu_write_channel", &exec_wrch, m_thread, get_imm<u32>(op.ra).value, val.value);
+			native_call<&exec_wrch, "spu_write_channel">(m_thread, get_imm<u32>(op.ra).value, val.value);
 			return;
 		}
 
@@ -5677,7 +6031,7 @@ public:
 			m_ir->CreateCondBr(m_ir->CreateICmpNE(m_ir->CreateLoad(get_type<u32>(), spu_ptr(&spu_thread::ch_tag_upd)), m_ir->getInt32(MFC_TAG_UPDATE_IMMEDIATE)), _mfc, next);
 			m_ir->SetInsertPoint(_mfc);
 			update_pc();
-			call("spu_write_channel", &exec_wrch, m_thread, m_ir->getInt32(op.ra), val.value);
+			native_call<&exec_wrch, "spu_write_channel">(m_thread, m_ir->getInt32(op.ra), val.value);
 			m_ir->CreateBr(next);
 			m_ir->SetInsertPoint(next);
 			return;
@@ -5753,7 +6107,9 @@ public:
 		}
 		case MFC_Size:
 		{
-			set_reg_fixed(s_reg_mfc_size, trunc<u16>(val).eval(m_ir));
+			// Match the native channel writer's saturation before narrowing.
+			set_reg_fixed(s_reg_mfc_size, m_ir->CreateTrunc(m_ir->CreateBinaryIntrinsic(llvm::Intrinsic::umin,
+				val.value, m_ir->getInt32(0xffff)), get_type<u16>()));
 			return;
 		}
 		case MFC_TagID:
@@ -5826,7 +6182,7 @@ public:
 					m_ir->CreateStore(ci, spu_ptr(&spu_thread::ch_mfc_cmd, &spu_mfc_cmd::cmd));
 					update_pc();
 					ensure_gpr_stores();
-					call("spu_exec_mfc_cmd_saveable", &exec_mfc_cmd<true>, m_thread);
+					native_call<&exec_mfc_cmd<true>, "spu_exec_mfc_cmd_saveable">(m_thread);
 					return;
 				}
 				case MFC_SDCRZ_CMD:
@@ -5844,7 +6200,7 @@ public:
 					m_ir->SetInsertPoint(next);
 					m_ir->CreateStore(ci, spu_ptr(&spu_thread::ch_mfc_cmd, &spu_mfc_cmd::cmd));
 					update_pc();
-					call("spu_exec_mfc_cmd", &exec_mfc_cmd<false>, m_thread);
+					native_call<&exec_mfc_cmd<false>, "spu_exec_mfc_cmd">(m_thread);
 					return;
 				}
 				case MFC_SNDSIG_CMD:
@@ -5903,7 +6259,7 @@ public:
 					}
 
 					m_ir->CreateStore(ci, spu_ptr(&spu_thread::ch_mfc_cmd, &spu_mfc_cmd::cmd));
-					call("spu_exec_mfc_cmd", &exec_mfc_cmd<false>, m_thread);
+					native_call<&exec_mfc_cmd<false>, "spu_exec_mfc_cmd">(m_thread);
 					m_ir->CreateBr(next);
 					m_ir->SetInsertPoint(copy);
 
@@ -5992,7 +6348,7 @@ public:
 						{
 							std::memcpy(dst, src, size);
 						};
-						call("spu_memcpy", +spu_memcpy, dst, src, zext<u32>(size).eval(m_ir));
+						native_call<+spu_memcpy, "spu_memcpy">(dst, src, zext<u32>(size).eval(m_ir));
 					}
 
 					// Disable certain thing
@@ -6044,7 +6400,7 @@ public:
 
 					m_ir->CreateCondBr(mfc_not_full, mfc_next, mfc_work);
 					m_ir->SetInsertPoint(mfc_work);
-					call("spu_mfc", +exec_mfc, m_thread);
+					native_call<+exec_mfc, "spu_mfc">(m_thread);
 					const auto updated_slot = m_ir->CreateLoad(get_type<u32>(), spu_ptr(&spu_thread::mfc_size));
 					const auto old_slot = slot;
 					m_ir->CreateBr(mfc_next);
@@ -6147,7 +6503,7 @@ public:
 			m_ir->SetInsertPoint(_mfc);
 			ensure_gpr_stores();
 			update_pc();
-			call("spu_list_unstall", &exec_list_unstall, m_thread, eval(val & 0x1f).value);
+			native_call<&exec_list_unstall, "spu_list_unstall">(m_thread, eval(val & 0x1f).value);
 			m_ir->CreateBr(next);
 			m_ir->SetInsertPoint(next);
 			return;
@@ -6169,11 +6525,11 @@ public:
 #ifdef ARCH_ARM64
 		if (op.ra == MFC_Cmd)
 		{
-			call("spu_write_mfc_command", &exec_mfc_wrch, m_thread, val.value);
+			native_call<&exec_mfc_wrch, "spu_write_mfc_command">(m_thread, val.value);
 			return;
 		}
 #endif
-		call("spu_write_channel", &exec_wrch, m_thread, m_ir->getInt32(op.ra), val.value);
+		native_call<&exec_wrch, "spu_write_channel">(m_thread, m_ir->getInt32(op.ra), val.value);
 	}
 
 	void LNOP(spu_opcode_t) //
@@ -6189,7 +6545,7 @@ public:
 		// This instruction must be used following a store instruction that modifies the instruction stream.
 		m_ir->CreateFence(llvm::AtomicOrdering::SequentiallyConsistent);
 
-		if (g_cfg.core.spu_block_size == spu_block_size_type::safe && !m_interp_magn)
+		if ((m_file_module || g_cfg.core.spu_block_size == spu_block_size_type::safe) && !m_interp_magn)
 		{
 			m_block->block_end = m_ir->GetInsertBlock();
 			update_pc(m_pos + 4);
@@ -6586,7 +6942,7 @@ public:
 				0x01, 0x02, 0x04, 0x08,
 				0x01, 0x02, 0x04, 0x08,
 				0x01, 0x02, 0x04, 0x08,
-				0x01, 0x02, 0x04, 0x08 
+				0x01, 0x02, 0x04, 0x08
 			)));
 			return;
 		}
@@ -6685,7 +7041,7 @@ public:
 				0x01, 0x02, 0x04, 0x08,
 				0x10, 0x20, 0x40, 0x80,
 				0x01, 0x02, 0x04, 0x08,
-				0x10, 0x20, 0x40, 0x80 
+				0x10, 0x20, 0x40, 0x80
 			));
 
 			set_vr(op.rt, addp(zeroes, bitcast<u32[4]>(extracted)));
@@ -8207,7 +8563,7 @@ public:
 		{
 			return;
 		}
-		
+
 		if (match_vr<s8[16], s16[8], s32[4], s64[2]>(op.rc, [&](auto c, auto MP)
 		{
 			using VT = typename decltype(MP)::type;
@@ -8574,7 +8930,7 @@ public:
 			// Keep OR combine due to slow blend on later Intel (AVX512 uses faster kmask method)
 			const auto gfni = gf2p8affineqb(c, build<u8[16]>(0x40, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x40, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20), 0x7f);
 			idx_consts = eval(select(noncast<s8[16]>(gfni) >= 0, splat<u8[16]>(0), gfni));
-			
+
 			// Logic assumes that the MSB is always set
 			or_combine_safe = false;
 		}
@@ -8707,7 +9063,7 @@ public:
 		else
 			set_vr(op.rt, -(a * b + c));
 	}
-	
+
 	static constexpr auto spu_zero_fp_classes = llvm::FPClassTest::fcSubnormal | llvm::FPClassTest::fcZero;
 
 	// clamping helpers
@@ -8715,7 +9071,7 @@ public:
 	{
 		constexpr auto overflow_classes = llvm::FPClassTest::fcNan | llvm::FPClassTest::fcPosInf;
 		const auto known = known_opt.value_or(get_known_fp_class<3>(v, overflow_classes));
-		
+
 		if (known.isKnownNever(overflow_classes))
 			return v;
 
@@ -8935,7 +9291,7 @@ public:
 			return eval(sext<s32[4]>(fcmp_uno(a != b)) & select_bsl((ai & bi) >= 0, ai > bi, ai < bi));
 #else
 			return eval(sext<s32[4]>(fcmp_uno(a != b) & select((ai & bi) >= 0, ai > bi, ai < bi)));
-#endif		
+#endif
 		};
 
 		set_vr(op.rt, fcgt(get_vr<f32[4]>(op.ra), get_vr<f32[4]>(op.rb)));
@@ -9429,7 +9785,7 @@ public:
 
 			const auto a_clamp = clamp_smax(a, a_known);
 			const auto b_clamp = clamp_smax(b, b_known);
-			
+
 			a_known.fneg();
 			return fma32x4(eval(-a_clamp), b_clamp, c, a_known, b_known);
 		});
@@ -9459,7 +9815,7 @@ public:
 			return;
 		}
 
-		
+
 		register_intrinsic("spu_fma", [&](llvm::CallInst* ci)
 		{
 			const auto a = value<f32[4]>(ci->getOperand(0));
@@ -10414,7 +10770,7 @@ public:
 		m_ir->CreateCondBr(cond.value, halt, next, m_md_unlikely);
 		m_ir->SetInsertPoint(halt);
 		if (m_interp_magn)
-			m_ir->CreateStore(m_function->getArg(2), spu_ptr(&spu_thread::pc));
+			m_ir->CreateStore(m_interp_pc, spu_ptr(&spu_thread::pc));
 		else
 			update_pc();
 		const auto ptr = _ptr(m_memptr, 0xffdead00);
@@ -10520,7 +10876,7 @@ public:
 			m_ir->SetInsertPoint(result);
 			m_ir->CreateCondBr(get_imm<bool>(op.e).value, e_exec, d_test, m_md_unlikely);
 			m_ir->SetInsertPoint(e_exec);
-			const auto e_addr = call("spu_check_interrupts", &exec_check_interrupts, m_thread, addr.value);
+			const auto e_addr = native_call<&exec_check_interrupts, "spu_check_interrupts">(m_thread, addr.value);
 			m_ir->CreateBr(d_test);
 			m_ir->SetInsertPoint(d_test);
 			const auto target = m_ir->CreatePHI(get_type<u32>(), 2);
@@ -10578,10 +10934,10 @@ public:
 			addr.value = aarch64::spu_check_interrupts(*m_ir, spu_ptr(&spu_thread::ch_events),
 				spu_ptr(&spu_thread::interrupts_enabled), addr.value, SPU_EVENT_INTR_BUSY_CHECK, [&]
 				{
-					return call("spu_check_interrupts", &exec_check_interrupts, m_thread, addr.value);
+					return native_call<&exec_check_interrupts, "spu_check_interrupts">(m_thread, addr.value);
 				});
 #else
-			addr.value = call("spu_check_interrupts", &exec_check_interrupts, m_thread, addr.value);
+			addr.value = native_call<&exec_check_interrupts, "spu_check_interrupts">(m_thread, addr.value);
 #endif
 		}
 
@@ -10591,6 +10947,16 @@ public:
 		}
 
 		m_ir->CreateStore(addr.value, spu_ptr(&spu_thread::pc));
+		if (m_file_module)
+		{
+			// Native inferred jump tables above remain local CFG edges. An
+			// unresolved address returns as data; JIT stack mirrors/patchpoints
+			// cannot name immutable signed modules.
+			tail_chunk(m_dispatch);
+			m_ir->SetInsertPoint(cblock);
+			return result;
+		}
+
 
 		if (ret && g_cfg.core.spu_block_size >= spu_block_size_type::mega)
 		{
@@ -10611,7 +10977,24 @@ public:
 			// Clear stack mirror and return by tail call to the provided return address
 			m_ir->CreateStore(splat<u64[2]>(-1).eval(m_ir), _ptr(m_thread, stack0.value));
 			const auto type = m_finfo->chunk->getFunctionType();
-			const auto fval = _ptr(get_segment_base(), m_ir->CreateLShr(_ret, 32));
+			llvm::Value* fval;
+			if (m_native_file)
+			{
+				// The mirror keeps its native layout, but the high word is a stable
+				// process-local data-table token instead of a JIT arena offset.
+				const auto token = m_ir->CreateTrunc(m_ir->CreateLShr(_ret, 32), get_type<u32>());
+				const auto count = m_ir->CreateLoad(get_type<u32>(), native_binding("aot_spu_return_count", get_type<u32>()));
+				const auto table = m_ir->CreateLoad(get_type<u8*>(), native_binding("aot_spu_return_targets", get_type<u8*>()));
+				const auto valid = llvm::BasicBlock::Create(m_context, "return_token", m_function);
+				const auto in_range = m_ir->CreateAnd(m_ir->CreateIsNotNull(token), m_ir->CreateICmpULT(token, count));
+				m_ir->CreateCondBr(m_ir->CreateAnd(in_range, m_ir->CreateIsNotNull(table)), valid, fail);
+				m_ir->SetInsertPoint(valid);
+				fval = m_ir->CreateLoad(get_type<u8*>(), m_ir->CreateGEP(get_type<u8*>(), table, m_ir->CreateZExt(token, get_type<u64>())));
+				const auto callable = llvm::BasicBlock::Create(m_context, "return_target", m_function);
+				m_ir->CreateCondBr(m_ir->CreateIsNotNull(fval), callable, fail);
+				m_ir->SetInsertPoint(callable);
+			}
+			else fval = _ptr(get_segment_base(), m_ir->CreateLShr(_ret, 32));
 			tail_chunk({type, fval}, m_ir->CreateTrunc(m_ir->CreateLShr(link, 32), get_type<u32>()));
 			m_ir->SetInsertPoint(fail);
 		}
@@ -10977,7 +11360,7 @@ public:
 		const auto addr = eval(extract(get_vr(op.ra), 3) & 0x3fffc);
 		set_link(op);
 		const auto mask = m_ir->CreateTrunc(m_ir->CreateLShr(m_ir->CreateLoad(get_type<u64>(), spu_ptr(&spu_thread::ch_events), true), 32), get_type<u32>());
-		const auto res = call("spu_get_events", &exec_get_events, m_thread, mask);
+		const auto res = native_call<&exec_get_events, "spu_get_events">(m_thread, mask);
 		const auto target = add_block_indirect(op, addr);
 		m_ir->CreateCondBr(m_ir->CreateICmpNE(res, m_ir->getInt32(0)), target, add_block_next());
 	}
@@ -11325,13 +11708,14 @@ public:
 			return;
 		}
 
-		if (g_cfg.core.spu_block_size >= spu_block_size_type::mega && m_block_info[m_pos / 4 + 1] && m_entry_info[m_pos / 4 + 1])
+		if (!m_file_module && g_cfg.core.spu_block_size >= spu_block_size_type::mega && m_block_info[m_pos / 4 + 1] && m_entry_info[m_pos / 4 + 1])
 		{
 			// Store the return function chunk address at the stack mirror
 			const auto pfunc = add_function(m_pos + 4);
 			const auto stack0 = eval(zext<u64>(extract(get_reg_fixed(1), 3) & 0x3fff0) + ::offset32(&spu_thread::stack_mirror));
 			const auto stack1 = eval(stack0 + 8);
-			const auto rel_ptr = m_ir->CreateSub(m_ir->CreatePtrToInt(pfunc->chunk, get_type<u64>()), m_ir->CreatePtrToInt(get_segment_base(), get_type<u64>()));
+			const auto rel_ptr = m_native_file ? native_return_token(pfunc->chunk) :
+				m_ir->CreateSub(m_ir->CreatePtrToInt(pfunc->chunk, get_type<u64>()), m_ir->CreatePtrToInt(get_segment_base(), get_type<u64>()));
 			const auto ptr_plus_op = m_ir->CreateOr(m_ir->CreateShl(rel_ptr, 32), m_ir->getInt64(m_next_op));
 			const auto base_plus_pc = m_ir->CreateOr(m_ir->CreateShl(m_ir->CreateZExt(m_base_pc, get_type<u64>()), 32), m_ir->getInt64(m_pos + 4));
 			m_ir->CreateStore(ptr_plus_op, _ptr(m_thread, stack0.value));
@@ -11343,6 +11727,7 @@ public:
 	{
 		const auto type = llvm::FunctionType::get(get_type<void>(), {}, false);
 		const auto func = llvm::cast<llvm::Function>(m_module->getOrInsertFunction("spu_segment_base", type).getCallee());
+		ensure(!m_native_file, "Native file SPU code must not reference a JIT arena");
 		m_engine->updateGlobalMapping("spu_segment_base", reinterpret_cast<u64>(jit_runtime::alloc(0, 0)));
 		return func;
 	}
@@ -11361,6 +11746,48 @@ decltype(&spu_llvm_recompiler::UNK) spu_llvm_recompiler::decode(u32 op)
 {
 	return s_spu_llvm_decoder.decode(op);
 }
+
+#ifdef RPCS3_IOS_AOT_BACKEND
+namespace rpcs3::ios::aot
+{
+llvm::Function* translate_spu_native(llvm::Module& module, const be_t<u32>* local_store, u32 entry, std::string_view cpu, std::string_view name, spu_program* identity)
+{
+	spu_llvm_recompiler translator{0, true};
+	return translator.translate_native_file(module, local_store, entry, cpu, name, identity);
+}
+llvm::Function* translate_spu(llvm::Module& module, instruction unit, std::string_view name, std::string_view cpu, std::vector<std::uint32_t>& entry_points)
+{
+	spu_llvm_recompiler translator{0, true};
+	return translator.translate_file(module, unit, name, cpu, entry_points);
+}
+void collect_spu_program(const be_t<u32>* local_store, u32 entry, instruction_inventory& inventory)
+{
+	spu_llvm_recompiler translator{0, true};
+	translator.analyze_file(local_store, entry, inventory, {});
+}
+
+void analyze_spu_program(const be_t<u32>* local_store, u32 entry, instruction_inventory& inventory,
+	const std::function<void()>& checkpoint)
+{
+	// The native analyser follows one program entry at a time. Seed it with
+	// the same call-target discovery used by normal SPU precompilation, too;
+	// startup code can return before the worker/job functions are reachable.
+	auto entries = spu_thread::discover_functions(0,
+		{reinterpret_cast<const u8*>(local_store), SPU_LS_SIZE}, true, entry);
+	if (entry < SPU_LS_SIZE && entry % 4 == 0) entries.push_back(entry);
+	std::sort(entries.begin(), entries.end());
+	entries.erase(std::unique(entries.begin(), entries.end()), entries.end());
+	spu_llvm_recompiler translator{0, true};
+	for (const auto address : entries)
+		translator.analyze_file(local_store, address, inventory, checkpoint);
+}
+
+u64 resolve_spu_runtime_symbol(std::string_view name)
+{
+	return spu_llvm_recompiler::file_runtime_symbol(name);
+}
+}
+#endif
 
 #else
 

@@ -1,5 +1,6 @@
 #pragma once
 
+
 #include "../CPU/CPUThread.h"
 #include "../CPU/Hypervisor.h"
 #include "../Memory/vm_ptr.h"
@@ -8,6 +9,16 @@
 
 #include "util/logs.hpp"
 #include "util/v128.hpp"
+
+#ifdef RPCS3_IOS
+struct rpcs3_aot_runtime_context_v2;
+namespace rpcs3::ios::aot { struct native_ppu_guard_context; }
+const std::atomic<u64>* ppu_aot_dispatch_epoch();
+// Consult native executable registration, including hooks that leave the
+// guest words unchanged. Called only from the static/AOT PPU path.
+bool ppu_aot_code_eligible(u32 address, u32 count);
+void ppu_register_aot_range(u32 address, u32 size);
+#endif
 
 LOG_CHANNEL(ppu_log, "PPU");
 
@@ -388,6 +399,13 @@ public:
 	ppu_thread* next_ppu{}; // LV2 PPU running queue's node link
 	bool ack_suspend = false;
 
+#ifdef RPCS3_IOS
+	// Append only: retain existing native JIT field offsets and cache ABI.
+	// Nested CPU invocations restore the previous context; gates need no TLS.
+	rpcs3_aot_runtime_context_v2* aot_runtime_context = nullptr;
+	rpcs3::ios::aot::native_ppu_guard_context* aot_native_context = nullptr;
+#endif
+
 	be_t<u64>* get_stack_arg(s32 i, u64 align = alignof(u64));
 	void exec_task();
 	void fast_call(u32 addr, u64 rtoc, bool is_thread_entry = false);
@@ -469,3 +487,6 @@ inline To ppu_gpr_cast(const From& value)
 {
 	return ppu_gpr_cast_impl<To>::from(ppu_gpr_cast_impl<From>::to(value));
 }
+
+// Prebuilt C bridge; native GHC targets stay in the separate AOT data table.
+void ppu_register_native_aot_function(u32 address);

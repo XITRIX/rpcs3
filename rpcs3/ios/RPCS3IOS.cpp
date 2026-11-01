@@ -1,6 +1,7 @@
 #include "IOSDonatedMemory.h"
 #include "Emu/RSX/VK/AppleVulkanDispatch.h"
 #include "RPCS3IOS.h"
+#include <filesystem>
 #include "RPCS3IOSBigPicture.h"
 #include "RPCS3IOSBootProgress.h"
 #include "RPCS3IOSCapabilities.h"
@@ -14,6 +15,9 @@
 #include "RPCS3IOSPlatform.h"
 #include "IOSGraphicsLifecycle.h"
 #include "IOSCoreBuildProfile.h"
+#ifdef RPCS3_IOS_AOT_COMPILER
+#include "AOTService.h"
+#endif
 #include "RPCS3IOSPerformance.h"
 #include "RAPLicenseContract.h"
 #include "RPCS3IOSRuntimePatches.h"
@@ -33,6 +37,10 @@
 #include "Emu/IdManager.h"
 #include "Emu/Audio/IOS/IOSAudioBackend.h"
 #include "Emu/Audio/Null/null_enumerator.h"
+#ifdef RPCS3_IOS_AOT_SIMULATOR
+#include "Emu/RSX/Null/NullGSRender.h"
+#include "Emu/Audio/Null/NullAudioBackend.h"
+#endif
 #include "Emu/Cell/Modules/cellMsgDialog.h"
 #include "Emu/Cell/Modules/cellOskDialog.h"
 #include "Emu/Cell/Modules/cellSaveData.h"
@@ -1010,6 +1018,9 @@ emu_callbacks make_callbacks()
 	callbacks.close_gs_frame = []() {};
 	callbacks.get_gs_frame = []() -> std::unique_ptr<GSFrameBase>
 	{
+#ifdef RPCS3_IOS_AOT_SIMULATOR
+		if (Emu.IsHeadless()) return {};
+#endif
 		if (!g_display_surface.snapshot().valid())
 		{
 			emit_log(1, "RPCS3 requested a graphics frame without an attached iOS display surface");
@@ -1037,6 +1048,13 @@ emu_callbacks make_callbacks()
 			fmt::throw_exception("The iOS core was built without Vulkan support");
 #endif
 		case video_renderer::null:
+#ifdef RPCS3_IOS_AOT_SIMULATOR
+			if (Emu.IsHeadless())
+			{
+				g_fxo->init<rsx::thread, named_thread<NullGSRender>>(archive);
+				break;
+			}
+#endif
 			fmt::throw_exception("The iOS video frontend requires the Vulkan renderer");
 		default:
 			fmt::throw_exception("Unsupported iOS video renderer: %s", g_cfg.video.renderer.get());
@@ -1044,6 +1062,9 @@ emu_callbacks make_callbacks()
 	};
 	callbacks.get_audio = []() -> std::shared_ptr<AudioBackend>
 	{
+#ifdef RPCS3_IOS_AOT_SIMULATOR
+		if (Emu.IsHeadless()) return std::make_shared<NullAudioBackend>();
+#endif
 		return std::make_shared<IOSAudioBackend>();
 	};
 	callbacks.get_audio_enumerator = [](u64) -> std::shared_ptr<audio_device_enumerator>
@@ -1332,9 +1353,9 @@ extern "C" uint32_t rpcs3_ios_abi_version(void) noexcept
 extern "C" const char* rpcs3_ios_build_info(void) noexcept
 {
 #ifdef RPCS3_MACOS
-	return "{\"abi\":30," RPCS3_IOS_CORE_BUILD_PROFILE_JSON "\"frontend\":\"macos\",\"upstream\":\"fab15ea00541808992ebe0d0363e0f1b1a01033a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk-kosmickrisp\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"coreaudio-default-output\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies-big-picture-savestate-management-selected-boot\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop-big-picture\",\"media_codecs\":true}";
+	return "{\"abi\":30," RPCS3_IOS_CORE_BUILD_PROFILE_JSON RPCS3_IOS_AOT_PROFILE_JSON "\"frontend\":\"macos\",\"upstream\":\"fab15ea00541808992ebe0d0363e0f1b1a01033a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk-kosmickrisp\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"coreaudio-default-output\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies-big-picture-savestate-management-selected-boot\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop-big-picture\",\"media_codecs\":true}";
 #else
-	return "{\"abi\":30," RPCS3_IOS_CORE_BUILD_PROFILE_JSON "\"frontend\":\"ios\",\"upstream\":\"fab15ea00541808992ebe0d0363e0f1b1a01033a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk-kosmickrisp\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies-big-picture-savestate-management-selected-boot\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop-big-picture\",\"media_codecs\":true}";
+	return "{\"abi\":30," RPCS3_IOS_CORE_BUILD_PROFILE_JSON RPCS3_IOS_AOT_PROFILE_JSON "\"frontend\":\"ios\",\"upstream\":\"fab15ea00541808992ebe0d0363e0f1b1a01033a\",\"llvm\":\"ca7933e47d3a3451d81e72ac174dcb5aa28b59d1\",\"jit\":\"sealed-arena\",\"renderer\":\"vulkan-moltenvk-kosmickrisp\",\"moltenvk\":\"1.4.2\",\"ffmpeg\":\"8.1.1\",\"audio\":\"remoteio\",\"input\":\"gamecontroller-multiplayer-rumble\",\"games\":\"pkg-rap-iso-zip-folder-updates-runtime-patches-library-delete-cache-management-trophies-big-picture-savestate-management-selected-boot\",\"settings\":\"global-and-per-game-cfg-root-catalog-title-database-recommendations-presets\",\"rpcn\":\"servers-account-social-online\",\"performance\":\"fps-cpu-rsx-memory\",\"lifecycle\":\"pause-resume-stop-big-picture\",\"media_codecs\":true}";
 #endif
 }
 
@@ -1478,6 +1499,18 @@ extern "C" rpcs3_ios_status rpcs3_ios_initialize(const rpcs3_ios_config* config)
 		Emu.SetDefaultGraphicsAdapter("iOS Metal GPU");
 		Emu.SetHasGui(false);
 		Emu.SetHeadless(false);
+#ifdef RPCS3_IOS_AOT_SIMULATOR
+		// Explicit test-only CLI mode reuses RPCS3's existing headless settings
+		// and Null renderer/audio. It is never compiled into a device product.
+		if (const char* mode = std::getenv("RPCS3_AOT_SIMULATOR_HEADLESS");
+			mode && std::strcmp(mode, "1") == 0)
+		{
+			Emu.SetHeadless(true);
+			Emu.SetSupportedRenderers({video_renderer::null});
+			Emu.SetDefaultRenderer(video_renderer::null);
+			emit_log(4, "Simulator CPU test: native headless/Null video and audio; no graphical gameplay validation");
+		}
+#endif
 		Emu.SetUsr("00000001");
 		g_emu_started = true;
 		Emu.Init();
@@ -4631,6 +4664,9 @@ extern "C" rpcs3_ios_status rpcs3_ios_boot_big_picture_mode(void) noexcept
 
 	try
 	{
+#ifdef RPCS3_IOS_AOT_COMPILER
+		if (rpcs3::ios::jit::is_aot()) rpcs3::ios::aot::clear_game();
+#endif
 		Emu.DeactivateBigPictureMode();
 		Emu.SetForceBoot(false);
 		emit_log(4, "Booting Big Picture Mode with the iOS game library");
@@ -4674,6 +4710,9 @@ extern "C" rpcs3_ios_status rpcs3_ios_boot_vsh(void) noexcept
 
 	try
 	{
+#ifdef RPCS3_IOS_AOT_COMPILER
+		if (rpcs3::ios::jit::is_aot()) rpcs3::ios::aot::clear_game();
+#endif
 		const std::string vsh_path = g_cfg_vfs.get_dev_flash() + "vsh/module/vsh.self";
 		if (!fs::is_file(vsh_path))
 		{
@@ -4741,7 +4780,11 @@ extern "C" rpcs3_ios_status rpcs3_ios_boot_game(
 		set_error("RPCS3Core must be ready and emulation stopped before booting a game");
 		return result;
 	}
-	if (!g_display_surface.snapshot().valid())
+	if (!g_display_surface.snapshot().valid()
+#ifdef RPCS3_IOS_AOT_SIMULATOR
+		&& !Emu.IsHeadless()
+#endif
+	)
 	{
 		set_error("Attach a valid iOS Metal display surface before booting a game");
 		return RPCS3_IOS_INVALID_STATE;
@@ -4810,6 +4853,26 @@ extern "C" rpcs3_ios_status rpcs3_ios_boot_game(
 		prepare_rpcn_for_guest_boot();
 		Emu.DeactivateBigPictureMode();
 		Emu.SetForceBoot(true);
+#ifdef RPCS3_IOS_AOT_COMPILER
+		if (rpcs3::ios::jit::is_aot())
+		{
+			try { rpcs3::ios::aot::begin_game(*game); }
+			catch (const rpcs3::ios::aot::failure& error)
+			{
+				emit_log(3, std::string("AOT artifact rejected; using interpreter fallback: ") + error.message);
+			}
+			catch (const std::exception& error)
+			{
+				// An incompatible/damaged artifact never blocks the native
+				// interpreter path or becomes a reason to enable JIT.
+				emit_log(3, std::string("AOT artifact rejected; using interpreter fallback: ") + error.what());
+			}
+			catch (...)
+			{
+				emit_log(3, "AOT artifact preparation raised an unrecognized exception; using interpreter fallback");
+			}
+		}
+#endif
 		const game_boot_result result = Emu.BootGame(boot_path, game->title_id);
 		if (result != game_boot_result::no_errors)
 		{
@@ -5051,9 +5114,15 @@ extern "C" rpcs3_ios_status rpcs3_ios_stop_emulation(void) noexcept
 
 		rpcs3::ios::shared_pad_feedback().clear();
 		emit_jit_arena_statistics("after emulation stop");
+#ifdef RPCS3_IOS_AOT_COMPILER
+		if (rpcs3::ios::jit::is_aot()) rpcs3::ios::aot::finish_game();
+#endif
 		emit_log(4, "PlayStation 3 emulation stopped; RPCS3Core remains initialized");
 		return RPCS3_IOS_OK;
 	}
+#ifdef RPCS3_IOS_AOT_COMPILER
+	catch (const rpcs3::ios::aot::failure& error) { set_error(error.message); }
+#endif
 	catch (const std::exception& error)
 	{
 		set_error(error.what());
@@ -5148,4 +5217,171 @@ extern "C" const char* rpcs3_ios_last_error(void) noexcept
 	set_error(std::string{text});
 	emit_log(1, text);
 	std::abort();
+}
+
+namespace
+{
+[[maybe_unused]] rpcs3_ios_status aot_unavailable()
+{
+	set_error("This core does not include the on-device AOT compiler");
+	return RPCS3_IOS_JIT_UNAVAILABLE;
+}
+#ifdef RPCS3_IOS_AOT_COMPILER
+void aot_copy(const std::string& text, char* output, size_t capacity)
+{
+	if (!output || capacity <= text.size()) throw std::invalid_argument("AOT output buffer is null or too short");
+	std::memcpy(output, text.c_str(), text.size() + 1);
+}
+template <typename F> rpcs3_ios_status aot_operation(F&& action) noexcept
+{
+	std::lock_guard lock(g_api_mutex);
+	if (g_lifecycle.state() != RPCS3_IOS_STATE_READY || current_emulation_state() != RPCS3_IOS_EMULATION_STATE_STOPPED)
+	{
+		set_error("Stop emulation before preparing or changing AOT code");
+		return RPCS3_IOS_INVALID_STATE;
+	}
+	if (!rpcs3::ios::jit::is_aot())
+	{
+		set_error("Choose AOT mode before loading the core to prepare AOT code");
+		return RPCS3_IOS_INVALID_STATE;
+	}
+	try { action(); return RPCS3_IOS_OK; }
+	catch (const std::invalid_argument& error) { set_error(error.what()); return RPCS3_IOS_INVALID_ARGUMENT; }
+	catch (const rpcs3::ios::aot::failure& error) { set_error(error.message); }
+	catch (const std::exception& error) { set_error(error.what()); }
+	catch (...) { set_error("Unknown AOT preparation failure"); }
+	return RPCS3_IOS_INTERNAL_ERROR;
+}
+#endif
+}
+
+extern "C" bool rpcs3_ios_aot_is_cancelled(void) noexcept
+{
+#ifdef RPCS3_IOS_AOT_COMPILER
+    return rpcs3::ios::aot::is_cancelled();
+#else
+    return true;
+#endif
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_aot_set_native_signer(rpcs3_ios_aot_native_sign_callback callback, void* context) noexcept
+{
+#ifdef RPCS3_IOS_AOT_COMPILER
+    return aot_operation([&] { rpcs3::ios::aot::set_native_signer(callback, context); });
+#else
+    return aot_unavailable();
+#endif
+}
+
+extern "C" uint64_t rpcs3_ios_aot_capabilities(void) noexcept
+{
+#ifdef RPCS3_IOS_AOT_COMPILER
+	return (uint64_t{4} << 32) | 63; // Runtime v4; PPU/SPU, automatic preparation, batched signing, cancellation admission.
+#else
+	return 0;
+#endif
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_aot_configure(const char* signer, const char* core) noexcept
+{
+#ifdef RPCS3_IOS_AOT_COMPILER
+	return aot_operation([&]
+	{
+		if (!signer || !core) throw std::invalid_argument("AOT signing/build identity is required");
+		rpcs3::ios::aot::configure(g_config.cache_path, signer, core);
+	});
+#else
+	(void)signer; (void)core; return aot_unavailable();
+#endif
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_aot_begin_preparation(void) noexcept
+{
+#ifdef RPCS3_IOS_AOT_COMPILER
+	return aot_operation([] { rpcs3::ios::aot::begin_preparation(); });
+#else
+	return aot_unavailable();
+#endif
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_aot_prepare(const char* title, char* identifier, size_t capacity) noexcept
+{
+#ifdef RPCS3_IOS_AOT_COMPILER
+	return aot_operation([&]
+	{
+		if (!title || !identifier || capacity < 33) throw std::invalid_argument("AOT preparation needs a title and generation buffer");
+		const auto game = rpcs3::ios::find_installed_game(title);
+		if (!game) throw std::invalid_argument("Installed AOT title not found");
+		aot_copy(rpcs3::ios::aot::prepare(*game), identifier, capacity);
+	});
+#else
+	(void)title; (void)identifier; (void)capacity; return aot_unavailable();
+#endif
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_aot_signing_count(const char* identifier, uint32_t* count) noexcept
+{
+#ifdef RPCS3_IOS_AOT_COMPILER
+	return aot_operation([&]
+	{
+		if (!identifier || !count) throw std::invalid_argument("AOT signing count requires a job and output");
+		*count = rpcs3::ios::aot::signing_count(identifier);
+	});
+#else
+	(void)identifier; (void)count; return aot_unavailable();
+#endif
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_aot_signing_paths(const char* identifier, char* input, size_t input_capacity, char* output, size_t output_capacity) noexcept
+{
+#ifdef RPCS3_IOS_AOT_COMPILER
+	return aot_operation([&]
+	{
+		if (!identifier) throw std::invalid_argument("AOT generation is required");
+		const auto paths = rpcs3::ios::aot::signing_paths(identifier);
+		aot_copy(paths.first, input, input_capacity); aot_copy(paths.second, output, output_capacity);
+	});
+#else
+	(void)identifier; (void)input; (void)input_capacity; (void)output; (void)output_capacity; return aot_unavailable();
+#endif
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_aot_finalize(const char* identifier, const char* digest) noexcept
+{
+#ifdef RPCS3_IOS_AOT_COMPILER
+	return aot_operation([&]
+	{
+		if (!identifier || !digest) throw std::invalid_argument("AOT generation and signed digest are required");
+		rpcs3::ios::aot::finalize(identifier, digest);
+	});
+#else
+	(void)identifier; (void)digest; return aot_unavailable();
+#endif
+}
+
+extern "C" rpcs3_ios_status rpcs3_ios_aot_get_status(const char* title, char* json, size_t capacity) noexcept
+{
+#ifdef RPCS3_IOS_AOT_COMPILER
+	try
+	{
+		if (!title) throw std::invalid_argument("AOT title is required");
+		auto value = rpcs3::ios::aot::status_json(title);
+		aot_copy(value, json, capacity);
+		return RPCS3_IOS_OK;
+	}
+	catch (const std::invalid_argument& error) { set_error(error.what()); return RPCS3_IOS_INVALID_ARGUMENT; }
+	catch (const rpcs3::ios::aot::failure& error) { set_error(error.message); }
+	catch (const std::exception& error) { set_error(error.what()); }
+	catch (...) { set_error("Unknown AOT observation failure"); }
+	return RPCS3_IOS_INTERNAL_ERROR;
+#else
+	(void)title; (void)json; (void)capacity; return aot_unavailable();
+#endif
+}
+
+extern "C" void rpcs3_ios_aot_cancel(void) noexcept
+{
+#ifdef RPCS3_IOS_AOT_COMPILER
+	rpcs3::ios::aot::cancel();
+#endif
 }

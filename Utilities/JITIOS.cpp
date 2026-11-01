@@ -8,6 +8,7 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <csignal>
 #include <cstdlib>
@@ -34,6 +35,8 @@ extern "C" int csops(pid_t pid, unsigned int ops, void* user_address, size_t use
 
 namespace
 {
+std::atomic<u64> g_rejected_executable_requests = 0;
+std::atomic<u64> g_rejected_preparation_requests = 0;
 constexpr u32 breakpoint_instruction = 0xd4200000u |
 	(static_cast<u32>(rpcs3::ios::jit::breakpoint_immediate) << 5);
 constexpr unsigned int cs_ops_status = 0;
@@ -361,6 +364,13 @@ u64 rpcs3_ios_jit26_protocol_call(u64, const void*, usz)
 
 u64 protocol_call(u64 command, const void* address, usz size, bool* issued = nullptr) noexcept
 {
+	if (rpcs3::ios::jit::is_jitless())
+	{
+		g_rejected_preparation_requests.fetch_add(1, std::memory_order_relaxed);
+		if (issued) *issued = false;
+		set_error("Universal JIT commands are forbidden in interpreter/AOT sessions");
+		return 0;
+	}
 	std::lock_guard lock(g_protocol_mutex);
 	if (issued)
 	{
@@ -621,6 +631,11 @@ regular_allocator::~regular_allocator()
 
 void* regular_allocator::allocate(bool executable, usz size, usz alignment) noexcept
 {
+	if (is_jitless())
+	{
+		if (executable && size) g_rejected_executable_requests.fetch_add(1, std::memory_order_relaxed);
+		return nullptr;
+	}
 	if (!uses_regular_memory() || !prepare_arena()) return nullptr;
 	std::lock_guard lock(g_arena_mutex);
 	if (!m_group)
@@ -637,15 +652,29 @@ bool is_jitless() noexcept
 	static const bool disabled = []
 	{
 		const char* value = std::getenv("RPCS3_IOS_JITLESS");
-		return value && std::strcmp(value, "1") == 0;
+		return is_aot() || (value && std::strcmp(value, "1") == 0);
 	}();
 	return disabled;
 }
+
+bool is_aot() noexcept
+{
+	static const bool enabled = []
+	{
+		const char* value = std::getenv("RPCS3_IOS_AOT");
+		return value && std::strcmp(value, "1") == 0;
+	}();
+	return enabled;
+}
+
+u64 rejected_executable_requests() noexcept { return g_rejected_executable_requests.load(); }
+u64 rejected_preparation_requests() noexcept { return g_rejected_preparation_requests.load(); }
 
 bool is_ready() noexcept
 {
 	if (is_jitless())
 	{
+		g_rejected_preparation_requests.fetch_add(1, std::memory_order_relaxed);
 		return false;
 	}
 	{
@@ -874,6 +903,11 @@ bool seal_arena() noexcept
 
 void* runtime_memory(bool executable) noexcept
 {
+	if (is_jitless())
+	{
+		if (executable) g_rejected_executable_requests.fetch_add(1, std::memory_order_relaxed);
+		return nullptr;
+	}
 	if (!prepare_arena())
 	{
 		return nullptr;
@@ -907,6 +941,11 @@ usz arena_capacity(bool executable) noexcept
 
 bool claim_runtime(bool executable, usz offset, usz size) noexcept
 {
+	if (is_jitless())
+	{
+		if (executable && size) g_rejected_executable_requests.fetch_add(1, std::memory_order_relaxed);
+		return false;
+	}
 	if (!size)
 	{
 		return true;
@@ -1004,6 +1043,11 @@ void reset_runtime() noexcept
 
 void* allocate(bool executable, usz size, usz alignment) noexcept
 {
+	if (is_jitless())
+	{
+		if (executable && size) g_rejected_executable_requests.fetch_add(1, std::memory_order_relaxed);
+		return nullptr;
+	}
 	if (!prepare_arena())
 	{
 		return nullptr;

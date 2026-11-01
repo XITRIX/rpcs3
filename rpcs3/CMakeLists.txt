@@ -255,6 +255,7 @@ if(RPCS3_FRONTEND STREQUAL "IOS")
     )
 
     install(TARGETS RPCS3Core LIBRARY DESTINATION Frameworks)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/ios/AOTCompiler.cmake")
 endif()
 
 # Unit tests

@@ -310,6 +310,11 @@ static void fixup_settings(const psf::registry* _psf, u32 inherited_psf_resoluti
 	// Disable some incompatible settings in headless mode
 	if (Emu.IsHeadless())
 	{
+#ifdef RPCS3_IOS_AOT_SIMULATOR
+		// The explicit Simulator CPU test has no output callback/device. Keep
+		// cellAudio's native timing path consistent with its Null backend.
+		g_cfg.audio.renderer.set(audio_renderer::null);
+#endif
 		if (g_cfg.video.renderer != video_renderer::null)
 		{
 			sys_log.warning("The video renderer '%s' is currently not supported in headless mode and will therefore be set to '%s'.", g_cfg.video.renderer.get(), video_renderer::null);
@@ -339,25 +344,27 @@ static void fixup_settings(const psf::registry* _psf, u32 inherited_psf_resoluti
 	}
 
 	// Some settings are not allowed in certain PPU decoders
-	if (g_cfg.core.ppu_decoder != ppu_decoder_type::_static)
+	if (g_cfg.core.ppu_decoder != ppu_decoder_type::_static
+#ifdef RPCS3_IOS
+		|| rpcs3::ios::jit::is_aot()
+#endif
+	)
 	{
 		if (g_cfg.core.ppu_use_nj_bit)
 		{
 			sys_log.todo("The setting '%s' is currently not supported with PPU decoder type '%s' and will therefore be disabled during emulation.", g_cfg.core.ppu_use_nj_bit.get_name(), g_cfg.core.ppu_decoder.get());
-			g_cfg.core.ppu_use_nj_bit.set(false);
 		}
 
 		if (g_cfg.core.ppu_set_vnan)
 		{
 			sys_log.todo("The setting '%s' is currently not supported with PPU decoder type '%s' and will therefore be disabled during emulation.", g_cfg.core.ppu_set_vnan.get_name(), g_cfg.core.ppu_decoder.get());
-			g_cfg.core.ppu_set_vnan.set(false);
 		}
 
 		if (g_cfg.core.ppu_set_fpcc)
 		{
 			sys_log.todo("The setting '%s' is currently not supported with PPU decoder type '%s' and will therefore be disabled during emulation.", g_cfg.core.ppu_set_fpcc.get_name(), g_cfg.core.ppu_decoder.get());
-			g_cfg.core.ppu_set_fpcc.set(false);
 		}
+		normalize_ppu_llvm_settings(g_cfg);
 	}
 
 #if defined(ARCH_ARM64)

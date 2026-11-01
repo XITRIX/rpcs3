@@ -87,10 +87,11 @@ void initialize_texture_cache_validation(bool request_tracking, bool diagnostics
 	const auto state = jit::get_statistics();
 	const bool jit_ready = state.sealed && (state.backend == jit::arena_backend::legacy_debugger ||
 		state.backend == jit::arena_backend::universal_mirrored);
-	const bool detached = request_tracking && jit_ready && debugger_known_detached();
-	s_write_tracking = rsx::allow_texture_write_tracking(request_tracking, jit_ready, detached);
+	const bool signed_aot = jit::is_aot();
+	const bool detached = request_tracking && (jit_ready || signed_aot) && debugger_known_detached();
+	s_write_tracking = rsx::allow_texture_write_tracking(request_tracking, jit_ready, detached, signed_aot);
 	const char* backend = state.backend == jit::arena_backend::legacy_debugger ? "legacy" :
-		state.backend == jit::arena_backend::universal_mirrored ? "universal" : "disabled";
+		state.backend == jit::arena_backend::universal_mirrored ? "universal" : signed_aot ? "signed-aot" : "disabled";
 	texture_validation_log.notice("policy requested=%d backend=%s jit_ready=%d debugger_known_detached=%d write_tracking=%d diagnostics=%d",
 		request_tracking, backend, jit_ready, detached, s_write_tracking, diagnostics);
 	if (request_tracking && !s_write_tracking)

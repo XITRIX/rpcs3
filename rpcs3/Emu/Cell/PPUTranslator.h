@@ -17,6 +17,8 @@ class PPUTranslator final : public cpu_translator
 {
 	// PPU Module
 	const ppu_module<lv2_obj>& m_info;
+	bool m_aot = false;
+	std::function<void(llvm::Function&, const ppu_function&)> m_entry_guard;
 
 	// Relevant relocations
 	std::map<u64, const ppu_reloc*> m_relocs;
@@ -93,6 +95,11 @@ class PPUTranslator final : public cpu_translator
 
 #undef DEF_VALUE
 public:
+    // File compilation can add admission checks before the normal native
+    // frame/register transforms inspect the completed function.
+    void set_entry_guard(std::function<void(llvm::Function&, const ppu_function&)> guard)
+    { m_entry_guard = std::move(guard); }
+
 
 	template <typename T>
 	value_t<T> get_vr(u32 vr)
@@ -154,7 +161,7 @@ public:
 	llvm::Value* RotateLeft(llvm::Value* arg, llvm::Value* n);
 
 	// Emit function call
-	void CallFunction(u64 target, llvm::Value* indirect = nullptr);
+	void CallFunction(u64 target, llvm::Value* indirect = nullptr, bool absolute = false);
 
 	// Emit state check mid-block
 	void TestAborted();
@@ -341,7 +348,14 @@ public:
 	void CompilationError(std::string_view error);
 
 	PPUTranslator(llvm::LLVMContext& context, llvm::Module* _module, const ppu_module<lv2_obj>& info, llvm::ExecutionEngine& engine);
+	PPUTranslator(llvm::LLVMContext& context, llvm::Module* module, const ppu_module<lv2_obj>& info, std::string_view cpu);
+	// Code storage does not determine the generated execution ABI. Native file
+	// emission must be able to use the same lowering as the LLVM JIT.
+	enum class execution_abi { native, fragment };
+	PPUTranslator(llvm::LLVMContext& context, llvm::Module* module, const ppu_module<lv2_obj>& info, llvm::ExecutionEngine* engine, std::string_view cpu, execution_abi abi);
 	~PPUTranslator();
+	bool TranslateModule(const std::function<bool()>& cancelled = {});
+	void BuildIndirectEntry(llvm::Function& function, u32 address);
 
 	// Get thread context struct type
 	llvm::Type* GetContextType();

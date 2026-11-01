@@ -5,6 +5,7 @@
 #include "Emu/Cell/lv2/sys_sync.h"
 #include "PPUTranslator.h"
 #include "PPUThread.h"
+#include "ios/AOTRuntime.h"
 #include "SPUThread.h"
 
 #include "util/types.hpp"
@@ -15,6 +16,8 @@
 #include <algorithm>
 #include <unordered_set>
 #include <span>
+#include <llvm/Passes/PassBuilder.h>
+#include <llvm/Transforms/Scalar/EarlyCSE.h>
 
 #ifdef ARCH_ARM64
 #include "Emu/CPU/Backends/AArch64/AArch64JIT.h"
@@ -29,17 +32,30 @@ extern const ppu_decoder<ppu_itype> g_ppu_itype;
 extern const ppu_decoder<ppu_iname> g_ppu_iname;
 
 PPUTranslator::PPUTranslator(LLVMContext& context, Module* _module, const ppu_module<lv2_obj>& info, ExecutionEngine& engine)
+	: PPUTranslator(context, _module, info, &engine, {}, execution_abi::native)
+{
+}
+
+PPUTranslator::PPUTranslator(LLVMContext& context, Module* module, const ppu_module<lv2_obj>& info, std::string_view cpu)
+	: PPUTranslator(context, module, info, nullptr, cpu, execution_abi::fragment)
+{
+}
+
+PPUTranslator::PPUTranslator(LLVMContext& context, Module* _module, const ppu_module<lv2_obj>& info, ExecutionEngine* engine, std::string_view cpu, execution_abi abi)
 	: cpu_translator(_module, false)
 	, m_info(info)
+	, m_aot(abi == execution_abi::fragment)
 	, m_pure_attr()
 {
 	// Bind context
-	cpu_translator::initialize(context, engine);
+	if (engine) cpu_translator::initialize(context, *engine);
+	else cpu_translator::initialize(context, cpu);
 
 	// Initialize transform passes
 	clear_transforms();
 
 #ifdef ARCH_ARM64
+	if (!m_aot)
 	{
 		// Base reg table definition
 		// Assume all functions named __0x... are PPU functions and take the m_exec as the first arg
@@ -228,6 +244,9 @@ Function* PPUTranslator::Translate(const ppu_function& info)
 		}
 		}
 	}
+	// The signed entry dispatcher owns the native state boundary. An AOT leaf
+	// returns normally; it must never enter a JIT escape/gateway from here.
+	if (m_aot) need_check = false;
 
 	m_thread = m_function->getArg(1);
 	m_base = m_function->getArg(3);
@@ -258,6 +277,19 @@ Function* PPUTranslator::Translate(const ppu_function& info)
 		// Create tail call to the check function
 		Call(GetType<void>(), "__check", m_thread, GetAddr())->setTailCall();
 		m_ir->CreateRetVoid();
+	}
+	else if (m_aot)
+	{
+		const auto runtime = m_function->getArg(7);
+		const auto budget = m_ir->CreateConstGEP1_64(GetType<u8>(), runtime, offsetof(rpcs3_aot_runtime_context_v2, remaining_words));
+		const auto remaining = m_ir->CreateLoad(GetType<u32>(), budget);
+		const auto state = m_ir->CreateLoad(GetType<u32>(), m_ir->CreateStructGEP(m_thread_type, m_thread, 1), true);
+		const auto stop = BasicBlock::Create(m_context, "__aot_yield", m_function);
+		m_ir->CreateCondBr(m_ir->CreateAnd(m_ir->CreateIsNull(state), m_ir->CreateIsNotNull(remaining)), body, stop);
+		m_ir->SetInsertPoint(stop);
+		m_ir->CreateStore(Trunc(GetAddr(), GetType<u32>()), m_ir->CreateStructGEP(m_thread_type, m_thread, static_cast<uint>(&m_cia - m_locals)));
+		m_ir->CreateRetVoid();
+		m_ir->SetInsertPoint(body);
 	}
 	else
 	{
@@ -300,6 +332,16 @@ Function* PPUTranslator::Translate(const ppu_function& info)
 
 			const u32 op = *ensure(m_info.get_ptr<u32>(::narrow<u32>(m_addr + base)));
 
+			if (m_aot)
+			{
+				const auto runtime = m_function->getArg(7);
+				const auto count = m_ir->CreateConstGEP1_64(GetType<u8>(), runtime, offsetof(rpcs3_aot_runtime_context_v2, executed_words));
+				m_ir->CreateStore(m_ir->CreateAdd(m_ir->CreateLoad(GetType<u32>(), count), m_ir->getInt32(1)), count);
+				const auto budget = m_ir->CreateConstGEP1_64(GetType<u8>(), runtime, offsetof(rpcs3_aot_runtime_context_v2, remaining_words));
+				const auto remaining = m_ir->CreateLoad(GetType<u32>(), budget);
+				m_ir->CreateStore(m_ir->CreateBinaryIntrinsic(llvm::Intrinsic::usub_sat, remaining, m_ir->getInt32(1)), budget);
+			}
+
 			(this->*(s_ppu_decoder.decode(op)))({op});
 
 			if (m_rel)
@@ -318,8 +360,155 @@ Function* PPUTranslator::Translate(const ppu_function& info)
 		}
 	}
 
+	if (m_entry_guard) m_entry_guard(*m_function, info);
 	run_transforms(*m_function);
 	return m_function;
+}
+
+void PPUTranslator::BuildIndirectEntry(llvm::Function& function, u32 address)
+{
+	ensure(!m_aot && function.isDeclaration() && function.getCallingConv() == CallingConv::GHC && function.arg_size() == 7);
+	m_function = &function;
+	std::fill(std::begin(m_globals), std::end(m_globals), nullptr);
+	std::fill(std::begin(m_locals), std::end(m_locals), nullptr);
+	IRBuilder<> irb(BasicBlock::Create(m_context, "__indirect", m_function));
+	m_ir = &irb;
+	m_exec = function.getArg(0);
+	m_thread = function.getArg(1);
+	m_seg0 = function.getArg(2);
+	m_base = function.getArg(3);
+	for (u32 i = 0; i < 3; ++i) m_gpr[i] = function.getArg(4 + i);
+	Value* target = m_ir->getInt64(address);
+	if (m_info.is_relocatable) target = m_ir->CreateAdd(m_seg0, target);
+	// Reuse the native indirect branch implementation. The file linker needs
+	// an immutable target stub where JIT symbols_cement generates a trampoline.
+	CallFunction(0, target);
+	run_transforms(function);
+}
+
+bool PPUTranslator::TranslateModule(const std::function<bool()>& cancelled)
+{
+	ensure(!m_aot);
+	// Define some types
+	const auto _func = FunctionType::get(get_type<void>(), {
+		get_type<u8*>(), // Exec base
+		get_type<u8*>(), // PPU context
+		get_type<u64>(), // Segment address (for PRX)
+		get_type<u8*>(), // Memory base
+		get_type<u64>(), // r0
+		get_type<u64>(), // r1
+		get_type<u64>(), // r2
+		}, false);
+
+	// Difference between function name and current location
+	const u32 reloc = m_info.is_relocatable ? ::at32(m_info.segs, 0).addr : 0;
+
+	// Initialize function list
+	for (const auto& func : m_info.get_funcs())
+	{
+		if (func.size)
+		{
+			if (std::count(m_info.excluded_funcs.begin(), m_info.excluded_funcs.end(), func.addr))
+			{
+				continue;
+			}
+
+			const auto f = cast<Function>(m_module->getOrInsertFunction(fmt::format("__0x%x", func.addr - reloc), _func).getCallee());
+			f->setCallingConv(CallingConv::GHC);
+			f->addParamAttr(1, llvm::Attribute::NoAlias);
+			f->addFnAttr(Attribute::NoUnwind);
+		}
+	}
+
+	if (g_cfg.core.ppu_debug)
+	{
+		build_interpreter();
+	}
+
+	// Create the analysis managers.
+	// These must be declared in this order so that they are destroyed in the
+	// correct order due to inter-analysis-manager references.
+	LoopAnalysisManager lam;
+	FunctionAnalysisManager fam;
+	CGSCCAnalysisManager cgam;
+	ModuleAnalysisManager mam;
+
+	// Create the new pass manager builder.
+	// Take a look at the PassBuilder constructor parameters for more
+	// customization, e.g. specifying a TargetMachine or various debugging
+	// options.
+	PassBuilder pb;
+
+	// Register all the basic analyses with the managers.
+	pb.registerModuleAnalyses(mam);
+	pb.registerCGSCCAnalyses(cgam);
+	pb.registerFunctionAnalyses(fam);
+	pb.registerLoopAnalyses(lam);
+	pb.crossRegisterProxies(lam, fam, cgam, mam);
+
+	FunctionPassManager fpm;
+	// Basic optimizations
+	fpm.addPass(EarlyCSEPass());
+
+	u32 guest_code_size = 0;
+	u32 min_addr = umax;
+	u32 max_addr = 0;
+	u32 num_func = 0;
+
+	// Translate functions
+	// Start with the lowest bound of the module, function list is sorted
+	for (const auto& mod_func : m_info.get_funcs())
+	{
+		if (cancelled && cancelled())
+		{
+			return false;
+		}
+
+		if (mod_func.size)
+		{
+			if (std::count(m_info.excluded_funcs.begin(), m_info.excluded_funcs.end(), mod_func.addr))
+			{
+				continue;
+			}
+
+			num_func++;
+			guest_code_size += mod_func.size;
+			max_addr = std::max<u32>(max_addr, mod_func.addr + mod_func.size);
+			min_addr = std::min<u32>(min_addr, mod_func.addr);
+
+			// Translate
+			if ([[maybe_unused]] const auto func = Translate(mod_func))
+			{
+#ifdef ARCH_X64 // TODO
+				// Run optimization passes
+				fpm.run(*func, fam);
+#endif // ARCH_X64
+			}
+			else
+			{
+				return false;
+			}
+		}
+	}
+
+	// Run this only in one module for all functions compiled
+	if (m_info.jit_bounds)
+	{
+		if ([[maybe_unused]] const auto func = GetSymbolResolver(m_info))
+		{
+#ifdef ARCH_X64 // TODO
+			// Run optimization passes
+			fpm.run(*func, fam);
+#endif // ARCH_X64
+		}
+		else
+		{
+			return false;
+		}
+	}
+
+	ppu_log.notice("LLVM: %zu functions generated (code_size=0x%x, num_func=%d, max_addr(-)min_addr=0x%x)", m_module->getFunctionList().size(), guest_code_size, num_func, max_addr - min_addr);
+	return true;
 }
 
 Function* PPUTranslator::GetSymbolResolver(const ppu_module<lv2_obj>& info)
@@ -551,8 +740,25 @@ Value* PPUTranslator::RotateLeft(Value* arg, Value* n)
 	return m_ir->CreateOr(m_ir->CreateShl(arg, m_ir->CreateAnd(n, mask)), m_ir->CreateLShr(arg, m_ir->CreateAnd(m_ir->CreateNeg(n), mask)));
 }
 
-void PPUTranslator::CallFunction(u64 target, Value* indirect)
+void PPUTranslator::CallFunction(u64 target, Value* indirect, bool absolute)
 {
+	if (m_aot)
+	{
+		// Native block calls stay in the signed module. Unknown/indirect targets
+		// materialize CIA and return to the existing interpreter boundary.
+		const auto next = indirect ? indirect : absolute ? m_ir->getInt64(target) : GetAddr(target - m_addr);
+		m_ir->CreateStore(Trunc(next, GetType<u32>()),
+			m_ir->CreateStructGEP(m_thread_type, m_thread, static_cast<uint>(&m_cia - m_locals)));
+		const auto relative = absolute ? target - m_info.segs[0].addr : target;
+		if (const auto callee = !indirect && !absolute ? m_module->getFunction(fmt::format("__0x%x", relative)) : nullptr)
+		{
+			const auto call = m_ir->CreateCall(callee, {m_exec, m_thread, m_seg0, m_base,
+				GetGpr(0), GetGpr(1), GetGpr(2), m_function->getArg(7)});
+			call->setTailCallKind(CallInst::TCK_MustTail);
+		}
+		m_ir->CreateRetVoid();
+		return;
+	}
 	const auto type = m_function->getFunctionType();
 	const auto block = m_ir->GetInsertBlock();
 
@@ -2315,7 +2521,7 @@ void PPUTranslator::BC(ppu_opcode_t op)
 	const s32 bt14 = op.bt14; // Workaround for VS 16.5
 	const u64 target = (op.aa ? 0 : m_addr) + bt14;
 
-	if (op.aa && m_reloc)
+	if (op.aa && m_reloc && !m_aot)
 	{
 		CompilationError("Branch with absolute address");
 	}
@@ -2327,7 +2533,7 @@ void PPUTranslator::BC(ppu_opcode_t op)
 
 	UseCondition(CheckBranchProbability(op.bo), CheckBranchCondition(op.bo, op.bi));
 
-	CallFunction(target);
+	CallFunction(target, nullptr, op.aa);
 }
 
 void PPUTranslator::SC(ppu_opcode_t op)
@@ -2341,7 +2547,7 @@ void PPUTranslator::SC(ppu_opcode_t op)
 	RegStore(Trunc(GetAddr()), m_cia);
 	FlushRegisters();
 
-	if (!op.lev && isa<ConstantInt>(num))
+	if (!m_aot && !op.lev && isa<ConstantInt>(num))
 	{
 		// Try to determine syscall using the constant value from r11
 		const u64 index = cast<ConstantInt>(num)->getZExtValue();
@@ -2365,7 +2571,7 @@ void PPUTranslator::B(ppu_opcode_t op)
 	const s32 bt24 = op.bt24; // Workaround for VS 16.5
 	const u64 target = (op.aa ? 0 : m_addr) + bt24;
 
-	if (op.aa && m_reloc)
+	if (op.aa && m_reloc && !m_aot)
 	{
 		CompilationError("Branch with absolute address");
 	}
@@ -2376,7 +2582,7 @@ void PPUTranslator::B(ppu_opcode_t op)
 	}
 
 	FlushRegisters();
-	CallFunction(target);
+	CallFunction(target, nullptr, op.aa);
 }
 
 void PPUTranslator::MCRF(ppu_opcode_t op)
@@ -2415,6 +2621,7 @@ void PPUTranslator::CRANDC(ppu_opcode_t op)
 void PPUTranslator::ISYNC(ppu_opcode_t)
 {
 	m_ir->CreateFence(AtomicOrdering::Acquire);
+	if (m_aot) { FlushRegisters(); CallFunction(m_addr + 4, GetAddr(+4)); }
 }
 
 void PPUTranslator::CRXOR(ppu_opcode_t op)

@@ -108,6 +108,7 @@ if(RPCS3_FRONTEND STREQUAL "IOS")
         ../../Utilities/JITIOS.h
         ../../Utilities/JITIOSLayoutPolicy.h
         ../ios/FrontendSupport.cpp
+        ../ios/AOTDispatch.cpp
 		../ios/RPCS3IOSExperimentalPolicy.cpp
 		../ios/RPCS3IOSExperimentalPolicy.h
 		../ios/IOSTextureHash.cpp
@@ -242,12 +243,24 @@ endif()
 # remain unchanged and do not throw this private control-flow exception.
 if(RPCS3_FRONTEND STREQUAL "IOS")
     set_source_files_properties(
+        ../ios/AOTDispatch.cpp
         Cell/SPUCommonRecompiler.cpp
         Cell/SPUInterpreter.cpp
         Cell/SPUThread.cpp
         CPU/CPUThread.cpp
         PROPERTIES COMPILE_OPTIONS -fexceptions
     )
+endif()
+
+# File-only AOT analysis can cancel through native SPU discovery. Preserve
+# destructors for the analyser/compiler objects and shared scanner callbacks.
+if(RPCS3_IOS_AOT_LINKER_ROOT)
+    set_source_files_properties(Cell/SPULLVMRecompiler.cpp Cell/PPUModule.cpp
+        PROPERTIES COMPILE_OPTIONS -fexceptions)
+endif()
+
+if(RPCS3_AOT_SIMULATOR_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "iOS" AND CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
+    set_property(SOURCE System.cpp APPEND PROPERTY COMPILE_DEFINITIONS RPCS3_IOS_AOT_SIMULATOR=1)
 endif()
 
 # Cell
@@ -845,4 +858,10 @@ endif()
 
 if(WAYLAND_FOUND)
     target_link_libraries(rpcs3_emu PRIVATE OpenGL::EGL)
+endif()
+
+if(RPCS3_IOS_AOT_LINKER_ROOT)
+    target_compile_definitions(rpcs3_emu PRIVATE RPCS3_IOS_AOT_BACKEND=1)
+    target_sources(rpcs3_emu PRIVATE ../ios/AOTNativeGateway.cpp ../ios/AOTNativeRuntime.cpp)
+    set_source_files_properties(../ios/AOTNativeGateway.cpp ../ios/AOTNativeRuntime.cpp PROPERTIES COMPILE_OPTIONS -fexceptions)
 endif()

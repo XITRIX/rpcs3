@@ -3,6 +3,14 @@
 #include "Utilities/JIT.h"
 #ifdef RPCS3_IOS
 #include "Utilities/JITIOS.h"
+#include "ios/AOTDispatch.h"
+#include "ios/AOTAnalysis.h"
+#include "ios/AOTCodeMatch.h"
+#ifdef RPCS3_IOS_AOT_BACKEND
+#include "ios/AOTNativeGateway.h"
+#include "ios/AOTService.h"
+#include "ios/AOTNativeModule.h"
+#endif
 #include "Utilities/JITIOSLayoutPolicy.h"
 #include "ios/IOSMemoryPressurePolicy.h"
 #include "ios/RPCS3IOSPerformance.h"
@@ -518,6 +526,39 @@ static void ppu_fallback(ppu_thread& ppu, ppu_opcode_t op, be_t<u32>* this_op, p
 	return _fn(ppu, op, this_op, next_fn);
 }
 
+#ifdef RPCS3_IOS
+// Prebuilt C++ bridge stored in the ordinary RW interpreter dispatch table.
+// No instruction generation, executable allocation or library patching occurs.
+static void ppu_aot_gate(ppu_thread& ppu, ppu_opcode_t op, be_t<u32>* this_op, ppu_intrp_func*)
+{
+	ppu.cia = vm::get_addr(this_op);
+#ifdef RPCS3_IOS_AOT_BACKEND
+    if (rpcs3::ios::aot::native_ppu_enabled())
+    {
+        const auto start = ppu.cia;
+        if (!ppu.state && !g_cfg.core.ppu_debug && rpcs3::ios::aot::execute_native_ppu(ppu) &&
+            (ppu.state || ppu.cia != start)) return;
+        rpcs3::ios::aot::record_native_ppu_fallback();
+        ppu_cache(ppu.cia)(ppu, {vm::read32(ppu.cia)}, vm::_ptr<u32>(ppu.cia), &ppu_ret);
+        return;
+    }
+#endif
+	if (auto* context = ppu.aot_runtime_context; context && context->cpu == &ppu && !ppu.state && !g_cfg.core.ppu_debug)
+	{
+		context->guest_pc = ppu.cia; context->next_pc = ppu.cia + 4;
+		if (rpcs3::ios::aot::execute(1, op.opcode, *context))
+		{
+			ppu.cia = context->next_pc;
+			return;
+		}
+	}
+	// A changed/unsupported entry executes exactly one native instruction and
+	// returns with materialized CIA. Registered special handlers never use this
+	// bridge, and its internal code-eligibility check also respects those hooks.
+	ppu_cache(ppu.cia)(ppu, op, this_op, &ppu_ret);
+}
+#endif
+
 // TODO: Make this a dispatch call
 void ppu_recompiler_fallback(ppu_thread& ppu)
 {
@@ -772,14 +813,65 @@ static void ppu_check_toc(ppu_thread& ppu, ppu_opcode_t op, be_t<u32>* this_op, 
 	return ppu_cache(ppu.cia)(ppu, op, this_op, next_fn);
 }
 
+#ifdef RPCS3_IOS
+namespace
+{
+// This invalidates eligibility only; native g_exec_addr remains the sole
+// registry of replacement handlers. Guest-byte verification stays separate.
+std::atomic<u64> ppu_dispatch_epoch{2};
+std::mutex ppu_dispatch_mutation_mutex;
+struct ppu_dispatch_mutation
+{
+	std::lock_guard<std::mutex> lock{ppu_dispatch_mutation_mutex};
+	ppu_dispatch_mutation() { ppu_dispatch_epoch.fetch_add(1, std::memory_order_acq_rel); }
+	~ppu_dispatch_mutation() { ppu_dispatch_epoch.fetch_add(1, std::memory_order_release); }
+};
+}
+
+static bool ppu_aot_handlers_eligible(u32 address, u32 count)
+{
+	struct eligibility { u64 epoch = 0; u32 address = 0, count = 0; bool allowed = false; };
+	thread_local std::array<eligibility, 4096> cached{};
+	const auto generation = ppu_dispatch_epoch.load(std::memory_order_acquire);
+	if (generation & 1) return false;
+	auto& slot = cached[((address >> 2) ^ count) % cached.size()];
+	if (slot.epoch == generation && slot.address == address && slot.count == count) return slot.allowed;
+	bool allowed = true;
+	for (u32 i = 0; i < count; ++i)
+	{
+		const auto at = address + i * 4;
+		const auto handler = atomic_storage<ppu_intrp_func_t>::load(*reinterpret_cast<ppu_intrp_func_t*>(ppu_ptr(at)));
+		if (handler != &ppu_fallback && handler != &ppu_aot_gate && handler != ppu_cache(at)) { allowed = false; break; }
+	}
+	if (ppu_dispatch_epoch.load(std::memory_order_acquire) != generation) return false;
+	slot = {generation, address, count, allowed};
+	return allowed;
+}
+const std::atomic<u64>* ppu_aot_dispatch_epoch() { return &ppu_dispatch_epoch; }
+static bool ppu_aot_valid_range(u32 address, u32 count)
+{
+	return count && count <= 65536 && !(address % 4) && vm::check_addr(address, vm::page_executable, count * 4);
+}
+bool ppu_aot_code_eligible(u32 address, u32 count)
+{
+	return ppu_aot_valid_range(address, count) && ppu_aot_handlers_eligible(address, count);
+}
+#endif
+
 extern void ppu_register_range(u32 addr, u32 size)
 {
+#ifdef RPCS3_IOS_AOT_BACKEND
+    if (rpcs3::ios::jit::is_aot()) rpcs3::ios::aot::register_native_ppu_range(addr, size);
+#endif
 	if (!size)
 	{
 		ppu_log.error("ppu_register_range(0x%x): empty range", addr);
 		return;
 	}
 
+#ifdef RPCS3_IOS
+	ppu_dispatch_mutation mutation;
+#endif
 	size = utils::align(size + addr % 0x10000, 0x10000);
 	addr &= -0x10000;
 
@@ -820,6 +912,9 @@ static void ppu_far_jump(ppu_thread&, ppu_opcode_t, be_t<u32>*, ppu_intrp_func*)
 
 extern void ppu_register_function_at(u32 addr, u32 size, ppu_intrp_func_t ptr = nullptr)
 {
+#ifdef RPCS3_IOS
+	ppu_dispatch_mutation mutation;
+#endif
 	// Initialize specific function
 	if (ptr)
 	{
@@ -862,6 +957,18 @@ extern void ppu_register_function_at(u32 addr, u32 size, u64 ptr)
 {
 	return ppu_register_function_at(addr, size, reinterpret_cast<ppu_intrp_func_t>(ptr));
 }
+
+#ifdef RPCS3_IOS
+void ppu_register_native_aot_function(u32 address)
+{
+    if (ppu_aot_code_eligible(address, 1)) ppu_register_function_at(address, 4, &ppu_aot_gate);
+}
+void ppu_register_aot_range(u32 address, u32 size)
+{
+	for (const auto entry : rpcs3::ios::aot::prepared_addresses(1, address, size))
+		if (ppu_aot_code_eligible(entry, 1)) ppu_register_function_at(entry, 4, &ppu_aot_gate);
+}
+#endif
 
 u32 ppu_get_exported_func_addr(u32 fnid, const std::string& module_name);
 
@@ -1295,6 +1402,13 @@ extern bool ppu_breakpoint(u32 addr, bool is_adding)
 	{
 		// If not an HLE function use regular instruction function
 		func_original = ppu_cache(addr);
+#ifdef RPCS3_IOS
+		// A native AOT bridge is an ordinary eligible code handler. Preserve
+		// it across breakpoint removal instead of rejecting the breakpoint or
+		// permanently losing its compiled entry.
+		if (rpcs3::ios::jit::is_aot() && (ppu_read(addr) == &ppu_aot_gate ||
+			(!is_adding && rpcs3::ios::aot::has_prepared_address(1, addr)))) func_original = &ppu_aot_gate;
+#endif
 	}
 
 	if (is_adding)
@@ -1310,6 +1424,9 @@ extern bool ppu_breakpoint(u32 addr, bool is_adding)
 			return false;
 		}
 
+#ifdef RPCS3_IOS
+		ppu_dispatch_mutation mutation;
+#endif
 		write_to_ptr_unsafe<ppu_intrp_func_t>(ppu_ptr(addr), breakpoint);
 		return true;
 	}
@@ -1319,6 +1436,9 @@ extern bool ppu_breakpoint(u32 addr, bool is_adding)
 		return false;
 	}
 
+#ifdef RPCS3_IOS
+	ppu_dispatch_mutation mutation;
+#endif
 	write_to_ptr_unsafe<ppu_intrp_func_t>(ppu_ptr(addr), func_original);
 	return true;
 }
@@ -1350,6 +1470,9 @@ extern bool ppu_patch(u32 addr, u32 value)
 		return false;
 	}
 
+#ifdef RPCS3_IOS
+	ppu_dispatch_mutation mutation;
+#endif
 	*vm::get_super_ptr<u32>(addr) = value;
 
 	if (is_exec)
@@ -2838,14 +2961,49 @@ void ppu_thread::exec_task()
 	const auto cache = vm::g_exec_addr;
 	const auto mem_ = vm::g_base_addr;
 
+#ifdef RPCS3_IOS
+	// Session mode and CPU storage are fixed for this invocation. Re-entrant
+	// guest callbacks receive an independent stack context.
+	const bool aot_mode = rpcs3::ios::jit::is_aot();
+	rpcs3_aot_runtime_context_v2 context{};
+	context.structure_size = sizeof(context); context.version = RPCS3_AOT_RUNTIME_VERSION;
+	context.cpu = this; context.ppu_gpr = gpr; context.memory_base = vm::g_base_addr;
+	context.matches_code = [](const rpcs3_aot_runtime_context_v2* context, const u32* words, u32 count)
+	{
+		if (!ppu_aot_valid_range(context->guest_pc, count)) return false;
+		// Most opcode-keyed candidates are different functions. Compare their
+		// bytes before consulting native replacement-handler eligibility, while
+		// retaining the same executable-range and hook checks on every match.
+		return rpcs3::ios::aot::matches_guest_words(vm::g_base_addr + context->guest_pc, words, count,
+			context->verification_flags & RPCS3_AOT_SPARSE_SPU) && ppu_aot_handlers_eligible(context->guest_pc, count);
+	};
+	context.read_code = [](const rpcs3_aot_runtime_context_v2* context, u32* words, u32 capacity)
+	{
+		u32 count = 0;
+		while (count < capacity && u64(context->guest_pc) + count * 4 <= UINT32_MAX &&
+			vm::check_addr(context->guest_pc + count * 4, vm::page_readable, 4))
+		{
+			words[count] = vm::read32(context->guest_pc + count * 4);
+			if (rpcs3::ios::aot::terminates_unit(1, words[count++])) break;
+		}
+		return count;
+	};
+	struct context_scope
+	{
+		rpcs3_aot_runtime_context_v2** slot;
+		rpcs3_aot_runtime_context_v2* previous;
+		~context_scope() { if (slot) *slot = previous; }
+	} restore_context{aot_mode ? &aot_runtime_context : nullptr, nullptr};
+	if (restore_context.slot) restore_context.previous = std::exchange(*restore_context.slot, &context);
+
+#endif
+
 	while (true)
 	{
 		if (test_stopped()) [[unlikely]]
 		{
 			return;
 		}
-
-		gv_zeroupper();
 
 		// Execute instruction (may be step; execute only one instruction if state)
 		const auto op = reinterpret_cast<be_t<u32>*>(mem_ + u64{cia});
@@ -2856,6 +3014,30 @@ void ppu_thread::exec_task()
 			// An unregistered guest target must not become a null native call.
 			fmt::throw_exception("PPU interpreter has no executable target at 0x%08x (LR=0x%08x, CTR=0x%08x)", cia, lr, ctr);
 		}
+
+#ifdef RPCS3_IOS
+		// Native registered handlers (HLE, patches, breakpoints) own their
+		// execution. They are neither translated misses nor new guest code.
+		if (aot_mode && !state && !g_cfg.core.ppu_debug &&
+			(dispatch == &ppu_fallback || dispatch == ppu_cache(cia)))
+		{
+#ifdef RPCS3_IOS_AOT_BACKEND
+            if (rpcs3::ios::aot::native_ppu_enabled()) rpcs3::ios::aot::record_native_ppu_fallback();
+            else
+#endif
+            {
+			context.guest_pc = cia; context.next_pc = cia + 4;
+			const u32 opcode = vm::read32(cia);
+			if (rpcs3::ios::aot::execute(1, opcode, context))
+			{
+				cia = context.next_pc;
+				continue;
+			}
+            }
+		}
+#endif
+
+		gv_zeroupper();
 		dispatch(*this, {*op}, op, state ? &ppu_ret : fn + 1);
 	}
 }
@@ -5160,6 +5342,114 @@ static void ppu_vec_estimate(v128& v, u32 nj)
 	}
 }
 
+template <bool NativeFile>
+static std::unordered_map<std::string, u64> make_ppu_runtime_symbols()
+{
+	const auto address = []<auto Function>() -> u64
+	{
+#ifdef RPCS3_IOS_AOT_BACKEND
+		if constexpr (NativeFile) return reinterpret_cast<u64>(&rpcs3::ios::aot::native_import<Function>::call);
+#endif
+		return reinterpret_cast<u64>(Function);
+	};
+	const u64 named_syscall = [&]() -> u64
+	{
+#ifdef RPCS3_IOS_AOT_BACKEND
+		// LLVM's constant-number SC lowering passes only the PPU context.
+		// JIT's dispatcher reads r11 implicitly; AOT retains the static decoder,
+		// so adapt that calling convention before entering the shared dispatcher.
+		if constexpr (NativeFile) return address.template operator()<+[](ppu_thread& ppu)
+		{
+			ppu_execute_syscall(ppu, ppu.gpr[11]);
+		}>();
+#endif
+		return address.template operator()<ppu_execute_syscall>();
+	}();
+	std::unordered_map<std::string, u64> link_table
+	{
+		{ "sys_game_set_system_sw_version", named_syscall },
+		{ "__trap", address.template operator()<&ppu_trap>() },
+		{ "__error", address.template operator()<&ppu_error>() },
+		{ "__check", address.template operator()<&ppu_check>() },
+		{ "__trace", address.template operator()<&ppu_trace>() },
+		{ "__syscall", address.template operator()<ppu_execute_syscall>() },
+		{ "__get_tb", address.template operator()<get_timebased_time>() },
+		{ "__lwarx", address.template operator()<ppu_lwarx>() },
+		{ "__ldarx", address.template operator()<ppu_ldarx>() },
+		{ "__stwcx", address.template operator()<ppu_stwcx>() },
+		{ "__stdcx", address.template operator()<ppu_stdcx>() },
+		{ "__dcbz", address.template operator()<+[](u32 addr){ alignas(64) static constexpr u8 z[128]{}; do_cell_atomic_128_store(addr, z); }>() },
+		{ "__resupdate", address.template operator()<vm::reservation_update>() },
+		{ "__resinterp", address.template operator()<ppu_reservation_fallback>() },
+		{ "__escape", reinterpret_cast<u64>(+ppu_escape) },
+		{ "__read_maybe_mmio32", address.template operator()<+ppu_read_mmio_aware_u32>() },
+		{ "__write_maybe_mmio32", address.template operator()<+ppu_write_mmio_aware_u32>() },
+		{ "__vrefp", address.template operator()<&ppu_vec_estimate<ppu_vrefp>>() },
+		{ "__vrsqrtefp", address.template operator()<&ppu_vec_estimate<ppu_vrsqrtefp>>() },
+		{ "__vexptefp", address.template operator()<&ppu_vec_estimate<ppu_vexptefp>>() },
+		{ "__vlogefp", address.template operator()<&ppu_vec_estimate<ppu_vlogefp>>() },
+	};
+
+	for (u64 index = 0; index < 1024; index++)
+	{
+		if (ppu_get_syscall(index))
+		{
+			link_table.emplace(fmt::format("%s", ppu_syscall_code(index)), named_syscall);
+			link_table.emplace(fmt::format("syscall_%u", index), named_syscall);
+		}
+	}
+
+#ifdef RPCS3_IOS_AOT_BACKEND
+	if constexpr (NativeFile)
+	{
+        link_table["__aot_ppu_verify"] = address.template operator()<+[](ppu_thread* cpu, u64 segment,
+            const rpcs3::ios::aot::native_ppu_code_range* ranges, u32 count, u64* proof) -> bool
+        {
+            if (cpu && cpu->aot_native_context && cpu->aot_native_context->verification_misses)
+                cpu->aot_native_context->verification_misses->fetch_add(1, std::memory_order_relaxed);
+            const auto epoch = ppu_dispatch_epoch.load(std::memory_order_acquire);
+            if (epoch & 1) return false;
+            if (segment > UINT32_MAX || !count || count > 65536) return false;
+            for (u32 i = 0; i < count; ++i)
+            {
+                const auto& range = ranges[i];
+                const u64 pc = segment + range.address;
+                if (pc > UINT32_MAX || !ppu_aot_code_eligible(static_cast<u32>(pc), range.words) ||
+                    !rpcs3::ios::aot::matches_guest_words(vm::base(static_cast<u32>(pc)), range.expected, range.words)) return false;
+            }
+            if (ppu_dispatch_epoch.load(std::memory_order_acquire) != epoch) return false;
+            if (proof)
+                atomic_storage<u64>::store(*proof, rpcs3::ios::aot::native_ppu_guard_key(epoch, segment));
+            rpcs3::ios::aot::record_native_ppu_entry();
+            return true;
+        }>();
+		link_table["__escape"] = address.template operator()<+[](ppu_thread* ppu)
+		{
+			if (!rpcs3::ios::aot::escape_native_if_active(ppu)) fmt::throw_exception("Native PPU escape outside its gateway");
+		}>();
+		link_table["__error"] = address.template operator()<+[](ppu_thread& ppu, u64 addr, u32)
+		{
+			ppu.cia = ::narrow<u32>(addr);
+			if (!rpcs3::ios::aot::escape_native_if_active(&ppu)) fmt::throw_exception("Native PPU fallback outside its gateway");
+		}>();
+	}
+#endif
+	return link_table;
+}
+
+const std::unordered_map<std::string, u64>& ppu_llvm_runtime_symbols()
+{
+	static const auto symbols = make_ppu_runtime_symbols<false>();
+	return symbols;
+}
+#ifdef RPCS3_IOS_AOT_BACKEND
+const std::unordered_map<std::string, u64>& ppu_native_runtime_symbols()
+{
+	static const auto symbols = make_ppu_runtime_symbols<true>();
+	return symbols;
+}
+#endif
+
 bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_size)
 {
 	ppu_log.notice("Entering ppu_initialize(const ppu_module&..)");
@@ -5179,6 +5469,13 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 			return false;
 		}
 
+#ifdef RPCS3_IOS_AOT_BACKEND
+		// Capture actual relocated PRX/firmware/native function boundaries.
+		// This only records raw guest metadata; compilation waits until Stop.
+		if (rpcs3::ios::jit::is_aot() && !rpcs3::ios::aot::native_ppu_enabled()) rpcs3::ios::aot::observe_ppu_functions(info);
+#endif
+
+        {
 		auto& toc_manager = g_fxo->get<ppu_toc_manager>();
 
 		std::lock_guard lock(toc_manager.mutex);
@@ -5211,52 +5508,25 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 			if (g_cfg.core.ppu_debug && func.size && func.toc != umax && !ppu_get_far_jump(func.addr))
 			{
 				ppu_toc[func.addr] = func.toc;
-				write_to_ptr_unsafe<ppu_intrp_func_t>(ppu_ptr(func.addr), &ppu_check_toc);
+				ppu_register_function_at(func.addr, 4, &ppu_check_toc);
 			}
 		}
+
+        }
+#ifdef RPCS3_IOS_AOT_BACKEND
+        if (rpcs3::ios::jit::is_aot() && rpcs3::ios::aot::native_ppu_enabled())
+            rpcs3::ios::aot::prepare_native_ppu(info);
+        else if (rpcs3::ios::jit::is_aot())
+			for (const auto& segment : info.segs)
+				if (segment.flags & 1)
+					ppu_register_aot_range(segment.addr, segment.size);
+#endif
 
 		return false;
 	}
 
 	// Link table
-	static const std::unordered_map<std::string, u64> s_link_table = []()
-	{
-		std::unordered_map<std::string, u64> link_table
-		{
-			{ "sys_game_set_system_sw_version", reinterpret_cast<u64>(ppu_execute_syscall) },
-			{ "__trap", reinterpret_cast<u64>(&ppu_trap) },
-			{ "__error", reinterpret_cast<u64>(&ppu_error) },
-			{ "__check", reinterpret_cast<u64>(&ppu_check) },
-			{ "__trace", reinterpret_cast<u64>(&ppu_trace) },
-			{ "__syscall", reinterpret_cast<u64>(ppu_execute_syscall) },
-			{ "__get_tb", reinterpret_cast<u64>(get_timebased_time) },
-			{ "__lwarx", reinterpret_cast<u64>(ppu_lwarx) },
-			{ "__ldarx", reinterpret_cast<u64>(ppu_ldarx) },
-			{ "__stwcx", reinterpret_cast<u64>(ppu_stwcx) },
-			{ "__stdcx", reinterpret_cast<u64>(ppu_stdcx) },
-			{ "__dcbz", reinterpret_cast<u64>(+[](u32 addr){ alignas(64) static constexpr u8 z[128]{}; do_cell_atomic_128_store(addr, z); }) },
-			{ "__resupdate", reinterpret_cast<u64>(vm::reservation_update) },
-			{ "__resinterp", reinterpret_cast<u64>(ppu_reservation_fallback) },
-			{ "__escape", reinterpret_cast<u64>(+ppu_escape) },
-			{ "__read_maybe_mmio32", reinterpret_cast<u64>(+ppu_read_mmio_aware_u32) },
-			{ "__write_maybe_mmio32", reinterpret_cast<u64>(+ppu_write_mmio_aware_u32) },
-			{ "__vrefp", reinterpret_cast<u64>(&ppu_vec_estimate<ppu_vrefp>) },
-			{ "__vrsqrtefp", reinterpret_cast<u64>(&ppu_vec_estimate<ppu_vrsqrtefp>) },
-			{ "__vexptefp", reinterpret_cast<u64>(&ppu_vec_estimate<ppu_vexptefp>) },
-			{ "__vlogefp", reinterpret_cast<u64>(&ppu_vec_estimate<ppu_vlogefp>) },
-		};
-
-		for (u64 index = 0; index < 1024; index++)
-		{
-			if (ppu_get_syscall(index))
-			{
-				link_table.emplace(fmt::format("%s", ppu_syscall_code(index)), reinterpret_cast<u64>(ppu_execute_syscall));
-				link_table.emplace(fmt::format("syscall_%u", index), reinterpret_cast<u64>(ppu_execute_syscall));
-			}
-		}
-
-		return link_table;
-	}();
+	const auto& s_link_table = ppu_llvm_runtime_symbols();
 
 	// Get cache path for this executable
 	std::string cache_path;
@@ -5296,7 +5566,7 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 	// Compiler instance (deferred initialization)
 	std::vector<std::shared_ptr<jit_compiler>>& jits = jit_mod.pjit;
 
-	// Split module into fragments <= 1 MiB
+	// Partition whole native functions using the shared compilation policy
 	usz fpos = 0;
 
 	// Modules counted so far
@@ -5323,38 +5593,7 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 	// PPU, including waiting for its host workers. Background checks stay live.
 	const guest_time_stall clock_hold("PPU module compilation/linking", !check_only && is_being_used_in_emulation);
 
-	// MFVSCR only matters for codegen with accurate SAT bit
-	const bool has_mfvscr = g_cfg.core.ppu_set_sat_bit && [&info]()
-	{
-		for (const auto& func : info.get_funcs())
-		{
-			if (func.size == 0)
-			{
-				continue;
-			}
-
-			for (const auto [addr, size] : func)
-			{
-				if (size == 0)
-				{
-					continue;
-				}
-
-				auto i_ptr = ensure(info.get_ptr<u32>(addr));
-
-				for (u32 i = addr; i < addr + size; i += 4, i_ptr++)
-				{
-					if (g_ppu_itype.decode(*i_ptr) == ppu_itype::MFVSCR)
-					{
-						ppu_log.warning("MFVSCR found");
-						return true;
-					}
-				}
-			}
-		}
-
-		return false;
-	}();
+	const bool has_mfvscr = info.prepare_compilation_attributes(g_cfg.core.ppu_set_sat_bit.get());
 
 	// Limit how many modules are per JIt instance
 	// Advantage to lower the limit:
@@ -5601,41 +5840,14 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 		return code_ptr;
 	};
 
-	if (has_mfvscr)
-	{
-		info.attr += ppu_attr::has_mfvscr;
-	}
-
 	const auto all_funcs = info.get_funcs();
 
 	while (!jit_mod.init && fpos < all_funcs.size())
 	{
 		// Copy module information
 		ppu_module<lv2_obj> part;
-		part.copy_part(info);
-
-		// Overall block size in bytes
-		usz bsize = 0;
-		usz bcount = 0;
-
-		while (fpos < all_funcs.size())
+		part.copy_next_compilation_part(info, fpos, [&](const ppu_function& func)
 		{
-			auto& func = all_funcs[fpos];
-
-			if (!func.size)
-			{
-				fpos++;
-				continue;
-			}
-
-			if (bsize + func.size > 100 * 1024 && bsize)
-			{
-				if (bcount >= 1000)
-				{
-					break;
-				}
-			}
-
 			if (g_fxo->is_init<ppu_far_jumps_t>())
 			{
 				auto targets = g_fxo->get<ppu_far_jumps_t>().get_targets(func.addr, func.size);
@@ -5655,23 +5867,14 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 				if (!targets.empty())
 				{
 					// Replace the function with ppu_far_jump
-					fpos++;
-					part.excluded_funcs.emplace_back(func.addr);
-					continue;
+					return true;
 				}
 			}
 
-			local_jit_bounds->first = std::min<u32>(local_jit_bounds->first, func.addr);
-			local_jit_bounds->second = std::max<u32>(local_jit_bounds->second, func.addr + func.size);
-
-			part.local_bounds.first = std::min<u32>(part.local_bounds.first, func.addr);
-			part.local_bounds.second = std::max<u32>(part.local_bounds.second, func.addr + func.size);
-
-			bsize += func.size;
-
-			fpos++;
-			bcount++;
-		}
+			return false;
+		});
+		local_jit_bounds->first = std::min(local_jit_bounds->first, part.local_bounds.first);
+		local_jit_bounds->second = std::max(local_jit_bounds->second, part.local_bounds.second);
 
 		// Compute module hash to generate (hopefully) unique object name
 		std::string obj_name;
@@ -6375,128 +6578,13 @@ static void ppu_initialize2(jit_compiler& jit, const ppu_module<lv2_obj>& module
 	// Initialize translator
 	PPUTranslator translator(jit.get_context(), _module.get(), module_part, jit.get_engine());
 
-	// Define some types
-	const auto _func = FunctionType::get(translator.get_type<void>(), {
-		translator.get_type<u8*>(), // Exec base
-		translator.get_type<u8*>(), // PPU context
-		translator.get_type<u64>(), // Segment address (for PRX)
-		translator.get_type<u8*>(), // Memory base
-		translator.get_type<u64>(), // r0
-		translator.get_type<u64>(), // r1
-		translator.get_type<u64>(), // r2
-		}, false);
-
-	// Difference between function name and current location
-	const u32 reloc = module_part.is_relocatable ? ::at32(module_part.segs, 0).addr : 0;
-
-	// Initialize function list
-	for (const auto& func : module_part.get_funcs())
+	if (!translator.TranslateModule([] { return Emu.IsStopped(); }))
 	{
-		if (func.size)
-		{
-			if (std::count(module_part.excluded_funcs.begin(), module_part.excluded_funcs.end(), func.addr))
-			{
-				continue;
-			}
-
-			const auto f = cast<Function>(_module->getOrInsertFunction(fmt::format("__0x%x", func.addr - reloc), _func).getCallee());
-			f->setCallingConv(CallingConv::GHC);
-			f->addParamAttr(1, llvm::Attribute::NoAlias);
-			f->addFnAttr(Attribute::NoUnwind);
-		}
+		if (!Emu.IsStopped()) Emu.Pause();
+		return;
 	}
 
 	{
-		if (g_cfg.core.ppu_debug)
-		{
-			translator.build_interpreter();
-		}
-
-		// Create the analysis managers.
-		// These must be declared in this order so that they are destroyed in the
-		// correct order due to inter-analysis-manager references.
-		LoopAnalysisManager lam;
-		FunctionAnalysisManager fam;
-		CGSCCAnalysisManager cgam;
-		ModuleAnalysisManager mam;
-
-		// Create the new pass manager builder.
-		// Take a look at the PassBuilder constructor parameters for more
-		// customization, e.g. specifying a TargetMachine or various debugging
-		// options.
-		PassBuilder pb;
-
-		// Register all the basic analyses with the managers.
-		pb.registerModuleAnalyses(mam);
-		pb.registerCGSCCAnalyses(cgam);
-		pb.registerFunctionAnalyses(fam);
-		pb.registerLoopAnalyses(lam);
-		pb.crossRegisterProxies(lam, fam, cgam, mam);
-
-		FunctionPassManager fpm;
-		// Basic optimizations
-		fpm.addPass(EarlyCSEPass());
-
-		u32 guest_code_size = 0;
-		u32 min_addr = umax;
-		u32 max_addr = 0;
-		u32 num_func = 0;
-
-		// Translate functions
-		// Start with the lowest bound of the module, function list is sorted
-		for (const auto& mod_func : module_part.get_funcs())
-		{
-			if (Emu.IsStopped())
-			{
-				ppu_log.success("LLVM: Translation cancelled");
-				return;
-			}
-
-			if (mod_func.size)
-			{
-				if (std::count(module_part.excluded_funcs.begin(), module_part.excluded_funcs.end(), mod_func.addr))
-				{
-					continue;
-				}
-
-				num_func++;
-				guest_code_size += mod_func.size;
-				max_addr = std::max<u32>(max_addr, mod_func.addr + mod_func.size);
-				min_addr = std::min<u32>(min_addr, mod_func.addr);
-
-				// Translate
-				if ([[maybe_unused]] const auto func = translator.Translate(mod_func))
-				{
-#ifdef ARCH_X64 // TODO
-					// Run optimization passes
-					fpm.run(*func, fam);
-#endif // ARCH_X64
-				}
-				else
-				{
-					Emu.Pause();
-					return;
-				}
-			}
-		}
-
-		// Run this only in one module for all functions compiled
-		if (module_part.jit_bounds)
-		{
-			if ([[maybe_unused]] const auto func = translator.GetSymbolResolver(module_part))
-			{
-#ifdef ARCH_X64 // TODO
-				// Run optimization passes
-				fpm.run(*func, fam);
-#endif // ARCH_X64
-			}
-			else
-			{
-				Emu.Pause();
-				return;
-			}
-		}
-
 		//legacy::PassManager mpm;
 
 		// Remove unused functions, structs, global variables, etc
@@ -6523,7 +6611,6 @@ static void ppu_initialize2(jit_compiler& jit, const ppu_module<lv2_obj>& module
 			return;
 		}
 
-		ppu_log.notice("LLVM: %zu functions generated (code_size=0x%x, num_func=%d, max_addr(-)min_addr=0x%x)", _module->getFunctionList().size(), guest_code_size, num_func, max_addr - min_addr);
 	}
 
 	// Load or compile module

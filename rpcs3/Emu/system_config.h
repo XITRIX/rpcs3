@@ -458,3 +458,12 @@ struct cfg_root : cfg::node
 
 extern cfg_root g_cfg;
 extern cfg_root g_backup_cfg;
+
+// LLVM's supported PPU numerical contract, shared by effective boot settings
+// and file compilation. Never apply this to persisted/user configuration.
+inline void normalize_ppu_llvm_settings(cfg_root& config)
+{
+	config.core.ppu_use_nj_bit.set(false);
+	config.core.ppu_set_vnan.set(false);
+	config.core.ppu_set_fpcc.set(false);
+}

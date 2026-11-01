@@ -5,6 +5,10 @@
 #include "VKAsyncScheduler.h"
 #include "vkutils/data_heap.h"
 
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
+
 #ifdef RPCS3_IOS
 #include "ios/IOSMemoryPressurePolicy.h"
 #include "ios/RPCS3IOSPerformance.h"
@@ -1657,7 +1661,7 @@ namespace vk
 
 	vk::viewable_image* texture_cache::upload_image_simple(vk::command_buffer& cmd, VkFormat format, u32 address, u32 width, u32 height, u32 pitch)
 	{
-		bool linear_format_supported = false;
+		[[maybe_unused]] bool linear_format_supported = false;
 
 		switch (format)
 		{
@@ -1672,6 +1676,46 @@ namespace vk
 			return nullptr;
 		}
 
+		const auto copy_pixels = [&](char* dst, usz row_pitch)
+		{
+			auto src = vm::_ptr<const char>(address);
+			for (u32 row = 0; row < height; ++row)
+			{
+				auto casted_src = reinterpret_cast<const be_t<u32>*>(src);
+				auto casted_dst = reinterpret_cast<u32*>(dst);
+				for (u32 col = 0; col < width; ++col) casted_dst[col] = casted_src[col];
+				src += pitch;
+				dst += row_pitch;
+			}
+		};
+
+#if defined(__APPLE__) && TARGET_OS_SIMULATOR
+		// Metal Simulator requires private storage for buffer-backed textures.
+		// MoltenVK still advertises linear tiling, but a host-visible linear
+		// image asserts while presenting the first restored framebuffer.
+		// Reuse the ordinary staging heap and optimal-image copy path.
+		auto image = std::make_unique<vk::viewable_image>(*m_device, m_memory_types.device_local,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_TYPE_2D, format,
+			width, height, 1, 1, 1, VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+			0, VMM_ALLOCATION_POOL_SWAPCHAIN);
+		const usz row_pitch = usz(width) * 4;
+		const usz size = row_pitch * height;
+		const auto offset = m_texture_upload_heap->alloc<512>(size);
+		copy_pixels(m_texture_upload_heap->map<char>(offset, size), row_pitch);
+		m_texture_upload_heap->unmap();
+		m_texture_upload_heap->sync(cmd);
+		vk::change_image_layout(cmd, image.get(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+		VkBufferImageCopy region{};
+		region.bufferOffset = offset;
+		region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+		region.imageExtent = {width, height, 1};
+		vk::copy_buffer_to_image(cmd, m_texture_upload_heap->heap.get(), image.get(), region);
+		vk::change_image_layout(cmd, image.get(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+		auto result = image.get();
+		vk::get_resource_manager()->dispose(image);
+		return result;
+#else
 		if (!linear_format_supported)
 		{
 			return nullptr;
@@ -1694,21 +1738,7 @@ namespace vk
 
 		void* mem = image->memory->map(0, layout.rowPitch * height);
 
-		auto src = vm::_ptr<const char>(address);
-		auto dst = static_cast<char*>(mem);
-
-		// TODO: SSE optimization
-		for (u32 row = 0; row < height; ++row)
-		{
-			auto casted_src = reinterpret_cast<const be_t<u32>*>(src);
-			auto casted_dst = reinterpret_cast<u32*>(dst);
-
-			for (u32 col = 0; col < width; ++col)
-				casted_dst[col] = casted_src[col];
-
-			src += pitch;
-			dst += layout.rowPitch;
-		}
+		copy_pixels(static_cast<char*>(mem), layout.rowPitch);
 
 		image->memory->unmap();
 
@@ -1719,6 +1749,7 @@ namespace vk
 		vk::get_resource_manager()->dispose(image);
 
 		return result;
+#endif
 	}
 
 	bool texture_cache::blit(const rsx::blit_src_info& src, const rsx::blit_dst_info& dst, bool interpolate, vk::surface_cache& m_rtts, vk::command_buffer& cmd)

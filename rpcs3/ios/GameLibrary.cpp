@@ -1,4 +1,7 @@
 #include "GameLibrary.h"
+#ifdef RPCS3_IOS_AOT_COMPILER
+#include "AOTService.h"
+#endif
 #include "RPCS3IOSSettings.h"
 #include "GameArchiveContract.h"
 #include "GameFolderContract.h"
@@ -389,6 +392,14 @@ bool build_game_cache_inventory(
 		detail = fmt::format("RPCS3 could not inspect cache path %s", main_cache);
 		return false;
 	}
+
+#ifdef RPCS3_IOS_AOT_COMPILER
+	try
+	{
+		if (!add_cache_size(inventory.usage.total, aot::cache_size(std::string{title_id}), detail)) return false;
+	}
+	catch (const aot::failure& error) { detail = error.message; return false; }
+#endif
 
 	const std::string hdd1_root = rpcs3::utils::get_hdd1_cache_dir();
 	fs::stat_t hdd1_info{};
@@ -1826,6 +1837,12 @@ game_delete_result delete_installed_game(std::string_view title_id)
 		};
 	}
 
+#ifdef RPCS3_IOS_AOT_COMPILER
+	try { (void)aot::clear_cache(id); }
+	catch (const aot::failure& error)
+	{ return {game_delete_error::deletion_failed, id, installed->title, error.message}; }
+#endif
+
 	return {
 		game_delete_error::none,
 		id,
@@ -1896,6 +1913,15 @@ game_cache_result clear_game_cache(std::string_view title_id, game_cache_type ty
 		removed = remove_cache_paths(inventory.hdd1_paths, detail);
 		break;
 	case game_cache_type::all:
+#ifdef RPCS3_IOS_AOT_COMPILER
+		try
+		{
+			const auto before = aot::cache_size(std::string{title_id});
+			const auto removed_aot = aot::clear_cache(std::string{title_id});
+			inventory.usage.total -= before - removed_aot; // Report bytes actually removed, excluding mapped images.
+		}
+		catch (const aot::failure& error) { detail = error.message; break; }
+#endif
 		removed = remove_installed_path(
 			rpcs3::utils::get_cache_dir_by_serial(std::string{title_id}), detail) &&
 			remove_cache_paths(inventory.hdd1_paths, detail);

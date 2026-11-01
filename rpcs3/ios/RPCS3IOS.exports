@@ -1,4 +1,12 @@
 _rpcs3_ios_abi_version
+_rpcs3_ios_aot_capabilities
+_rpcs3_ios_aot_configure
+_rpcs3_ios_aot_begin_preparation
+_rpcs3_ios_aot_prepare
+_rpcs3_ios_aot_signing_paths
+_rpcs3_ios_aot_finalize
+_rpcs3_ios_aot_get_status
+_rpcs3_ios_aot_cancel
 _rpcs3_ios_build_info
 _rpcs3_ios_initialize
 _rpcs3_ios_update_config_database
@@ -77,3 +85,9 @@ _rpcs3_ios_set_user_avatar
 _rpcs3_ios_offer_donated_memory
 
 _rpcs3_ios_get_donated_memory_usage
+
+_rpcs3_ios_aot_signing_count
+
+_rpcs3_ios_aot_set_native_signer
+
+_rpcs3_ios_aot_is_cancelled

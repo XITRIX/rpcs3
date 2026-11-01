@@ -13,6 +13,11 @@
 #include "Utilities/JIT.h"
 #ifdef RPCS3_IOS
 #include "ios/IOSStaticInterpreter.h"
+#ifdef RPCS3_IOS_AOT_BACKEND
+#include "ios/AOTNativeGateway.h"
+#endif
+#include "ios/AOTDispatch.h"
+#include "ios/AOTCodeMatch.h"
 #endif
 #include "util/init_mutex.hpp"
 #include "util/shared_ptr.hpp"
@@ -637,7 +642,13 @@ DECLARE(spu_runtime::g_gateway) = build_function_asm<spu_function_t>("spu_gatewa
 
 DECLARE(spu_runtime::g_escape) =
 #ifdef RPCS3_IOS
-	rpcs3::ios::jit::is_jitless() ? +[](spu_thread*) { rpcs3::ios::escape_static_interpreter(); } :
+	rpcs3::ios::jit::is_jitless() ? +[](spu_thread* spu)
+	{
+#ifdef RPCS3_IOS_AOT_BACKEND
+		if (rpcs3::ios::aot::escape_native_if_active(spu)) return;
+#endif
+		rpcs3::ios::escape_static_interpreter();
+	} :
 #endif
 	build_function_asm<void(*)(spu_thread*)>("spu_escape", [](native_asm& c, auto& args)
 {
@@ -750,6 +761,11 @@ spu_cache::spu_cache(const std::string& loc)
 {
 }
 
+spu_cache::spu_cache(fs::file input)
+	: m_file(std::move(input))
+{
+}
+
 spu_cache::~spu_cache()
 {
 }
@@ -856,10 +872,16 @@ static u16 calculate_crc16(const uchar* data, usz length)
 std::deque<spu_program> spu_cache::get()
 {
 	std::deque<spu_program> result;
+	for_each([&](spu_program&& program) { result.emplace_front(std::move(program)); return true; });
+	return result;
+}
+
+void spu_cache::for_each(const std::function<bool(spu_program&&)>& consume)
+{
 
 	if (!m_file)
 	{
-		return result;
+		return;
 	}
 
 	m_file.seek(0);
@@ -912,10 +934,9 @@ std::deque<spu_program> spu_cache::get()
 		res.entry_point = addr;
 		res.lower_bound = addr;
 		res.data = std::move(func);
-		result.emplace_front(std::move(res));
+		if (!consume(std::move(res))) break;
 	}
 
-	return result;
 }
 
 void spu_cache::add(const spu_program& func)
@@ -1520,8 +1541,8 @@ spu_runtime::spu_runtime()
 #ifdef RPCS3_IOS
 	if (rpcs3::ios::get_experimental_policy().persistent_spu_object_cache)
 	{
-		// v6 includes the host reservation stride baked into generated addresses.
-		constexpr u32 cache_version = 6;
+		// v7 fixes returning ARM64 indirect-dispatch gateway restoration.
+		constexpr u32 cache_version = 7;
 		constexpr usz max_files = 12'000;
 		sha1_context ctx;
 		u8 key[20];
@@ -2600,6 +2621,33 @@ void spu_recompiler_base::old_interpreter(spu_thread& spu, void* ls, u8* /*rip*/
 	const auto base = static_cast<const u8*>(ls);
 	const bool diagnose = !!g_cfg.core.spu_debug;
 
+#ifdef RPCS3_IOS
+	// Session mode and CPU storage are fixed for this invocation. Re-entrant
+	// guest callbacks receive an independent stack context.
+	const bool aot_mode = rpcs3::ios::jit::is_aot();
+	rpcs3_aot_runtime_context_v2 context{};
+	context.structure_size = sizeof(context); context.version = RPCS3_AOT_RUNTIME_VERSION;
+	context.cpu = &spu; context.spu_gpr_words = reinterpret_cast<u32*>(spu.gpr.data());
+	context.memory_base = spu.memory_base_addr; context.local_store = spu._ptr<u8>(0);
+	context.matches_code = [](const rpcs3_aot_runtime_context_v2* context, const u32* words, u32 count)
+	{
+		if (!count || count > 65536 || context->guest_pc > 0x40000 || count * 4 > 0x40000 - context->guest_pc) return false;
+		return rpcs3::ios::aot::matches_guest_words(static_cast<const u8*>(context->local_store) + context->guest_pc, words, count, context->verification_flags & RPCS3_AOT_SPARSE_SPU);
+	};
+	context.read_code = [](const rpcs3_aot_runtime_context_v2* context, u32* words, u32 capacity)
+	{
+		if (context->guest_pc >= 0x40000) return 0u;
+		const auto code = reinterpret_cast<const be_t<u32>*>(static_cast<const u8*>(context->local_store) + context->guest_pc);
+		u32 count = 0;
+		while (count < capacity && count < (0x40000 - context->guest_pc) / 4)
+		{
+			words[count] = +code[count];
+			if (rpcs3::ios::aot::terminates_unit(2, words[count++])) break;
+		}
+		return count;
+	};
+#endif
+
 	while (true)
 	{
 		if (spu.state) [[unlikely]]
@@ -2616,6 +2664,27 @@ void spu_recompiler_base::old_interpreter(spu_thread& spu, void* ls, u8* /*rip*/
 		}
 
 		const u32 op = *reinterpret_cast<const be_t<u32>*>(base + spu.pc);
+#ifdef RPCS3_IOS
+		if (aot_mode && !diagnose)
+		{
+            if (rpcs3::ios::aot::execute_native_spu(spu, const_cast<void*>(ls))) continue;
+			// Shared LLVM helpers assume generic CPU-work interrupts cannot
+			// escape before their caller materializes registers and the next PC.
+			// Match native RDCH/WRCH's permission and restore it on C++ escape.
+			struct interrupt_permission
+			{
+				bool& flag;
+				bool previous;
+				~interrupt_permission() { flag = previous; }
+			} restore{spu.allow_interrupts_in_cpu_work, std::exchange(spu.allow_interrupts_in_cpu_work, false)};
+			context.guest_pc = spu.pc; context.next_pc = spu.pc + 4;
+			if (rpcs3::ios::aot::execute(2, op, context))
+			{
+				spu.pc = context.next_pc;
+				continue;
+			}
+		}
+#endif
 		const auto execute = table.decode(op);
 		if (diagnose ? spu_interpreter::diagnose(spu, {op}, execute) : execute(spu, {op}))
 			spu.pc += 4;
@@ -3259,7 +3328,7 @@ static bool is_simple_channel_loop(const spu_program& program, u32 read_pc, u32 
 		spu_branch_target(branch_pc, branch.i16) == read_pc;
 }
 
-spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, std::map<u32, std::vector<u32>>* out_target_list)
+spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, std::map<u32, std::vector<u32>>* out_target_list, bool isolated_statistics, std::span<const u32> resume_entries)
 {
 	// Result: addr + raw instruction data
 	spu_program result;
@@ -3285,6 +3354,16 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
 	m_targets.clear();
 	m_preds.clear();
 	m_preds[entry_point];
+	// File execution returns after abortable helpers. Feed their continuations
+	// through this same native CFG/liveness analysis as resumable chunks.
+	u32 first_entry = entry_point;
+	for (const auto address : resume_entries)
+		if (!(address % 4) && address < SPU_LS_SIZE)
+		{
+			if (!m_block_info[address / 4]) workload.push_back(address);
+			m_block_info.set(address / 4); m_entry_info.set(address / 4); m_ret_info.set(address / 4);
+			m_preds[address]; first_entry = std::min(first_entry, address);
+		}
 	m_bbs.clear();
 	m_chunks.clear();
 	m_funcs.clear();
@@ -3298,7 +3377,7 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
 	u32 hbr_tg = -1;
 
 	// Result bounds
-	u32 lsa = entry_point;
+	u32 lsa = first_entry;
 	u32 limit = SPU_LS_SIZE;
 
 	// Weak constant propagation context (for guessing branch targets)
@@ -5402,6 +5481,19 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
 		atomic_t<u64> secret_compatible = 0;
 	};
 
+	struct analysis_statistics
+	{
+		putllc16_statistics_t putllc;
+		rchcnt_statistics_t rchcnt;
+		reduced_statistics_t reduced;
+	};
+	// These counters are diagnostic only. Offline callers must neither depend
+	// on nor recreate the emulation registry, whose storage Stop has released.
+	const auto file_statistics = isolated_statistics ? std::make_unique<analysis_statistics>() : nullptr;
+	auto& putllc_statistics = file_statistics ? file_statistics->putllc : g_fxo->get<putllc16_statistics_t>();
+	auto& rchcnt_statistics = file_statistics ? file_statistics->rchcnt : g_fxo->get<rchcnt_statistics_t>();
+	auto& reduced_statistics = file_statistics ? file_statistics->reduced : g_fxo->get<reduced_statistics_t>();
+
 	// Pattern structures
 
 	struct atomic16_t
@@ -5878,7 +5970,7 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
 
 				cause = atomic16->break_cause;
 				getllar_starts[previous.lsa_pc] = true;
-				g_fxo->get<putllc16_statistics_t>().breaking_reason[cause]++;
+				putllc_statistics.breaking_reason[cause]++;
 
 				if (!spu_log.notice)
 				{
@@ -5887,7 +5979,7 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
 
 				std::string break_error = fmt::format("PUTLLC pattern breakage [%x mem=%d lsa_const=%d cause=%u] (lsa_pc=0x%x)", atomic16->break_pc, previous.mem_count, u32{!previous.ls_offs.is_const()} * 2 + previous.lsa.is_const(), cause, previous.lsa_pc);
 
-				const auto values = sort_breakig_reasons(g_fxo->get<putllc16_statistics_t>().breaking_reason);
+				const auto values = sort_breakig_reasons(putllc_statistics.breaking_reason);
 
 				std::string tracing = "Top Breaking Reasons:";
 
@@ -5935,7 +6027,7 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
 					return;
 				}
 
-				g_fxo->get<rchcnt_statistics_t>().breaking_reason[cause]++;
+				rchcnt_statistics.breaking_reason[cause]++;
 
 				if (!spu_log.notice)
 				{
@@ -5944,7 +6036,7 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
 
 				std::string break_error = fmt::format("Channel pattern breakage [%x cause=%u] (read_pc=0x%x)", pos, cause, previous.read_pc);
 
-				const auto values = sort_breakig_reasons(g_fxo->get<rchcnt_statistics_t>().breaking_reason);
+				const auto values = sort_breakig_reasons(rchcnt_statistics.breaking_reason);
 
 				std::string tracing = "Top Breaking Reasons:";
 
@@ -5985,7 +6077,7 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
 		{
 			if (previous.active && previous.loop_pc != SPU_LS_SIZE && reduced_loop_all.count(previous.loop_pc) == 0)
 			{
-				g_fxo->get<reduced_statistics_t>().breaking_reason[cause]++;
+				reduced_statistics.breaking_reason[cause]++;
 
 				if (!spu_log.notice)
 				{
@@ -5999,7 +6091,7 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
 
 				std::string break_error = fmt::format("Reduced loop pattern breakage [%x cause=%u] (read_pc=0x%x)", pos, cause, previous.loop_pc);
 
-				const auto values = sort_breakig_reasons(g_fxo->get<reduced_statistics_t>().breaking_reason);
+				const auto values = sort_breakig_reasons(reduced_statistics.breaking_reason);
 
 				std::string tracing = "Top Breaking Reasons:";
 
@@ -7780,7 +7872,7 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
 							// Register loop entry
 							if (getllar_starts.emplace(atomic16->lsa_pc, false).second)
 							{
-								g_fxo->get<putllc16_statistics_t>().all++;
+								putllc_statistics.all++;
 								spu_log.notice("[0x%05x] GETLLAR pattern entry point", pos);
 							}
 						}
@@ -9006,7 +9098,7 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
 			bf_t<u64, 0, 8> reg2;
 		} value{};
 
-		auto& stats = g_fxo->get<putllc16_statistics_t>();
+		auto& stats = putllc_statistics;
 		had_putllc_evaluation = true;
 
 		if (!pattern.ls_write)
@@ -9143,7 +9235,7 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
 
 	for (const auto& [loop_pc, pattern] : reduced_loop_all)
 	{
-		auto& stats = g_fxo->get<reduced_statistics_t>();
+		auto& stats = reduced_statistics;
 
 		stats.all++;
 

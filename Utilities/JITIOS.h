@@ -95,6 +95,9 @@ struct arena_statistics
 
 // Latched from the wrapper's environment before any dylib constructors run.
 bool is_jitless() noexcept;
+bool is_aot() noexcept;
+u64 rejected_executable_requests() noexcept;
+u64 rejected_preparation_requests() noexcept;
 bool is_ready() noexcept;
 bool prepare_arena() noexcept;
 bool prepare_arena(u32 expanded_capacity_mib) noexcept;

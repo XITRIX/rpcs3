@@ -123,6 +123,14 @@ if(WITH_LLVM)
 
 	add_library(3rdparty_llvm INTERFACE)
 	target_link_libraries(3rdparty_llvm INTERFACE ${LLVM_LIBS})
+	if(RPCS3_IOS_AOT_LINKER_ROOT)
+		# Imported LLVM targets belong to this directory's scope. Resolve the
+		# linker's extra components here rather than emitting bare -lLLVM names
+		# from the sibling RPCS3Core directory.
+		llvm_map_components_to_libnames(AOT_LLVM_LIBS BinaryFormat BitReader BitWriter CGData Core DebugInfoDWARF
+			Demangle Linker LTO MC ObjCARCOpts Object Option Passes ProfileData Support TargetParser TextAPI)
+		target_link_libraries(3rdparty_llvm INTERFACE ${AOT_LLVM_LIBS})
+	endif()
 	target_include_directories(3rdparty_llvm SYSTEM INTERFACE ${LLVM_INCLUDE_DIRS})
 	separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND ${LLVM_DEFINITIONS})
 	target_compile_definitions(3rdparty_llvm INTERFACE ${LLVM_DEFINITIONS_LIST} LLVM_AVAILABLE)

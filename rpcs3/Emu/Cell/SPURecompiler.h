@@ -10,6 +10,8 @@
 #include <memory>
 #include <string>
 #include <deque>
+#include <functional>
+#include <span>
 
 // Helper class
 class spu_cache
@@ -20,6 +22,7 @@ public:
 	spu_cache() = default;
 
 	spu_cache(const std::string& loc);
+	explicit spu_cache(fs::file input);
 
 	spu_cache(spu_cache&&) noexcept = default;
 
@@ -33,6 +36,7 @@ public:
 	}
 
 	std::deque<struct spu_program> get();
+	void for_each(const std::function<bool(struct spu_program&&)>& consume);
 
 	void add(const struct spu_program& func);
 
@@ -888,7 +892,10 @@ public:
 	static void old_interpreter(spu_thread&, void* ls, u8*);
 
 	// Get the function data at specified address
-	spu_program analyse(const be_t<u32>* ls, u32 entry_point, std::map<u32, std::vector<u32>>* out_target_list = nullptr);
+	// File analysis owns diagnostic counters independently of the emulation FXO
+	// lifetime, so preparation remains valid after Stop clears that registry.
+	spu_program analyse(const be_t<u32>* ls, u32 entry_point, std::map<u32, std::vector<u32>>* out_target_list = nullptr, bool isolated_statistics = false,
+		std::span<const u32> resume_entries = {});
 
 	// Print analyser internal state
 	void dump(const spu_program& result, std::string& out, u32 block_min = 0, u32 block_max = SPU_LS_SIZE);

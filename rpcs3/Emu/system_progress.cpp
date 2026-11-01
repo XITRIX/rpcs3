@@ -12,6 +12,10 @@
 
 #include "util/asm.hpp"
 
+#if defined(RPCS3_IOS) && !defined(RPCS3_MACOS)
+#include "ios/PPUAnalysisProgress.h"
+#endif
+
 LOG_CHANNEL(sys_log, "SYS");
 
 // Progress display server synchronization variables
@@ -184,6 +188,10 @@ void progress_dialog_server::operator()()
 		std::string text1;
 
 		const u64 start_time = get_system_time();
+#if defined(RPCS3_IOS) && !defined(RPCS3_MACOS)
+		u64 last_display_time = start_time;
+		u64 last_work_time = start_time;
+#endif
 		u64 wait_no_update_count = 0;
 
 		std::shared_ptr<atomic_t<u32>> ppu_cue_refs;
@@ -213,10 +221,25 @@ void progress_dialog_server::operator()()
 				break;
 			}
 
-			// Force-update every 20 seconds to update remaining time
-			if (wait_no_update_count == 100u * 20 || ftotal != ftotal_new || fdone != fdone_new || fknown_bits != fknown_bits_new
+			// Force-update every 20 seconds to update remaining time.
+			// Mobile analysis may have no fixed total. Keep elapsed time moving
+			// even inside one long function, without inventing a remaining time.
+#if defined(RPCS3_IOS) && !defined(RPCS3_MACOS)
+			const bool elapsed_update = get_system_time() - last_display_time >= 1'000'000;
+#else
+			const bool elapsed_update = false;
+#endif
+			if (elapsed_update || wait_no_update_count == 100u * 20 || ftotal != ftotal_new || fdone != fdone_new || fknown_bits != fknown_bits_new
 				|| ftotal_bits != ftotal_bits_new || ptotal != ptotal_new || pdone != pdone_new || text_new != text1)
 			{
+#if defined(RPCS3_IOS) && !defined(RPCS3_MACOS)
+				last_display_time = get_system_time();
+				if (ftotal != ftotal_new || fdone != fdone_new || fknown_bits != fknown_bits_new ||
+					ftotal_bits != ftotal_bits_new || ptotal != ptotal_new || pdone != pdone_new || text_new != text1)
+				{
+					last_work_time = last_display_time;
+				}
+#endif
 				wait_no_update_count = 0;
 				ftotal = ftotal_new;
 				fdone  = fdone_new;
@@ -360,6 +383,10 @@ void progress_dialog_server::operator()()
 				else
 				{
 					progr = get_localized_string(localized_string_id::PROGRESS_DIALOG_PROGRESS_ANALYZING);
+#if defined(RPCS3_IOS) && !defined(RPCS3_MACOS)
+					progr = rpcs3::ios::analysis_timing_text((last_display_time - start_time) / 1'000'000,
+						(last_display_time - last_work_time) / 1'000'000);
+#endif
 				}
 
 				// Changes detected, send update

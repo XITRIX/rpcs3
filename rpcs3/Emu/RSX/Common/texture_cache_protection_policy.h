@@ -12,12 +12,13 @@ namespace rsx
 
 	constexpr std::size_t min_lockable_texture_data_size = 4096;
 
-	// Both legacy and Universal JIT may opt in after preparation and detach.
-	// Unknown debugger state and JIT-less execution retain full hashing.
+	// Signed AOT code uses the same guest-data fault handler without a JIT
+	// arena. All paths require a known detached debugger; interpreter-only
+	// sessions retain their existing hashing policy.
 	constexpr bool allow_texture_write_tracking(bool requested,
-		bool jit_ready, bool debugger_known_detached) noexcept
+		bool jit_ready, bool debugger_known_detached, bool signed_aot = false) noexcept
 	{
-		return requested && jit_ready && debugger_known_detached;
+		return requested && (jit_ready || signed_aot) && debugger_known_detached;
 	}
 
 	constexpr section_protection_strategy default_texture_protection_strategy(

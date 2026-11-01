@@ -632,6 +632,8 @@ public:
 	// Get CPU info
 	static std::string cpu(std::string_view _cpu);
 
+	static std::vector<std::string> target_features();
+
 	// Get system triple (PPU)
 	static std::string triple1();
 

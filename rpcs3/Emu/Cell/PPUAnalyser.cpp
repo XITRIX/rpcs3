@@ -6,6 +6,11 @@
 #include "PPUOpcodes.h"
 #include "PPUThread.h"
 
+#if defined(RPCS3_IOS) && !defined(RPCS3_MACOS)
+#include "Emu/system_progress.hpp"
+#include "ios/PPUAnalysisProgress.h"
+#endif
+
 #include <unordered_set>
 #include "util/yaml.hpp"
 #include "util/asm.hpp"
@@ -37,6 +42,40 @@ template<>
 void fmt_class_string<bs_t<ppu_attr>>::format(std::string& out, u64 arg)
 {
 	format_bitset(out, arg, "[", ",", "]", &fmt_class_string<ppu_attr>::format);
+}
+
+template <>
+bool ppu_module<lv2_obj>::prepare_compilation_attributes(bool accurate_sat) const
+{
+	if (!accurate_sat) return false;
+	for (const auto& func : get_funcs())
+	{
+		if (func.size == 0)
+		{
+			continue;
+		}
+
+		for (const auto [addr, size] : func)
+		{
+			if (size == 0)
+			{
+				continue;
+			}
+
+			auto i_ptr = ensure(get_ptr<u32>(addr));
+
+			for (u32 i = addr; i < addr + size; i += 4, i_ptr++)
+			{
+				if (g_ppu_itype.decode(*i_ptr) == ppu_itype::MFVSCR)
+				{
+					ppu_log.warning("MFVSCR found");
+					attr += ppu_attr::has_mfvscr;
+					return true;
+				}
+			}
+		}
+	}
+	return false;
 }
 
 template <>
@@ -828,6 +867,20 @@ bool ppu_module<lv2_obj>::analyse(u32 lib_toc, u32 entry, const u32 sec_end, con
 		return false;
 	}
 
+#if defined(RPCS3_IOS) && !defined(RPCS3_MACOS)
+	scoped_progress_dialog analysis_dialog{"Analyzing PPU Executable..."};
+	const auto separator = path.find_last_of("/\\");
+	rpcs3::ios::ppu_analysis_progress analysis_progress{path.substr(separator == std::string::npos ? 0 : separator + 1),
+		[&](std::string text) { analysis_dialog = std::move(text); }};
+	const auto report_analysis = [&](std::string_view phase, u64 visited = 0, u64 discovered = 0)
+	{
+		analysis_progress.update(phase, visited, discovered);
+	};
+#else
+	const auto report_analysis = [](std::string_view, u64 = 0, u64 = 0) {};
+#endif
+	report_analysis("Finding code references");
+
 	// Assume first segment is executable
 	const u32 start = segs[0].addr;
 
@@ -1069,6 +1122,10 @@ bool ppu_module<lv2_obj>::analyse(u32 lib_toc, u32 entry, const u32 sec_end, con
 
 		for (; _ptr <= seg_end; advance(_ptr, ptr, 1))
 		{
+			if ((_ptr.addr() & 0x3fff) == 0)
+			{
+				report_analysis("Finding code references (segment bytes)", _ptr.addr() - seg.addr, seg.size);
+			}
 			const u32 value = *ptr;
 
 			if (value % 4 || !verify_ref(_ptr.addr()))
@@ -1095,6 +1152,7 @@ bool ppu_module<lv2_obj>::analyse(u32 lib_toc, u32 entry, const u32 sec_end, con
 	}
 
 	// Find OPD section
+	report_analysis("Finding function entry points");
 	for (const auto& sec : secs)
 	{
 		if (sec.size % 8)
@@ -1185,6 +1243,7 @@ bool ppu_module<lv2_obj>::analyse(u32 lib_toc, u32 entry, const u32 sec_end, con
 	}
 
 	// Find .eh_frame section
+	report_analysis("Reading function metadata");
 	for (const auto& sec : secs)
 	{
 		if (sec.size % 4)
@@ -1384,6 +1443,7 @@ bool ppu_module<lv2_obj>::analyse(u32 lib_toc, u32 entry, const u32 sec_end, con
 	// Main loop (func_queue may grow)
 	for (usz i = 0; i <= func_queue.size(); i++)
 	{
+		report_analysis("Function passes (queue can grow)", i, func_queue.size());
 		if (i == func_queue.size())
 		{
 			if (is_function_caller_analysis)
@@ -2711,6 +2771,7 @@ bool ppu_module<lv2_obj>::analyse(u32 lib_toc, u32 entry, const u32 sec_end, con
 	}
 
 	// Function shrinkage, disabled (TODO: it's potentially dangerous but improvable)
+	report_analysis("Checking function boundaries");
 	for (auto& _pair : fmap)
 	{
 		auto& func = _pair.second;
@@ -2999,6 +3060,7 @@ bool ppu_module<lv2_obj>::analyse(u32 lib_toc, u32 entry, const u32 sec_end, con
 			}
 		}
 
+		report_analysis("Block passes (queue can grow)", i, block_queue.size());
 		std::tie(exp, lim) = block_queue[i];
 
 		if (lim == 0)
@@ -3016,6 +3078,7 @@ bool ppu_module<lv2_obj>::analyse(u32 lib_toc, u32 entry, const u32 sec_end, con
 
 		while (exp < lim)
 		{
+			report_analysis("Scanning remaining code bytes", exp >= start ? std::min(exp - start, end - start) : 0, end - start);
 			u32 i_pos = exp;
 
 			u32 block_edges[16];
@@ -3274,6 +3337,7 @@ bool ppu_module<lv2_obj>::analyse(u32 lib_toc, u32 entry, const u32 sec_end, con
 	}
 
 	// Remove overlaps in blocks
+	report_analysis("Finalizing analyzed code");
 	for (auto it = fmap.begin(), end = fmap.end(); it != fmap.end(); it++)
 	{
 		const auto next = std::next(it);

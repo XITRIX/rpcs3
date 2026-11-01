@@ -93,10 +93,14 @@ cpu_translator::cpu_translator(llvm::Module* _module, bool is_be)
 
 void cpu_translator::initialize(llvm::LLVMContext& context, llvm::ExecutionEngine& engine)
 {
-	m_context = context;
 	m_engine = &engine;
+	initialize(context, engine.getTargetMachine()->getTargetCPU().str());
+}
 
-	auto cpu = m_engine->getTargetMachine()->getTargetCPU();
+void cpu_translator::initialize(llvm::LLVMContext& context, std::string_view cpu_name)
+{
+	m_context = context;
+	std::string cpu{cpu_name};
 
 	if (cpu == "generic")
 	{
